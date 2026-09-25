@@ -683,9 +683,17 @@ public final class AppModel {
         // Work on a copy and only publish real changes: this runs every few
         // seconds, and every change to observed state redraws views.
         var workspace = state.workspace
+        // Sessions already linked to a listed agent keep it: an agent whose
+        // conversation id matches another session's (a copy of it) mustn't
+        // take that session over.
+        let listedIDs = Set(listed.map(\.id))
+        var claimed = Set(workspace.sessions.filter { $0.agentID.map(listedIDs.contains) == true }.map(\.id))
         for agent in listed {
-            let existing = workspace.sessions.first { $0.agentID == agent.id }
-                ?? workspace.session(claudeSessionID: agent.sessionID)
+            var existing = workspace.sessions.first { $0.agentID == agent.id }
+            if existing == nil, let match = workspace.session(claudeSessionID: agent.sessionID), !claimed.contains(match.id) {
+                existing = match
+            }
+            if let existing { claimed.insert(existing.id) }
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
@@ -709,7 +717,6 @@ public final class AppModel {
             }
             appliedAgentStates[agent.id] = stateKey
         }
-        let listedIDs = Set(listed.map(\.id))
         for session in workspace.sessions {
             if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
                 // Removed outside the app (`claude rm`).
@@ -722,6 +729,11 @@ public final class AppModel {
             state.workspace = workspace
             save()
         }
+    }
+
+    /// For tests: links a session to an agent as a dispatch would.
+    func applyAgentLink(_ sessionID: UUID, agentID: String) {
+        state.workspace.updateSession(sessionID) { $0.agentID = agentID }
     }
 
     /// For tests: a status change as a hook would make.
@@ -748,7 +760,7 @@ public final class AppModel {
 
     private func resumeInBackground(_ sessionID: UUID, prompt: String? = nil) async {
         guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
-        let result = await run(commands.resume(session: session, prompt: prompt))
+        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: session.agentID != nil))
         await linkDispatched(sessionID, result: result)
     }
 

@@ -101,7 +101,10 @@ public enum AgentListParser {
         }
     }
 
-    private static let copied = try! NSRegularExpression(pattern: #"started a copy of that conversation as ([0-9a-f]{6,})"#)
+    /// "started a copy of that conversation as <id>" (session open elsewhere) or
+    /// "…the flags you passed started a copy as <id>" (a background agent
+    /// resumed with options).
+    private static let copied = try! NSRegularExpression(pattern: #"started a copy (?:of that conversation )?as ([0-9a-f]{6,})"#)
 
     /// The new agent id when `claude --bg --resume` copied the conversation
     /// instead of continuing it (e.g. because it's still open elsewhere).
@@ -209,12 +212,17 @@ public struct AgentCommands: Sendable {
 
     /// Continues a stopped session in the background under the same id,
     /// optionally with a first message.
-    public func resume(session: Session, prompt: String? = nil) -> TerminalLaunch {
+    ///
+    /// `continuingAgent`: the session is already a background agent. Those keep
+    /// their own saved options (model, permissions, Claudio's hooks), and
+    /// passing any flags makes Claude Code start a copy instead, so none are.
+    public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
         var args: [String] = []
         if let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty { args.append(prompt) }
         args += ["--bg", "--resume", claudeID]
-        return command(args + sessionOptions(session), in: session.workingDirectory)
+        if !continuingAgent { args += sessionOptions(session) }
+        return command(args, in: session.workingDirectory)
     }
 
     /// Opens a background agent in a terminal; closing the terminal detaches.
