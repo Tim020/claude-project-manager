@@ -430,20 +430,16 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testSplitIsOnlyForFoldersWithSeveralOpenTabs() throws {
+    func testSplitNeedsTwoOpenTabsFromAnywhere() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            _ = try XCTUnwrap(model.createSession(request(project: p)))
-            _ = try XCTUnwrap(model.createSession(request(project: p)))
-            model.setLayout(.split)
-            XCTAssertFalse(model.canSplit, "Unfiled always uses tabs")
-
-            let f = try XCTUnwrap(model.createFolder(in: p))
-            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
             XCTAssertFalse(model.canSplit, "one open tab")
+            let f = try XCTUnwrap(model.createFolder(in: p))
             let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
-            XCTAssertTrue(model.canSplit)
+            model.setLayout(.split)
+            XCTAssertTrue(model.canSplit, "tabs from Unfiled and a folder can sit side by side")
             XCTAssertEqual(model.splitPanes(capacity: 4).map(\.id), [a, b])
         }
     }

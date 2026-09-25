@@ -113,7 +113,7 @@ public enum HookSettings {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         var settings: [String: JSONValue] = ["hooks": .object(hooks)]
-        if let statusLine { settings["statusLine"] = statusLine.settingsValue }
+        if let statusLine { settings["statusLine"] = statusLine.settingsValue(for: appSessionID) }
         let data = (try? encoder.encode(JSONValue.object(settings))) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }

@@ -19,6 +19,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var useBackgroundAgents: Bool
     /// Width of the resizable sidebar, in points.
     public var sidebarWidth: Double
+    /// The roles offered for new sessions (editable in Settings).
+    public var roles: [String]
+
+    public static func cleanRoles(_ roles: [String]) -> [String] {
+        var seen = Set<String>()
+        return roles.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
 
     public static let sidebarWidthRange: ClosedRange<Double> = 220...520
 
@@ -26,14 +34,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
         min(max(width, sidebarWidthRange.lowerBound), sidebarWidthRange.upperBound)
     }
 
-    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .standard,
-                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true, sidebarWidth: Double = 290) {
+    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .auto,
+                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true, sidebarWidth: Double = 290,
+                roles: [String] = SessionRole.defaultNames) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
         self.layout = layout
         self.useBackgroundAgents = useBackgroundAgents
         self.sidebarWidth = AppSettings.clampSidebarWidth(sidebarWidth)
+        self.roles = AppSettings.cleanRoles(roles)
     }
 
     public init(from decoder: Decoder) throws {
@@ -41,15 +51,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.init(
             claudePath: try c.decodeIfPresent(String.self, forKey: .claudePath),
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
-            defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .standard,
+            defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .auto,
             layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs,
             useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
-            sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290)
+            sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
+            roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
     }
 }
 
 public struct PersistedState: Codable, Equatable, Sendable {
-    public var version = 1
+    /// 2: the default permission mode for new sessions became Auto.
+    public static let currentVersion = 2
+    public var version = PersistedState.currentVersion
     public var workspace = Workspace()
     public var settings = AppSettings()
 
@@ -60,6 +73,11 @@ public struct PersistedState: Codable, Equatable, Sendable {
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
         workspace = try c.decodeIfPresent(Workspace.self, forKey: .workspace) ?? Workspace()
         settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+        if version < 2 && settings.defaultPermissionMode == .standard {
+            // "Ask" was the old default rather than a choice; Claude agents default to Auto.
+            settings.defaultPermissionMode = .auto
+        }
+        version = PersistedState.currentVersion
     }
 }
 

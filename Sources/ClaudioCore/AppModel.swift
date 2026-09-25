@@ -58,8 +58,10 @@ public final class AppModel {
     private var exitCodes: [UUID: Int32] = [:]
     /// Read-only transcripts loaded from history files (see `loadHistory`).
     private var historyLines: [UUID: [TranscriptLine]] = [:]
-    /// Latest plan usage reported by a session's status line.
+    /// Latest plan usage (from `claude /usage` or a session's status line).
     public private(set) var usage: UsageSnapshot?
+    /// Context window use per session, from its status line.
+    private var contexts: [UUID: ContextUsage] = [:]
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
@@ -77,7 +79,7 @@ public final class AppModel {
     /// Commands, terminals and errors, for the Activity Log window.
     @ObservationIgnored public let log: ActivityLog
     @ObservationIgnored private let summaryCache = SessionSummaryCache()
-    @ObservationIgnored private var lastAgentsOutput: String?
+    @ObservationIgnored private var lastOutputs: [String: String] = [:]
     @ObservationIgnored private var isRefreshingAgents = false
     @ObservationIgnored private var isRefreshingProjects = false
     /// The message to send once the user confirms resuming a copy.
@@ -89,6 +91,8 @@ public final class AppModel {
     @ObservationIgnored private let hookEventsURL: URL
     @ObservationIgnored private let usageURL: URL?
     @ObservationIgnored private var usageModified: Date?
+    @ObservationIgnored private let statusDirectory: URL?
+    @ObservationIgnored private var statusModified: [String: Date] = [:]
     @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let runner: CommandRunning
     @ObservationIgnored private let locateClaude: (String?) -> String?
@@ -102,6 +106,7 @@ public final class AppModel {
         discovery: SessionDiscovery,
         hookEventsURL: URL,
         usageURL: URL? = nil,
+        statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
@@ -115,6 +120,7 @@ public final class AppModel {
         self.discovery = discovery
         self.hookEventsURL = hookEventsURL
         self.usageURL = usageURL
+        self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
         self.locateClaude = locateClaude
@@ -153,10 +159,15 @@ public final class AppModel {
         selectedSessionID.flatMap { state.workspace.group(of: $0) }
     }
 
-    /// Open tabs in the selected session's folder.
+    /// Open tabs, across folders and projects, in the order they were opened.
     public var tabs: [Session] {
-        guard let group = selectedGroup else { return [] }
-        return state.workspace.openSessions(in: group)
+        state.workspace.openTabSessions
+    }
+
+    /// Whether the open tabs come from more than one folder (tabs then show
+    /// where each session lives).
+    public var tabsSpanFolders: Bool {
+        Set(tabs.compactMap { state.workspace.group(of: $0.id) }).count > 1
     }
 
     /// Sessions in the selected folder whose tabs are closed (to reopen).
@@ -165,11 +176,9 @@ public final class AppModel {
         return state.workspace.sessions(in: group).filter { !state.workspace.isOpen($0.id) }
     }
 
-    /// Split view is for a real folder with more than one open tab; Unfiled
-    /// is a catch-all, so it always uses tabs.
+    /// Split view shows open tabs side by side, so it needs at least two.
     public var canSplit: Bool {
-        guard case .folder? = selectedGroup else { return false }
-        return tabs.count > 1
+        tabs.count > 1
     }
 
     /// The open tabs to show side by side, given how many panes fit.
@@ -419,13 +428,12 @@ public final class AppModel {
         save()
     }
 
-    /// Closes completed tabs in the selected folder.
+    /// Closes every completed tab.
     public func closeCompletedTabs() {
-        guard let group = selectedGroup else { return }
         let selected = selectedSessionID
-        state.workspace.closeCompletedTabs(in: group)
+        state.workspace.closeCompletedTabs()
         if let selected, !state.workspace.isOpen(selected) {
-            selectedSessionID = state.workspace.openSessions(in: group).first?.id
+            selectedSessionID = tabs.first?.id
         }
         save()
     }
@@ -725,11 +733,11 @@ public final class AppModel {
 
     /// Runs a CLI command off the main actor and records it in the log.
     /// Polling commands are only logged when their output changes or they fail.
-    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false) async -> CommandResult {
+    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents") async -> CommandResult {
         let started = Date()
         let result = await runner.run(command)
-        let changed = lastAgentsOutput != result.output
-        if logOnlyChanges { lastAgentsOutput = result.output }
+        let changed = lastOutputs[changeKey] != result.output
+        if logOnlyChanges { lastOutputs[changeKey] = result.output }
         if !logOnlyChanges || changed || result.exitCode != 0 {
             let milliseconds = Int(Date().timeIntervalSince(started) * 1000)
             var detail = "exit \(result.exitCode) · \(milliseconds) ms · in \(command.workingDirectory)"
@@ -833,19 +841,56 @@ public final class AppModel {
     private func statusLineCapture() -> StatusLineCapture? {
         guard let usageURL else { return nil }
         let userSettings = discovery.claudeHome.appendingPathComponent("settings.json")
-        return StatusLineCapture(usagePath: usageURL.path, userStatusLine: UserStatusLine.load(from: userSettings))
+        return StatusLineCapture(statusDirectory: statusDirectory?.path, usagePath: usageURL.path,
+                                 userStatusLine: UserStatusLine.load(from: userSettings))
     }
 
-    /// Re-reads the usage file when a session's status line has updated it.
+    public func context(for sessionID: UUID) -> ContextUsage? {
+        contexts[sessionID]
+    }
+
+    /// Re-reads usage and per-session status files that sessions' status lines
+    /// have updated since the last poll.
     public func pollUsage() {
-        guard let usageURL,
-              let modified = (try? FileManager.default.attributesOfItem(atPath: usageURL.path))?[.modificationDate] as? Date,
-              modified != usageModified
-        else { return }
-        usageModified = modified
-        if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
-            usage = snapshot
+        let fileManager = FileManager.default
+        if let usageURL,
+           let modified = (try? fileManager.attributesOfItem(atPath: usageURL.path))?[.modificationDate] as? Date,
+           modified != usageModified {
+            usageModified = modified
+            if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
+                adopt(snapshot)
+            }
         }
+        guard let statusDirectory,
+              let files = try? fileManager.contentsOfDirectory(at: statusDirectory, includingPropertiesForKeys: [.contentModificationDateKey])
+        else { return }
+        for file in files where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                  let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                  statusModified[file.lastPathComponent] != modified
+            else { continue }
+            statusModified[file.lastPathComponent] = modified
+            if let data = try? Data(contentsOf: file), let context = ContextUsage.parse(data), contexts[id] != context {
+                contexts[id] = context
+            }
+        }
+    }
+
+    /// Asks Claude Code for plan usage (`claude -p /usage`); no model call, so
+    /// it works before any session has run.
+    public func refreshUsage() async {
+        guard let commands = agentCommands(reportErrors: false) else { return }
+        let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage")
+        if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageCommand(result.output, updatedAt: now()) {
+            adopt(snapshot)
+        }
+    }
+
+    private func adopt(_ snapshot: UsageSnapshot) {
+        guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
+        var merged = snapshot
+        if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
+        usage = merged
     }
 
     // MARK: - Settings

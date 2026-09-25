@@ -498,7 +498,7 @@ private struct UsageSection: View {
                     if let window = usage.fiveHour { row("Session", window, now: context.date) }
                     if let window = usage.sevenDay { row("Week", window, now: context.date) }
                 } else {
-                    Text("Shows up once a session has run in Claudio.")
+                    Text("Checking plan usage… (needs a Claude plan sign-in)")
                         .font(DS.font(11.5))
                         .foregroundStyle(DS.dim)
                 }

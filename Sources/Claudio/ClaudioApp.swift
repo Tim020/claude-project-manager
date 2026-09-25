@@ -18,6 +18,7 @@ enum AppEnvironment {
             discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome),
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
             usageURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("usage.json"),
+            statusDirectory: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("status"),
             logFileURL: ActivityLog.defaultFileURL)
     }
 

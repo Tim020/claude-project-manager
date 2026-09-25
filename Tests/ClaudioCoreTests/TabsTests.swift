@@ -49,7 +49,7 @@ final class WorkspaceTabTests: XCTestCase {
         XCTAssertEqual(ws.openSessions(in: .folder(f)).map(\.name), ["busy"])
     }
 
-    func testCloseOtherTabsOnlyAffectsTheSameFolder() throws {
+    func testCloseOtherTabsAffectsEveryFolder() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code")
         let f1 = try ws.createFolder(in: p, named: "One")
@@ -61,7 +61,7 @@ final class WorkspaceTabTests: XCTestCase {
         ws.openTab(a.id)
         ws.openTab(b.id)
         ws.closeOtherTabs(keeping: a.id)
-        XCTAssertTrue(ws.isOpen(b.id))
+        XCTAssertFalse(ws.isOpen(b.id), "tabs aren't per folder any more")
     }
 
     func testRemovingASessionForgetsItsTab() throws {

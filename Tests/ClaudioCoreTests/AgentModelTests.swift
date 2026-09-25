@@ -7,6 +7,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var agentsJSON = "[]"
     var dispatchOutput = "backgrounded · abcd1234\n  claude attach abcd1234    open in this terminal\n"
     var dispatchExit: Int32 = 0
+    var usageOutput = "Total cost: $0.0000\n"
 
     var commands: [[String]] { lock.withLock { _commands } }
 
@@ -14,6 +15,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         lock.withLock { _commands.append(command.claudeArguments) }
         let args = command.claudeArguments
         if args.first == "agents" { return CommandResult(exitCode: 0, output: agentsJSON, errorOutput: "") }
+        if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") { return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.") }
         return CommandResult(exitCode: 0, output: "", errorOutput: "")
     }

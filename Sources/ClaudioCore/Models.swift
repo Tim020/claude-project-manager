@@ -16,24 +16,50 @@ public enum SessionStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// What a session is for. Shown as a small uppercase tag (CODE, REVIEW, …).
-public enum SessionRole: String, Codable, CaseIterable, Sendable {
-    case code
-    case review
-    case research
-    case other
+/// What a session is for: a free-form label from the user's role list
+/// (Settings), shown as a small uppercase tag (CODE, REVIEW, …). Empty is none.
+public struct SessionRole: RawRepresentable, Codable, Hashable, Sendable {
+    public var rawValue: String
+
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(_ name: String) { self.init(rawValue: name.trimmingCharacters(in: .whitespacesAndNewlines)) }
+
+    public static let code = SessionRole("Code")
+    public static let review = SessionRole("Review")
+    public static let research = SessionRole("Research")
+    public static let none = SessionRole("")
+    public static let defaultNames = ["Code", "Review", "Research"]
 
     public var label: String { rawValue.uppercased() }
+    public var isNone: Bool { rawValue.isEmpty }
 
-    /// A best guess from the session name, used as the default in the New Session sheet
-    /// and for imported sessions.
-    public static func infer(fromName name: String) -> SessionRole {
+    /// The first role whose name appears in the session name; otherwise Code
+    /// if that's in the list, or no role.
+    public static func infer(fromName name: String, roles: [String] = defaultNames) -> SessionRole {
         let lower = name.lowercased()
-        if lower.contains("review") { return .review }
-        if ["research", "spike", "explore", "options paper", "pdf script handling"].contains(where: lower.contains) {
+        if let match = roles.first(where: { !$0.isEmpty && lower.contains($0.lowercased()) }) { return SessionRole(match) }
+        if roles.contains(where: { $0.caseInsensitiveCompare("Research") == .orderedSame }),
+           ["spike", "explore", "options paper", "investigate options"].contains(where: lower.contains) {
             return .research
         }
-        return .code
+        return roles.contains(where: { $0.caseInsensitiveCompare("Code") == .orderedSame }) ? .code : .none
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        // Earlier versions stored a fixed set of lowercase values.
+        switch raw {
+        case "code": self = .code
+        case "review": self = .review
+        case "research": self = .research
+        case "other": self = .none
+        default: self.init(raw)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 

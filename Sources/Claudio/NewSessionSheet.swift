@@ -63,16 +63,19 @@ struct NewSessionSheet: View {
                     TextField("e.g. pr review inline 1427 (defaults to the prompt)", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: name) { _, value in
-                            if !roleEdited { role = SessionRole.infer(fromName: value) }
+                            if !roleEdited { role = SessionRole.infer(fromName: value, roles: model.settings.roles) }
                         }
                 }
                 GridRow {
                     label("Role")
                     Picker("", selection: Binding(get: { role }, set: { role = $0; roleEdited = true })) {
-                        ForEach(SessionRole.allCases, id: \.self) { Text($0.label).tag($0) }
+                        Text("None").tag(SessionRole.none)
+                        ForEach(model.settings.roles, id: \.self) { name in
+                            Text(name).tag(SessionRole(name))
+                        }
                     }
                     .labelsHidden()
-                    .pickerStyle(.segmented)
+                    .help("A label for the session's tab. Edit the list in Settings.")
                 }
                 GridRow {
                     label("Model")
@@ -152,6 +155,7 @@ struct NewSessionSheet: View {
     }
 
     private func applyDefaults() {
+        role = SessionRole.infer(fromName: name, roles: model.settings.roles)
         modelID = model.settings.defaultModel
         permissionMode = model.settings.defaultPermissionMode
         switch initialGroup {

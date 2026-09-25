@@ -10,51 +10,68 @@ public struct Workspace: Codable, Equatable, Sendable {
 
     public private(set) var projects: [Project]
     public private(set) var sessions: [Session]
-    /// Sessions with an open tab. Tabs are per folder because a session lives
-    /// in exactly one group; closing a tab never stops or removes the session.
-    public private(set) var openSessionIDs: Set<UUID>
+    /// Open tabs, in the order they were opened (like a browser). Closing a
+    /// tab never stops or removes the session.
+    public private(set) var openTabIDs: [UUID]
 
-    public init(projects: [Project] = [], sessions: [Session] = [], openSessionIDs: Set<UUID> = []) {
+    public var openSessionIDs: Set<UUID> { Set(openTabIDs) }
+
+    enum CodingKeys: String, CodingKey {
+        case projects, sessions
+        case openTabIDs = "openSessionIDs"
+    }
+
+    public init(projects: [Project] = [], sessions: [Session] = [], openTabIDs: [UUID] = []) {
         self.projects = projects
         self.sessions = sessions
-        self.openSessionIDs = openSessionIDs
+        self.openTabIDs = openTabIDs
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
-        openSessionIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .openSessionIDs) ?? []
+        openTabIDs = try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []
     }
 
     // MARK: - Tabs
 
     public func isOpen(_ sessionID: UUID) -> Bool {
-        openSessionIDs.contains(sessionID)
+        openTabIDs.contains(sessionID)
+    }
+
+    /// Open tabs across every folder and project, in tab order.
+    public var openTabSessions: [Session] {
+        openTabIDs.compactMap { session($0) }.filter { !$0.isArchived }
     }
 
     /// Open tabs in a group, in the group's order.
     public func openSessions(in group: SessionGroup) -> [Session] {
-        sessions(in: group).filter { openSessionIDs.contains($0.id) }
+        sessions(in: group).filter { openTabIDs.contains($0.id) }
     }
 
     public mutating func openTab(_ sessionID: UUID) {
-        guard session(sessionID) != nil else { return }
-        openSessionIDs.insert(sessionID)
+        guard session(sessionID) != nil, !openTabIDs.contains(sessionID) else { return }
+        openTabIDs.append(sessionID)
     }
 
     public mutating func closeTab(_ sessionID: UUID) {
-        openSessionIDs.remove(sessionID)
+        openTabIDs.removeAll { $0 == sessionID }
     }
 
-    /// Closes every other tab in the same folder.
+    /// Closes every other tab, in any folder.
     public mutating func closeOtherTabs(keeping sessionID: UUID) {
-        guard let group = group(of: sessionID) else { return }
-        for other in sessions(in: group) where other.id != sessionID { openSessionIDs.remove(other.id) }
+        openTabIDs.removeAll { $0 != sessionID }
+    }
+
+    public mutating func closeCompletedTabs() {
+        let completed = Set(sessions.filter { $0.status == .completed }.map(\.id))
+        openTabIDs.removeAll { completed.contains($0) }
     }
 
     public mutating func closeCompletedTabs(in group: SessionGroup) {
-        for session in sessions(in: group) where session.status == .completed { openSessionIDs.remove(session.id) }
+        let ids = Set(sessions(in: group).filter { $0.status == .completed }.map(\.id))
+        openTabIDs.removeAll { ids.contains($0) }
     }
 
     // MARK: - Lookup
@@ -155,7 +172,8 @@ public struct Workspace: Codable, Equatable, Sendable {
 
     public mutating func removeProject(_ id: UUID) {
         projects.removeAll { $0.id == id }
-        for session in sessions where session.projectID == id { openSessionIDs.remove(session.id) }
+        let removed = Set(sessions.filter { $0.projectID == id }.map(\.id))
+        openTabIDs.removeAll { removed.contains($0) }
         sessions.removeAll { $0.projectID == id }
     }
 
@@ -281,7 +299,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     }
 
     public mutating func removeSession(_ id: UUID) {
-        openSessionIDs.remove(id)
+        openTabIDs.removeAll { $0 == id }
         detachFromFolders(id)
         sessions.removeAll { $0.id == id }
     }

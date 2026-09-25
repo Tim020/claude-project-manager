@@ -21,8 +21,10 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
   - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
-- **Tabs or Split.** The other sessions in the selected session's folder show as tabs, or as side-by-side panes. Toggle between them in the header, or with ⌥⌘1 / ⌥⌘2.
-- **Claude Code background agents.** New sessions start as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
+- **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running.
+- **Context window.** Each session's header (and split pane) shows how full its context window is, from Claude Code's status line data.
+- **Roles.** Optional labels for sessions (Code, Review, Research by default), chosen from a dropdown in the New Session sheet and editable in Settings.
+- **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
   - The terminal stays in its session. In Claude Code, ← on an empty prompt switches an attached terminal to its agents view; the app spots that (the terminal title becomes "claude agents") and reattaches the tab straight away, since the sidebar and tabs handle navigation. ← still moves the cursor as normal.
   - A session that isn't running shows its history with a message box: type and press Return to resume it with that message as the first prompt, or click Resume to resume without one.
@@ -40,7 +42,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Imports existing sessions.** Adding a project reads `~/.claude/projects/<project>/*.jsonl`, so sessions you started in a terminal appear too, with their titles, summaries, PR links and history.
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
-- **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. Claude Code passes these figures to status line commands, so sessions started in Claudio get a status line that records them (every 60 seconds and on each update). It then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
+- **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. It's read at launch and every 5 minutes with `claude -p /usage`, which makes no model call. Sessions started in Claudio also update it live through their status line: it records Claude Code's usage and context data, then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
 - **Dock badge.** Shows how many sessions are awaiting input.
 - **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.

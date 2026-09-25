@@ -96,6 +96,11 @@ struct ContentView: View {
             Task { await model.refreshAgents() }
         }
         .task { await model.refreshAgents() }
+        .task { await model.refreshUsage() }
+        .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in
+            // Plan usage via `claude -p /usage` (no model call).
+            Task { await model.refreshUsage() }
+        }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
     }

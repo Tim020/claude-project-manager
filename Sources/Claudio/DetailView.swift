@@ -94,6 +94,9 @@ private struct DetailHeader: View {
                 WorktreeChip(name: worktree)
             }
             Spacer(minLength: 10)
+            if let context = model.context(for: session.id) {
+                ContextMeter(context: context, compact: false)
+            }
             StatusPill(status: session.status)
             if model.canSplit {
                 LayoutToggle()
@@ -153,6 +156,40 @@ private struct DetailHeader: View {
             .fixedSize()
             .help(PullRequestDetector.countLabel(session.pullRequestURLs.count))
         }
+    }
+}
+
+/// How full the session's context window is (from its status line).
+struct ContextMeter: View {
+    let context: ContextUsage
+    let compact: Bool
+
+    private var color: Color {
+        switch context.usedPercentage {
+        case ..<60: return DS.teal
+        case ..<85: return DS.orange
+        default: return DS.red
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if !compact {
+                Text("Context")
+                    .font(DS.font(11.5))
+                    .foregroundStyle(DS.dim)
+            }
+            ZStack(alignment: .leading) {
+                Capsule().fill(DS.border)
+                Capsule().fill(color).frame(width: 44 * context.fraction)
+            }
+            .frame(width: 44, height: 4)
+            Text(context.label)
+                .font(DS.font(11.5, .semibold))
+                .foregroundStyle(DS.muted)
+        }
+        .fixedSize()
+        .help("Context window: \(context.detail)")
     }
 }
 
@@ -289,9 +326,18 @@ private struct TabItem: View {
             StatusDot(status: session.status, size: 7)
             Text(session.name)
                 .lineLimit(1)
-            Text(session.role.label)
-                .font(DS.font(11))
-                .foregroundStyle(DS.dim)
+            if !session.role.isNone {
+                Text(session.role.label)
+                    .font(DS.font(11))
+                    .foregroundStyle(DS.dim)
+            }
+            if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
+                // Tabs come from several folders: say where this one lives.
+                Text(model.workspace.name(of: group))
+                    .font(DS.font(11, italic: true))
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
             Button { model.closeTab(session.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
@@ -382,15 +428,20 @@ struct SessionPane: View {
         VStack(spacing: 0) {
             if case .compact(let focused) = style {
                 HStack(spacing: 8) {
-                    Text(session.role.label)
-                        .font(DS.font(11, .extraBold))
-                        .kerning(0.66)
-                        .foregroundStyle(DS.muted)
+                    if !session.role.isNone {
+                        Text(session.role.label)
+                            .font(DS.font(11, .extraBold))
+                            .kerning(0.66)
+                            .foregroundStyle(DS.muted)
+                    }
                     Text(session.name)
                         .font(DS.font(13.5, .bold))
                         .foregroundStyle(DS.text)
                         .lineLimit(1)
                     Spacer(minLength: 6)
+                    if let context = model.context(for: session.id) {
+                        ContextMeter(context: context, compact: true)
+                    }
                     StatusPill(status: session.status, fontSize: 11.5, verticalPadding: 1, horizontalPadding: 9)
                 }
                 .padding(.vertical, 10)

@@ -6,6 +6,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var claudePath = ""
+    @State private var roles: [String] = []
 
     var body: some View {
         Form {
@@ -33,11 +34,40 @@ struct SettingsView: View {
                     ForEach(PermissionMode.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
             }
+            Section {
+                ForEach(roles.indices, id: \.self) { index in
+                    HStack {
+                        TextField("Role", text: $roles[index])
+                            .onSubmit(saveRoles)
+                        Button {
+                            roles.remove(at: index)
+                            saveRoles()
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Remove this role")
+                    }
+                }
+                Button("Add Role") { roles.append("") }
+            } header: {
+                Text("Roles")
+            } footer: {
+                Text("Labels for sessions, offered in the New Session sheet and shown on tabs. A new session picks the first role whose name appears in its name.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480)
-        .onAppear { claudePath = model.settings.claudePath ?? "" }
-        .onDisappear(perform: savePath)
+        .onAppear {
+            claudePath = model.settings.claudePath ?? ""
+            roles = model.settings.roles
+        }
+        .onDisappear {
+            savePath()
+            saveRoles()
+        }
     }
 
     private var detectedDescription: String {
@@ -56,6 +86,12 @@ struct SettingsView: View {
                 settings[keyPath: keyPath] = value
                 model.updateSettings(settings)
             })
+    }
+
+    private func saveRoles() {
+        var settings = model.settings
+        settings.roles = AppSettings.cleanRoles(roles)
+        if settings != model.settings { model.updateSettings(settings) }
     }
 
     private func savePath() {
