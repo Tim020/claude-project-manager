@@ -25,7 +25,7 @@ struct NewSessionSheet: View {
     @State private var role: SessionRole = .code
     @State private var roleEdited = false
     @State private var modelID: String?
-    @State private var permissionMode: PermissionMode = .acceptEdits
+    @State private var permissionMode: PermissionMode = .standard
     @State private var prompt = ""
 
     var body: some View {
@@ -92,14 +92,14 @@ struct NewSessionSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                label("Prompt")
+                label("Initial prompt")
                 TextEditor(text: $prompt)
                     .font(DS.mono(13))
                     .scrollContentBackground(.hidden)
                     .padding(6)
                     .frame(minHeight: 120)
                     .fieldChrome()
-                Text("Runs `claude` headless in the project directory. Leave empty to create the session without starting it.")
+                Text("Opens Claude Code in a terminal in the project directory. Optional: leave empty to start with a blank prompt.")
                     .font(DS.font(11.5))
                     .foregroundStyle(DS.dim)
             }

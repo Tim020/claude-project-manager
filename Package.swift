@@ -8,17 +8,24 @@ let package = Package(
         .executable(name: "SessionManager", targets: ["SessionManager"]),
         .library(name: "SessionManagerCore", targets: ["SessionManagerCore"]),
     ],
+    dependencies: [
+        // Terminal emulator for each session's interactive `claude`.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.20.0"),
+    ],
     targets: [
         // Platform-independent logic: models, workspace operations, Claude Code
-        // stream-json parsing, transcript building, persistence and process
-        // orchestration. Builds and tests on Linux as well as macOS.
+        // hook events and history, terminal launch commands, persistence and
+        // AppModel. Builds and tests on Linux as well as macOS.
         .target(name: "SessionManagerCore"),
 
         // The SwiftUI macOS app. Sources are guarded with `#if os(macOS)` so the
         // package still builds on Linux CI.
         .executableTarget(
             name: "SessionManager",
-            dependencies: ["SessionManagerCore"],
+            dependencies: [
+                "SessionManagerCore",
+                .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.macOS])),
+            ],
             resources: [.copy("Resources/Fonts")]
         ),
 

@@ -15,7 +15,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPermissionMode: PermissionMode
     public var layout: LayoutMode
 
-    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .acceptEdits, layout: LayoutMode = .tabs) {
+    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .standard, layout: LayoutMode = .tabs) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
@@ -27,7 +27,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.init(
             claudePath: try c.decodeIfPresent(String.self, forKey: .claudePath),
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
-            defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .acceptEdits,
+            defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .standard,
             layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs)
     }
 }
@@ -124,7 +124,7 @@ extension Session {
             status: try c.decodeIfPresent(SessionStatus.self, forKey: .status) ?? .completed,
             summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "",
             model: try c.decodeIfPresent(String.self, forKey: .model),
-            permissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode) ?? .acceptEdits,
+            permissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode) ?? .standard,
             pullRequestURLs: try c.decodeIfPresent([String].self, forKey: .pullRequestURLs) ?? [],
             createdAt: createdAt,
             lastActivity: try c.decodeIfPresent(Date.self, forKey: .lastActivity) ?? createdAt,

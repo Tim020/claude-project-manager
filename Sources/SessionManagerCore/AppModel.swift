@@ -28,7 +28,17 @@ public struct Breadcrumb: Equatable, Sendable {
     public var session: String
 }
 
+/// Owns the live terminals (in the UI layer) so the model can stop them.
+@MainActor
+public protocol TerminalControlling: AnyObject {
+    func terminate(_ sessionID: UUID)
+}
+
 /// App state and every user action. The SwiftUI layer is a thin view over this.
+///
+/// Each running session is an interactive `claude` in a terminal. The model
+/// hands out a `TerminalLaunch` for the UI to start, learns about progress
+/// from Claude Code hook events, and is told when the terminal exits.
 @MainActor
 @Observable
 public final class AppModel {
@@ -38,29 +48,36 @@ public final class AppModel {
     public var renamingFolderID: UUID?
     /// A user-facing error to show in an alert; the view clears it.
     public var errorMessage: String?
-    public private(set) var activities: [UUID: SessionActivity] = [:]
     private var running: Set<UUID> = []
+    @ObservationIgnored private var pendingLaunches: [UUID: TerminalLaunch] = [:]
+    private var exitCodes: [UUID: Int32] = [:]
+    @ObservationIgnored private var histories: [UUID: [TranscriptLine]] = [:]
 
+    @ObservationIgnored public weak var terminals: TerminalControlling?
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored private let discovery: SessionDiscovery
-    @ObservationIgnored private let processFactory: (ClaudeLaunchConfiguration) -> AgentProcess
+    @ObservationIgnored private let hookEventsURL: URL
+    @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let locateClaude: (String?) -> String?
+    @ObservationIgnored private let shell: String
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored public let home: String
-    @ObservationIgnored private var processes: [UUID: AgentProcess] = [:]
 
     public init(
         store: StateStore,
         discovery: SessionDiscovery,
-        processFactory: @escaping (ClaudeLaunchConfiguration) -> AgentProcess,
+        hookEventsURL: URL,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
+        shell: String = ClaudeExecutableLocator.defaultShell(),
         now: @escaping () -> Date = Date.init,
         home: String = NSHomeDirectory()
     ) {
         self.store = store
         self.discovery = discovery
-        self.processFactory = processFactory
+        self.hookEventsURL = hookEventsURL
+        self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.locateClaude = locateClaude
+        self.shell = shell
         self.now = now
         self.home = home
         do {
@@ -109,12 +126,27 @@ public final class AppModel {
 
     public var awaitingInputCount: Int { statusCounts.awaitingInput }
 
-    public func activity(for sessionID: UUID) -> SessionActivity {
-        activities[sessionID] ?? SessionActivity(workingDirectory: state.workspace.session(sessionID)?.workingDirectory ?? "/")
-    }
-
     public func isRunning(_ sessionID: UUID) -> Bool {
         running.contains(sessionID)
+    }
+
+    /// Exit code of the session's last terminal, if it has exited since it was started.
+    public func lastExitCode(_ sessionID: UUID) -> Int32? {
+        exitCodes[sessionID]
+    }
+
+    /// Read-only transcript from Claude Code's history file, for sessions that
+    /// aren't running.
+    public func history(for sessionID: UUID) -> [TranscriptLine] {
+        if let cached = histories[sessionID] { return cached }
+        guard let session = state.workspace.session(sessionID) else { return [] }
+        var builder = TranscriptBuilder(workingDirectory: session.workingDirectory)
+        if session.hasConversation, let claudeID = session.claudeSessionID,
+           let events = try? discovery.loadHistory(projectPath: session.workingDirectory, claudeSessionID: claudeID) {
+            events.forEach { builder.apply($0) }
+        }
+        histories[sessionID] = builder.lines
+        return builder.lines
     }
 
     // MARK: - Projects
@@ -129,9 +161,8 @@ public final class AppModel {
 
     public func removeProject(_ id: UUID) {
         let ids = state.workspace.sessions.filter { $0.projectID == id }.map(\.id)
-        ids.forEach(stopProcess)
+        ids.forEach(stop)
         if let selected = selectedSessionID, ids.contains(selected) { selectedSessionID = nil }
-        ids.forEach { activities[$0] = nil }
         state.workspace.removeProject(id)
         save()
     }
@@ -141,9 +172,10 @@ public final class AppModel {
         save()
     }
 
-    /// Re-reads every project's sessions from disk (e.g. ones run in a terminal).
+    /// Re-reads every project's sessions from disk (e.g. ones run in another terminal).
     public func refreshAll() {
         for project in state.workspace.projects { importSessions(for: project.id) }
+        histories.removeAll()
         save()
     }
 
@@ -207,8 +239,6 @@ public final class AppModel {
 
     public func select(_ sessionID: UUID?) {
         selectedSessionID = sessionID
-        guard let sessionID, let group = state.workspace.group(of: sessionID) else { return }
-        for sibling in state.workspace.sessions(in: group) { loadHistoryIfNeeded(sibling.id) }
     }
 
     public func moveSession(_ id: UUID, to group: SessionGroup, at index: Int? = nil) {
@@ -228,13 +258,14 @@ public final class AppModel {
             let remaining = siblings.filter { $0.id != id }
             selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
         }
-        stopProcess(id)
-        activities[id] = nil
+        stop(id)
+        exitCodes[id] = nil
+        histories[id] = nil
         state.workspace.removeSession(id)
         save()
     }
 
-    /// Adds a session, selects it and, if there's a prompt, starts Claude Code.
+    /// Adds a session, selects it and opens its terminal (with the prompt, if any).
     @discardableResult
     public func createSession(_ request: NewSessionRequest) -> UUID? {
         guard let project = state.workspace.project(request.projectID) else { return nil }
@@ -250,42 +281,68 @@ public final class AppModel {
                               permissionMode: request.permissionMode,
                               createdAt: now())
         guard attempt({ try state.workspace.addSession(session, toFolder: request.folderID) }) != nil else { return nil }
-        activities[session.id] = SessionActivity(workingDirectory: session.workingDirectory)
         select(session.id)
         save()
-        if !prompt.isEmpty { send(prompt, to: session.id) }
+        start(session.id, prompt: prompt)
         return session.id
     }
 
-    public func send(_ message: String, to sessionID: UUID) {
-        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, state.workspace.session(sessionID) != nil else { return }
-        loadHistoryIfNeeded(sessionID)
-        guard let process = ensureProcess(for: sessionID) else { return }
-        do {
-            try process.send(StreamInput.userMessage(text))
-        } catch {
-            errorMessage = "Couldn't send the message: \(AppModel.describe(error))"
-            return
+    /// Queues a terminal launch for the session (new or `--resume`). Returns
+    /// false if it is already running or `claude` can't be found.
+    @discardableResult
+    public func start(_ sessionID: UUID, prompt: String? = nil) -> Bool {
+        guard !running.contains(sessionID), let session = state.workspace.session(sessionID) else { return false }
+        guard let executable = locateClaude(state.settings.claudePath) else {
+            errorMessage = "Claude Code CLI not found. Install it, or set its location in Settings."
+            return false
         }
-        mutate(sessionID) { session, activity in
-            SessionReducer.promptSent(to: &session, activity: &activity, now: now(), prompt: text)
-        }
-        save()
+        try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        pendingLaunches[sessionID] = TerminalLaunch.make(session: session, claudeExecutable: executable, shell: shell,
+                                                         initialPrompt: prompt, hookEventsPath: hookEventsURL.path)
+        running.insert(sessionID)
+        exitCodes[sessionID] = nil
+        return true
     }
 
-    public func interrupt(_ sessionID: UUID) {
-        guard let process = processes[sessionID], let line = try? StreamInput.interrupt() else { return }
-        try? process.send(line)
+    /// Hands the queued launch to the terminal that will run it (once).
+    public func takePendingLaunch(_ sessionID: UUID) -> TerminalLaunch? {
+        pendingLaunches.removeValue(forKey: sessionID)
+    }
+
+    /// Called by the UI when a session's terminal process exits.
+    public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
+        running.remove(sessionID)
+        pendingLaunches[sessionID] = nil
+        exitCodes[sessionID] = exitCode ?? 0
+        histories[sessionID] = nil
+        state.workspace.updateSession(sessionID) { session in
+            if session.status == .working { session.status = .completed }
+        }
+        save()
     }
 
     public func stop(_ sessionID: UUID) {
-        stopProcess(sessionID)
+        let wasRunning = running.remove(sessionID) != nil
+        pendingLaunches[sessionID] = nil
+        if wasRunning { terminals?.terminate(sessionID) }
     }
 
     public func shutdown() {
-        Array(processes.keys).forEach(stopProcess)
+        Array(running).forEach(stop)
         save()
+    }
+
+    /// Applies hook events written since the last poll.
+    public func pollHookEvents() {
+        let events = hookTailer.readNew()
+        guard !events.isEmpty else { return }
+        var changed = false
+        for event in events where state.workspace.session(event.appSessionID) != nil {
+            state.workspace.updateSession(event.appSessionID) { HookReducer.apply(event, to: &$0, now: now()) }
+            if event.name == .stop { histories[event.appSessionID] = nil }
+            changed = true
+        }
+        if changed { save() }
     }
 
     // MARK: - Settings
@@ -300,80 +357,7 @@ public final class AppModel {
         save()
     }
 
-    // MARK: - Process plumbing
-
-    private func ensureProcess(for sessionID: UUID) -> AgentProcess? {
-        if let existing = processes[sessionID], existing.isRunning { return existing }
-        guard let session = state.workspace.session(sessionID) else { return nil }
-        guard let executable = locateClaude(state.settings.claudePath) else {
-            errorMessage = "Claude Code CLI not found. Install it, or set its location in Settings."
-            return nil
-        }
-        let process = processFactory(ClaudeLaunchConfiguration(session: session, executable: executable))
-        process.onEvent = { [weak self] event in
-            MainActor.assumeIsolated { self?.handle(event, for: sessionID) }
-        }
-        process.onExit = { [weak self, weak process] code, stderr in
-            MainActor.assumeIsolated { self?.handleExit(code: code, stderr: stderr, for: sessionID, process: process) }
-        }
-        do {
-            try process.start()
-        } catch {
-            errorMessage = AppModel.describe(error)
-            return nil
-        }
-        processes[sessionID] = process
-        running.insert(sessionID)
-        return process
-    }
-
-    private func stopProcess(_ sessionID: UUID) {
-        guard let process = processes.removeValue(forKey: sessionID) else { return }
-        running.remove(sessionID)
-        process.terminate()
-    }
-
-    private func handle(_ event: StreamEvent, for sessionID: UUID) {
-        guard state.workspace.session(sessionID) != nil else { return }
-        mutate(sessionID) { session, activity in
-            SessionReducer.apply(event, to: &session, activity: &activity, now: now())
-        }
-        switch event {
-        case .initialized, .postTurnSummary, .result: save()
-        default: break
-        }
-    }
-
-    private func handleExit(code: Int32, stderr: String, for sessionID: UUID, process: AgentProcess?) {
-        if let process, processes[sessionID] === process {
-            processes[sessionID] = nil
-            running.remove(sessionID)
-        }
-        guard state.workspace.session(sessionID) != nil else { return }
-        mutate(sessionID) { session, activity in
-            let wasActive = activity.isTurnActive
-            SessionReducer.processExited(session: &session, activity: &activity, exitCode: code, now: now())
-            let lastLine = stderr.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-            if wasActive && code != 0 && !lastLine.isEmpty { activity.transcript.appendError(lastLine) }
-        }
-        save()
-    }
-
-    private func loadHistoryIfNeeded(_ sessionID: UUID) {
-        guard activities[sessionID] == nil, let session = state.workspace.session(sessionID) else { return }
-        var activity = SessionActivity(workingDirectory: session.workingDirectory)
-        if session.hasConversation, let claudeID = session.claudeSessionID,
-           let events = try? discovery.loadHistory(projectPath: session.workingDirectory, claudeSessionID: claudeID) {
-            events.forEach { activity.transcript.apply($0) }
-        }
-        activities[sessionID] = activity
-    }
-
-    private func mutate(_ sessionID: UUID, _ body: (inout Session, inout SessionActivity) -> Void) {
-        var activity = activities[sessionID] ?? SessionActivity(workingDirectory: state.workspace.session(sessionID)?.workingDirectory ?? "/")
-        state.workspace.updateSession(sessionID) { session in body(&session, &activity) }
-        activities[sessionID] = activity
-    }
+    // MARK: - Helpers
 
     @discardableResult
     private func attempt<T>(_ body: () throws -> T) -> T? {

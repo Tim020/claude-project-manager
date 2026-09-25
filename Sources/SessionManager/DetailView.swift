@@ -252,14 +252,25 @@ enum PaneStyle: Equatable {
     var isCompact: Bool { self != .full }
 }
 
-/// One session's transcript and composer. Full size in tabs mode; with its own
-/// header bar in split mode.
+/// One session: its live terminal while running (or after it exits, until
+/// resumed); otherwise its read-only history with a Resume bar. Split mode adds
+/// a compact header bar per pane.
 struct SessionPane: View {
     @Environment(AppModel.self) private var model
+    @Environment(TerminalRegistryBox.self) private var terminals
     let session: Session
     let style: PaneStyle
 
+    private var isFocused: Bool {
+        switch style {
+        case .full: return true
+        case .compact(let focused): return focused
+        }
+    }
+
     var body: some View {
+        let running = model.isRunning(session.id)
+        let exitCode = model.lastExitCode(session.id)
         VStack(spacing: 0) {
             if case .compact(let focused) = style {
                 HStack(spacing: 8) {
@@ -281,9 +292,55 @@ struct SessionPane: View {
                 .contentShape(Rectangle())
                 .onTapGesture { model.select(session.id) }
             }
-            TranscriptView(session: session, activity: model.activity(for: session.id), compact: style.isCompact)
-            ComposerView(session: session, compact: style.isCompact)
+            if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
+                TerminalPane(sessionID: session.id, registry: terminals.registry, isFocused: isFocused && running)
+                    .id("\(session.id)-\(running)")
+                    .background(DS.window)
+                    .simultaneousGesture(TapGesture().onEnded { model.select(session.id) })
+                if !running {
+                    ResumeBar(session: session, message: exitMessage(exitCode))
+                }
+            } else {
+                TranscriptView(session: session, lines: model.history(for: session.id), compact: style.isCompact)
+                ResumeBar(session: session, message: session.hasConversation ? "This session isn't running." : "This session hasn't started yet.")
+            }
         }
+    }
+
+    private func exitMessage(_ code: Int32?) -> String {
+        guard let code, code != 0 else { return "Session ended." }
+        return "Session ended (exit code \(code))."
+    }
+}
+
+/// "Not running" bar with the teal Resume / Start button.
+private struct ResumeBar: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(message)
+                .font(DS.font(13))
+                .foregroundStyle(DS.muted)
+            Spacer()
+            Text(ModelName.display(session.model))
+                .font(DS.font(12))
+                .foregroundStyle(DS.muted)
+            Button(session.hasConversation ? "Resume" : "Start") {
+                model.select(session.id)
+                model.start(session.id)
+            }
+            .buttonStyle(PrimaryButtonStyle())
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .fieldChrome()
+        .padding(.top, 14)
+        .padding(.bottom, 18)
+        .padding(.horizontal, 20)
+        .overlay(alignment: .top) { HorizontalRule() }
     }
 }
 #endif

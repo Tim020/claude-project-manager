@@ -8,7 +8,12 @@ enum AppEnvironment {
     static let model = AppModel(
         store: JSONFileStore(url: JSONFileStore.defaultURL),
         discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome),
-        processFactory: { ClaudeProcess(configuration: $0) })
+        hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"))
+    static let terminals: TerminalRegistryBox = {
+        let registry = TerminalRegistry(model: model)
+        model.terminals = registry
+        return TerminalRegistryBox(registry)
+    }()
     static let commands = UICommands()
 }
 
@@ -33,6 +38,7 @@ struct SessionManagerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     private let model = AppEnvironment.model
     private let commands = AppEnvironment.commands
+    private let terminals = AppEnvironment.terminals
 
     init() {
         FontRegistry.registerBundledFonts()
@@ -43,6 +49,7 @@ struct SessionManagerApp: App {
             ContentView()
                 .environment(model)
                 .environment(commands)
+                .environment(terminals)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 760)
@@ -73,10 +80,15 @@ struct SessionManagerApp: App {
                 Button("Split") { model.setLayout(.split) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
                 Divider()
-                Button("Interrupt") {
-                    if let id = model.selectedSessionID { model.interrupt(id) }
+                Button("Resume Session") {
+                    if let id = model.selectedSessionID { model.start(id) }
                 }
-                .keyboardShortcut(".", modifiers: .command)
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(model.selectedSessionID.map { model.isRunning($0) } ?? true)
+                Button("Stop Session") {
+                    if let id = model.selectedSessionID { model.stop(id) }
+                }
+                .keyboardShortcut(".", modifiers: [.command, .shift])
                 .disabled(model.selectedSessionID.map { !model.isRunning($0) } ?? true)
             }
         }

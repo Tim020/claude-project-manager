@@ -21,12 +21,20 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Drag sessions onto a folder to move them. Drop one on a project header to unfile it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** The other sessions in the selected session's folder show as tabs, or as side-by-side panes. Toggle between them in the header, or with ⌥⌘1 / ⌥⌘2.
-- **Real Claude Code sessions.** Each session runs `claude -p --input-format stream-json --output-format stream-json`. The app shows its transcript (`>` prompt, `⏺` tool call, `*` reply) and gives you a composer to reply, or to interrupt with esc.
-  - Status comes from Claude Code's own `post_turn_summary` events. A `blocked` event means Awaiting Input.
+- **The full Claude Code experience.** Each session is the interactive `claude` running in an embedded terminal (SwiftTerm), so slash-command autocomplete, `@` file mentions, permission prompts, plan mode and pickers all work exactly as they do in your own terminal.
+  - Sessions start through your login shell in the project directory, so your `PATH` and node setup match your terminal.
+  - Terminals keep running while you switch tabs, folders or projects.
+  - A session that isn't running shows its read-only history with a **Resume** button, which starts `claude --resume`.
+- **Live status from Claude Code hooks.** The app passes `--settings` hooks to the sessions it launches:
+  - Prompts and tool use mark a session **Working**.
+  - A permission request, or a reply that ends in a question, marks it **Awaiting Input**.
+  - A finished turn marks it **Completed**, and Claude's last message becomes the summary.
+  - Your own hook settings are left untouched.
 - **Imports existing sessions.** Adding a project reads `~/.claude/projects/<project>/*.jsonl`, so sessions you started in a terminal appear too, with their titles, summaries, PR links and history.
-  - Replying to an imported session resumes it with `--resume`.
+  - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
 - **Dock badge.** Shows how many sessions are awaiting input.
+- **App icon.** Light (3b) and dark (3a) variants from `Resources/Assets.xcassets`. macOS 26+ switches between them with the system appearance; earlier versions show the light icon. `scripts/build-app.sh` compiles the catalog with `actool` and falls back to a light-only `.icns` if that fails. The masters are in `design/app-icon/`.
 
 ## Requirements
 
@@ -41,19 +49,19 @@ swift run SessionManager          # run directly from the package
 ./scripts/build-app.sh            # build/Session Manager.app (+ .zip)
 ```
 
-App state (projects, folders, names, settings) is saved to `~/Library/Application Support/SessionManager/state.json`. Conversation history stays in Claude Code's own store.
+App state (projects, folders, names, settings) is saved to `~/Library/Application Support/SessionManager/state.json`, and hook events are written to `hook-events.log` in the same folder. Conversation history stays in Claude Code's own store.
 
 ## Tests
 
 The project is built test-first. All logic lives in the platform-independent `SessionManagerCore` target, and the SwiftUI layer stays a thin view over `AppModel`. The core tests cover:
 
 - workspace operations
-- stream-json parsing, using a fixture recorded from a real `claude` run
-- transcript building and status reduction
+- hook event parsing and status reduction, using fixtures recorded from real `claude` runs
+- JSONL history parsing and transcript building
+- terminal launch commands, including shell quoting and hook commands run in a real shell
 - session discovery from `.jsonl` history
 - launch arguments and executable lookup
 - persistence
-- the process runner, run against a fake `claude` script
 - `AppModel` itself
 
 ```sh
@@ -66,8 +74,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS
 ## Layout
 
 ```
-Sources/SessionManagerCore/   models, workspace ops, stream-json, discovery, process, AppModel
-Sources/SessionManager/       SwiftUI app (macOS only), theme and bundled Nunito Sans (OFL)
+Sources/SessionManagerCore/   models, workspace ops, hooks, history, launch commands, AppModel
+Sources/SessionManager/       SwiftUI app (macOS only): SwiftTerm terminals, theme, bundled Nunito Sans (OFL)
+Resources/Assets.xcassets/    app icon (light + dark)
 Tests/SessionManagerCoreTests/ XCTest suite and fixtures
 design/                       Claude Design handoff (prototype HTML, chat transcript)
 ```

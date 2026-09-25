@@ -162,7 +162,7 @@ public struct SessionDiscovery: Sendable {
             claudeSessionID: claudeSessionID,
             title: title,
             firstPrompt: prompt,
-            summary: lastAssistantText.map { ToolSummary.truncate(TranscriptBuilder.firstLine($0), to: SessionReducer.maxSummaryLength) } ?? "",
+            summary: lastAssistantText.map { ToolSummary.truncate(TranscriptBuilder.firstLine($0), to: HookReducer.maxSummaryLength) } ?? "",
             model: model,
             workingDirectory: cwd ?? defaultWorkingDirectory,
             lastActivity: latest ?? fallbackDate,

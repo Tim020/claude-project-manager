@@ -37,8 +37,10 @@ public enum SessionRole: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// Claude Code `--permission-mode` values that make sense for a headless session.
+/// Claude Code `--permission-mode` values. `.standard` passes no flag, so
+/// Claude Code asks for permission as usual (in the session's terminal).
 public enum PermissionMode: String, Codable, CaseIterable, Sendable {
+    case standard = "default"
     case acceptEdits
     case auto
     case plan
@@ -47,6 +49,7 @@ public enum PermissionMode: String, Codable, CaseIterable, Sendable {
 
     public var label: String {
         switch self {
+        case .standard: return "Ask (default)"
         case .acceptEdits: return "Accept Edits"
         case .auto: return "Auto"
         case .plan: return "Plan Only"
@@ -96,7 +99,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         status: SessionStatus = .completed,
         summary: String = "",
         model: String? = nil,
-        permissionMode: PermissionMode = .acceptEdits,
+        permissionMode: PermissionMode = .standard,
         pullRequestURLs: [String] = [],
         createdAt: Date = Date(),
         lastActivity: Date? = nil,

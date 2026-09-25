@@ -36,7 +36,7 @@ final class PersistenceTests: XCTestCase {
         let json = #"{"workspace":{"projects":[],"sessions":[]},"settings":{}}"#
         let state = try JSONFileStore.decoder.decode(PersistedState.self, from: Data(json.utf8))
         XCTAssertEqual(state.settings, AppSettings())
-        XCTAssertEqual(state.settings.defaultPermissionMode, .acceptEdits)
+        XCTAssertEqual(state.settings.defaultPermissionMode, .standard)
         XCTAssertEqual(state.settings.layout, .tabs)
     }
 
@@ -45,7 +45,7 @@ final class PersistenceTests: XCTestCase {
         let session = try JSONFileStore.decoder.decode(Session.self, from: Data(json.utf8))
         XCTAssertEqual(session.status, .completed)
         XCTAssertEqual(session.role, .code)
-        XCTAssertEqual(session.permissionMode, .acceptEdits)
+        XCTAssertEqual(session.permissionMode, .standard)
         XCTAssertFalse(session.isArchived)
         XCTAssertEqual(session.pullRequestURLs, [])
     }

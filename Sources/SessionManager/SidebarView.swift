@@ -396,8 +396,12 @@ struct SessionMenu: View {
         }
         Divider()
         if model.isRunning(session.id) {
-            Button("Interrupt") { model.interrupt(session.id) }
-            Button("Stop Process") { model.stop(session.id) }
+            Button("Stop Session") { model.stop(session.id) }
+        } else {
+            Button(session.hasConversation ? "Resume Session" : "Start Session") {
+                model.select(session.id)
+                model.start(session.id)
+            }
         }
         Button("Delete Session", role: .destructive) { model.deleteSession(session.id) }
     }

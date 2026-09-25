@@ -1,49 +1,6 @@
 import XCTest
 @testable import SessionManagerCore
 
-final class FakeProcess: AgentProcess {
-    var onEvent: ((StreamEvent) -> Void)?
-    var onExit: ((Int32, String) -> Void)?
-    var isRunning = false
-    var sent: [String] = []
-    var terminated = false
-    var startError: Error?
-    let configuration: ClaudeLaunchConfiguration
-
-    init(configuration: ClaudeLaunchConfiguration) {
-        self.configuration = configuration
-    }
-
-    func start() throws {
-        if let startError { throw startError }
-        isRunning = true
-    }
-
-    func send(_ line: String) throws {
-        guard isRunning else { throw AgentProcessError.notRunning }
-        sent.append(line)
-    }
-
-    func terminate() {
-        terminated = true
-        exit(143)
-    }
-
-    func emit(_ event: StreamEvent) { onEvent?(event) }
-
-    func exit(_ code: Int32, stderr: String = "") {
-        guard isRunning else { return }
-        isRunning = false
-        onExit?(code, stderr)
-    }
-
-    var sentPrompts: [String] {
-        sent.compactMap { line in
-            (try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)))?["message"]?["content"]?.stringValue
-        }
-    }
-}
-
 final class MemoryStore: StateStore {
     var state = PersistedState()
     var saves = 0
@@ -54,33 +11,51 @@ final class MemoryStore: StateStore {
     }
 }
 
+final class FakeTerminals: TerminalControlling {
+    var terminated: [UUID] = []
+    func terminate(_ sessionID: UUID) { terminated.append(sessionID) }
+}
+
 /// Test bodies run via `MainActor.assumeIsolated`: XCTest runs tests on the
 /// main thread, and a `@MainActor` test class breaks test discovery on Linux.
 final class AppModelTests: XCTestCase {
     let projectPath = "/Users/tim/Documents/Code/DigiScript"
     var store = MemoryStore()
-    var processes: [FakeProcess] = []
+    var terminals: FakeTerminals!
     var claudePath: String? = "/usr/local/bin/claude"
     var clock = Date(timeIntervalSince1970: 1_790_000_000)
+    var hookLog: URL!
 
     @MainActor
     private func makeModel() throws -> AppModel {
-        AppModel(
+        hookLog = try makeTemporaryDirectory().appendingPathComponent("hook-events.log")
+        let model = AppModel(
             store: store,
             discovery: SessionDiscovery(claudeHome: try Fixtures.url("claude-home")),
-            processFactory: { [unowned self] config in
-                let process = FakeProcess(configuration: config)
-                self.processes.append(process)
-                return process
-            },
+            hookEventsURL: hookLog,
             locateClaude: { [unowned self] _ in self.claudePath },
+            shell: "/bin/zsh",
             now: { [unowned self] in self.clock },
             home: "/Users/tim")
+        terminals = FakeTerminals()
+        model.terminals = terminals
+        return model
     }
 
     @MainActor
-    private func request(_ model: AppModel, project: UUID, folder: UUID? = nil, prompt: String = "Fix the storage bug") -> NewSessionRequest {
-        NewSessionRequest(projectID: project, folderID: folder, name: "storage fix", role: .code, prompt: prompt, model: nil, permissionMode: .acceptEdits)
+    private func request(project: UUID, folder: UUID? = nil, prompt: String = "Fix the storage bug") -> NewSessionRequest {
+        NewSessionRequest(projectID: project, folderID: folder, name: "storage fix", role: .code, prompt: prompt, model: nil, permissionMode: .standard)
+    }
+
+    private func appendHook(_ id: UUID, _ json: String) throws {
+        let line = "\(id.uuidString)\t\(json)\n"
+        if let handle = try? FileHandle(forWritingTo: hookLog) {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+            try handle.close()
+        } else {
+            try line.write(to: hookLog, atomically: false, encoding: .utf8)
+        }
     }
 
     // MARK: Projects
@@ -95,28 +70,30 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testStateIsLoadedFromStore() throws {
+    func testStateIsLoadedFromStoreAndStaleWorkingIsReset() throws {
         try MainActor.assumeIsolated {
             var state = PersistedState()
-            state.workspace.addProject(path: "/code/x")
+            let p = state.workspace.addProject(path: "/code/x")
+            try state.workspace.addSession(Session(projectID: p, name: "was running", workingDirectory: "/code/x", status: .working))
             state.settings.layout = .split
             store.state = state
             let model = try makeModel()
             XCTAssertEqual(model.workspace.projects.map(\.name), ["x"])
             XCTAssertEqual(model.settings.layout, .split)
+            XCTAssertEqual(model.workspace.sessions.first?.status, .completed)
         }
     }
 
-    func testRemoveProjectStopsItsProcessesAndClearsSelection() throws {
+    func testRemoveProjectTerminatesItsTerminals() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
+            let id = try XCTUnwrap(model.createSession(request(project: p)))
             model.removeProject(p)
-            XCTAssertTrue(processes[0].terminated)
+            XCTAssertEqual(terminals.terminated, [id])
             XCTAssertNil(model.selectedSessionID)
+            XCTAssertFalse(model.isRunning(id))
             XCTAssertTrue(model.workspace.projects.isEmpty)
-            XCTAssertNil(model.workspace.session(id))
         }
     }
 
@@ -163,48 +140,46 @@ final class AppModelTests: XCTestCase {
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let f = try XCTUnwrap(model.createFolder(in: p))
-            let sessions = model.workspace.sessions(in: .unfiled(projectID: p))
-            for s in sessions { model.moveSession(s.id, to: .folder(f)) }
+            for s in model.workspace.sessions(in: .unfiled(projectID: p)) { model.moveSession(s.id, to: .folder(f)) }
             XCTAssertEqual(model.workspace.sessions(in: .folder(f)).count, 2)
             model.archiveCompleted(in: .folder(f))
-            // One is completed, the other awaits input.
             XCTAssertEqual(model.workspace.sessions(in: .folder(f)).map(\.name), ["pr review inline 1427"])
         }
     }
 
-    // MARK: Sessions
+    // MARK: Terminal lifecycle
 
-    func testCreateSessionStartsProcessSendsPromptAndSelects() throws {
+    func testCreateSessionQueuesTerminalLaunchWithPrompt() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
             let f = try XCTUnwrap(model.createFolder(in: p))
-            let id = try XCTUnwrap(model.createSession(request(model, project: p, folder: f)))
+            let id = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
 
             let session = try XCTUnwrap(model.workspace.session(id))
             XCTAssertEqual(model.selectedSessionID, id)
             XCTAssertEqual(model.workspace.group(of: id), .folder(f))
-            XCTAssertEqual(session.status, .working)
             XCTAssertEqual(session.workingDirectory, "/code/app")
-            XCTAssertNotNil(session.claudeSessionID)
-
-            let process = try XCTUnwrap(processes.first)
-            XCTAssertEqual(process.configuration.resume, false)
-            XCTAssertEqual(process.configuration.claudeSessionID, session.claudeSessionID)
-            XCTAssertEqual(process.configuration.executable, "/usr/local/bin/claude")
-            XCTAssertEqual(process.sentPrompts, ["Fix the storage bug"])
-            XCTAssertEqual(model.activity(for: id).transcript.lines.map(\.text), ["Fix the storage bug"])
             XCTAssertTrue(model.isRunning(id))
+
+            let launch = try XCTUnwrap(model.takePendingLaunch(id))
+            XCTAssertEqual(launch.executable, "/bin/zsh")
+            XCTAssertEqual(Array(launch.claudeArguments.prefix(3)), ["Fix the storage bug", "--session-id", session.claudeSessionID!])
+            XCTAssertTrue(launch.claudeArguments.contains { $0.contains(self.hookLog.path) })
+            XCTAssertNil(model.takePendingLaunch(id), "a launch is handed out once")
         }
     }
 
-    func testCreateSessionWithoutPromptDoesNotLaunch() throws {
+    func testCreateSessionWithoutPromptStillOpensTerminal() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p, prompt: "  ")))
-            XCTAssertTrue(processes.isEmpty)
-            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
+            var req = request(project: p, prompt: " ")
+            req.name = ""
+            let id = try XCTUnwrap(model.createSession(req))
+            XCTAssertEqual(model.workspace.session(id)?.name, "New session")
+            let launch = try XCTUnwrap(model.takePendingLaunch(id))
+            XCTAssertEqual(launch.claudeArguments.first, "--session-id")
         }
     }
 
@@ -212,113 +187,103 @@ final class AppModelTests: XCTestCase {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            var req = request(model, project: p, prompt: "Review PR 1422 and post inline comments")
+            var req = request(project: p, prompt: "Review PR 1422 and post inline comments")
             req.name = ""
             let id = try XCTUnwrap(model.createSession(req))
             XCTAssertEqual(model.workspace.session(id)?.name, "Review PR 1422 and post inline comments")
-            XCTAssertEqual(model.workspace.session(id)?.role, .code, "explicit role wins")
         }
     }
 
-    func testEventsFromProcessUpdateSessionAndTranscript() throws {
-        try MainActor.assumeIsolated {
-            let model = try makeModel()
-            let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
-            let process = processes[0]
-            for event in try Fixtures.lines("stream-basic.jsonl").compactMap(StreamEventParser.parse) {
-                process.emit(event)
-            }
-            let session = try XCTUnwrap(model.workspace.session(id))
-            XCTAssertEqual(session.status, .awaitingInput)
-            XCTAssertEqual(session.model, "claude-sonnet-5")
-            XCTAssertTrue(session.hasConversation)
-            XCTAssertEqual(model.activity(for: id).transcript.lines.map(\.kind), [.prompt, .tool, .assistant])
-            XCTAssertEqual(model.awaitingInputCount, 1)
-            XCTAssertEqual(store.state.workspace.session(id)?.status, .awaitingInput, "status changes are persisted")
-        }
-    }
-
-    func testFollowUpMessageReusesRunningProcess() throws {
-        try MainActor.assumeIsolated {
-            let model = try makeModel()
-            let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
-            processes[0].emit(.result(ResultInfo(isError: false, subtype: "success", text: "Which option?", sessionID: nil, costUSD: nil, permissionDenials: 0)))
-            model.send("Option B", to: id)
-            XCTAssertEqual(processes.count, 1)
-            XCTAssertEqual(processes[0].sentPrompts, ["Fix the storage bug", "Option B"])
-            XCTAssertEqual(model.workspace.session(id)?.status, .working)
-        }
-    }
-
-    func testMessagingImportedSessionResumesIt() throws {
+    func testResumingImportedSessionUsesResume() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let imported = model.workspace.sessions(in: .unfiled(projectID: p))[1]
-            model.send("Post it", to: imported.id)
-            let process = try XCTUnwrap(processes.first)
-            XCTAssertTrue(process.configuration.resume)
-            XCTAssertEqual(process.configuration.claudeSessionID, "bbbbbbbb-0000-0000-0000-000000000002")
-            XCTAssertEqual(process.configuration.workingDirectory, projectPath)
+            XCTAssertFalse(model.isRunning(imported.id))
+            XCTAssertTrue(model.start(imported.id))
+            let launch = try XCTUnwrap(model.takePendingLaunch(imported.id))
+            XCTAssertEqual(Array(launch.claudeArguments.prefix(2)), ["--resume", "bbbbbbbb-0000-0000-0000-000000000002"])
+            XCTAssertTrue(launch.arguments[2].hasPrefix("cd '\(projectPath)' && exec "))
         }
     }
 
-    func testProcessExitAllowsRelaunchWithResume() throws {
+    func testStartingARunningSessionDoesNothing() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
-            processes[0].emit(.initialized(sessionID: model.workspace.session(id)!.claudeSessionID!, model: nil, cwd: nil))
-            processes[0].exit(1, stderr: "boom\nAPI Error: overloaded")
-            XCTAssertFalse(model.isRunning(id))
-            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
-            XCTAssertEqual(model.activity(for: id).transcript.lines.last?.text, "API Error: overloaded")
-
-            model.send("try again", to: id)
-            XCTAssertEqual(processes.count, 2)
-            XCTAssertTrue(processes[1].configuration.resume)
+            let id = try XCTUnwrap(model.createSession(request(project: p)))
+            _ = model.takePendingLaunch(id)
+            XCTAssertFalse(model.start(id))
+            XCTAssertNil(model.takePendingLaunch(id))
         }
     }
 
-    func testMissingClaudeReportsErrorWithoutChangingStatus() throws {
+    func testMissingClaudeReportsError() throws {
         try MainActor.assumeIsolated {
             claudePath = nil
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
+            let id = try XCTUnwrap(model.createSession(request(project: p)))
             XCTAssertNotNil(model.errorMessage)
-            XCTAssertTrue(processes.isEmpty)
-            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
+            XCTAssertFalse(model.isRunning(id))
+            XCTAssertNil(model.takePendingLaunch(id))
         }
     }
 
-    func testStartFailureReportsError() throws {
-        try MainActor.assumeIsolated {
-            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try Fixtures.url("claude-home")),
-                                 processFactory: { config in
-                                     let process = FakeProcess(configuration: config)
-                                     process.startError = AgentProcessError.executableNotFound("/x")
-                                     return process
-                                 },
-                                 locateClaude: { _ in "/x" }, now: { Date() }, home: "/")
-            let p = model.addProject(path: "/code/app")
-            let id = model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "n", role: .code, prompt: "go", model: nil, permissionMode: .auto))
-            XCTAssertNotNil(id)
-            XCTAssertEqual(model.errorMessage, "Claude Code was not found at /x.")
-            XCTAssertFalse(model.isRunning(id!))
-        }
-    }
-
-    func testInterruptSendsControlRequest() throws {
+    func testTerminalExitStopsRunningAndRecordsExitCode() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
-            let id = try XCTUnwrap(model.createSession(request(model, project: p)))
-            model.interrupt(id)
-            let last = try JSONDecoder().decode(JSONValue.self, from: Data(processes[0].sent.last!.utf8))
-            XCTAssertEqual(last["type"], .string("control_request"))
+            let id = try XCTUnwrap(model.createSession(request(project: p)))
+            try appendHook(id, #"{"hook_event_name":"UserPromptSubmit","session_id":"x"}"#)
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(id)?.status, .working)
+
+            model.terminalExited(id, exitCode: 1)
+            XCTAssertFalse(model.isRunning(id))
+            XCTAssertEqual(model.lastExitCode(id), 1)
+            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
+            XCTAssertTrue(model.workspace.session(id)!.hasConversation)
+
+            XCTAssertTrue(model.start(id))
+            XCTAssertNil(model.lastExitCode(id))
+            XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments.first, "--resume")
+        }
+    }
+
+    func testHookEventsUpdateStatusAndArePersisted() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let id = try XCTUnwrap(model.createSession(request(project: p)))
+            let unknown = UUID()
+            try appendHook(id, #"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"}"#)
+            try appendHook(unknown, #"{"hook_event_name":"Stop"}"#)
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(id)?.status, .awaitingInput)
+            XCTAssertEqual(model.awaitingInputCount, 1)
+            XCTAssertEqual(store.state.workspace.session(id)?.status, .awaitingInput)
+
+            try appendHook(id, #"{"hook_event_name":"Stop","last_assistant_message":"Opened https://github.com/a/b/pull/7"}"#)
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
+            XCTAssertEqual(model.workspace.session(id)?.pullRequestURLs, ["https://github.com/a/b/pull/7"])
+        }
+    }
+
+    func testHookLogContentFromBeforeLaunchIsIgnored() throws {
+        try MainActor.assumeIsolated {
+            hookLog = try makeTemporaryDirectory().appendingPathComponent("hook-events.log")
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: "/code/x")
+            let s = Session(projectID: p, name: "s", workingDirectory: "/code/x")
+            try state.workspace.addSession(s)
+            store.state = state
+            try appendHook(s.id, #"{"hook_event_name":"UserPromptSubmit"}"#)
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try Fixtures.url("claude-home")),
+                                 hookEventsURL: hookLog, locateClaude: { _ in "/c" }, shell: "/bin/sh", now: { Date() }, home: "/")
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(s.id)?.status, .completed)
         }
     }
 
@@ -327,25 +292,38 @@ final class AppModelTests: XCTestCase {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
             let f = try XCTUnwrap(model.createFolder(in: p))
-            let first = try XCTUnwrap(model.createSession(request(model, project: p, folder: f)))
-            let second = try XCTUnwrap(model.createSession(request(model, project: p, folder: f)))
+            let first = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let second = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
             XCTAssertEqual(model.selectedSessionID, second)
             model.deleteSession(second)
-            XCTAssertTrue(processes[1].terminated)
+            XCTAssertEqual(terminals.terminated, [second])
             XCTAssertNil(model.workspace.session(second))
             XCTAssertEqual(model.selectedSessionID, first)
         }
     }
 
+    func testStopAndShutdownTerminate() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            let b = try XCTUnwrap(model.createSession(request(project: p)))
+            model.stop(a)
+            XCTAssertEqual(terminals.terminated, [a])
+            model.shutdown()
+            XCTAssertEqual(Set(terminals.terminated), [a, b])
+        }
+    }
+
     // MARK: Selection & presentation
 
-    func testSelectingImportedSessionLoadsHistory() throws {
+    func testHistoryIsLoadedForImportedSessions() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = model.workspace.sessions(in: .unfiled(projectID: p))[0]
             model.select(s.id)
-            XCTAssertEqual(model.activity(for: s.id).transcript.lines.map(\.kind), [.prompt, .tool, .assistant])
+            XCTAssertEqual(model.history(for: s.id).map(\.kind), [.prompt, .tool, .assistant])
         }
     }
 
@@ -360,8 +338,6 @@ final class AppModelTests: XCTestCase {
             model.select(unfiled[1].id)
             XCTAssertEqual(model.tabs.map(\.id), [unfiled[0].id, unfiled[1].id])
             XCTAssertEqual(model.breadcrumb, Breadcrumb(project: "DigiScript", folder: "New Folder", session: "pr review inline 1427"))
-            // Split view panes load every sibling's history.
-            XCTAssertFalse(model.activity(for: unfiled[0].id).transcript.lines.isEmpty)
         }
     }
 
@@ -386,25 +362,16 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testRefreshPicksUpNewDiskStateButSkipsLiveSessions() throws {
+    func testRefreshSkipsRunningSessions() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = model.workspace.sessions(in: .unfiled(projectID: p))[1]
-            model.send("go", to: s.id)
+            model.start(s.id)
+            try appendHook(s.id, #"{"hook_event_name":"UserPromptSubmit"}"#)
+            model.pollHookEvents()
             model.refreshAll()
             XCTAssertEqual(model.workspace.session(s.id)?.status, .working)
-        }
-    }
-
-    func testShutdownTerminatesEverything() throws {
-        try MainActor.assumeIsolated {
-            let model = try makeModel()
-            let p = model.addProject(path: "/code/app")
-            _ = model.createSession(request(model, project: p))
-            _ = model.createSession(request(model, project: p))
-            model.shutdown()
-            XCTAssertTrue(processes.allSatisfy(\.terminated))
         }
     }
 }

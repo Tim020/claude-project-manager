@@ -1,69 +1,86 @@
 import Foundation
 
-/// How to start `claude` for a session in headless stream-json mode.
-public struct ClaudeLaunchConfiguration: Equatable, Sendable {
+/// Everything needed to start a session's interactive `claude` in a terminal.
+/// The command runs through the user's login shell so PATH, node version
+/// managers, etc. match their own terminal.
+public struct TerminalLaunch: Equatable, Sendable {
+    /// The shell to exec (e.g. `/bin/zsh`).
     public var executable: String
+    /// Shell arguments: `-l -c "cd … && exec claude …"`.
+    public var arguments: [String]
+    public var environment: [String: String]
     public var workingDirectory: String
-    public var claudeSessionID: String
-    /// `--resume` an existing conversation instead of creating one with `--session-id`.
-    public var resume: Bool
-    public var model: String?
-    public var permissionMode: PermissionMode
+    /// The arguments passed to `claude` itself (for display and tests).
+    public var claudeArguments: [String]
 
-    public init(executable: String, workingDirectory: String, claudeSessionID: String, resume: Bool, model: String?, permissionMode: PermissionMode) {
-        self.executable = executable
-        self.workingDirectory = workingDirectory
-        self.claudeSessionID = claudeSessionID
-        self.resume = resume
-        self.model = model
-        self.permissionMode = permissionMode
+    /// `KEY=VALUE` pairs, the form terminal emulators expect.
+    public var environmentList: [String] {
+        environment.keys.sorted().map { "\($0)=\(environment[$0]!)" }
     }
 
-    public init(session: Session, executable: String) {
-        self.init(executable: executable,
-                  workingDirectory: session.workingDirectory,
-                  claudeSessionID: session.claudeSessionID ?? session.id.uuidString.lowercased(),
-                  resume: session.hasConversation,
-                  model: session.model,
-                  permissionMode: session.permissionMode)
-    }
+    public static func make(
+        session: Session,
+        claudeExecutable: String,
+        shell: String,
+        initialPrompt: String?,
+        hookEventsPath: String,
+        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> TerminalLaunch {
+        let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
+        var claudeArguments: [String] = []
+        if let prompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
+            // The prompt goes first so variadic options can't swallow it.
+            claudeArguments.append(prompt)
+        }
+        claudeArguments += session.hasConversation ? ["--resume", claudeID] : ["--session-id", claudeID]
+        if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
+        if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
+        claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath)]
 
-    public var arguments: [String] {
-        var args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
-        args += resume ? ["--resume", claudeSessionID] : ["--session-id", claudeSessionID]
-        if let model, !model.isEmpty { args += ["--model", model] }
-        args += ["--permission-mode", permissionMode.rawValue]
-        return args
+        let command = "cd \(ShellQuote.quote(session.workingDirectory)) && exec "
+            + ([claudeExecutable] + claudeArguments).map(ShellQuote.quote).joined(separator: " ")
+
+        var environment = ClaudeExecutableLocator.childEnvironment(base: baseEnvironment, executable: claudeExecutable)
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["TERM_PROGRAM"] = "SessionManager"
+        if environment["LANG"]?.isEmpty ?? true { environment["LANG"] = "en_US.UTF-8" }
+        environment["SESSION_MANAGER_SESSION_ID"] = session.id.uuidString
+
+        return TerminalLaunch(executable: shell, arguments: ["-l", "-c", command], environment: environment,
+                              workingDirectory: session.workingDirectory, claudeArguments: claudeArguments)
     }
 }
 
-/// Lines written to the process's stdin (`--input-format stream-json`).
-public enum StreamInput {
-    private struct UserLine: Encodable {
-        struct Message: Encodable { let role = "user"; let content: String }
-        let type = "user"
-        let message: Message
+/// POSIX shell single-quoting.
+public enum ShellQuote {
+    public static func quote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+    }
+}
+
+/// The `--settings` JSON that makes Claude Code report lifecycle events to the
+/// app: each hook appends `<app session UUID>\t<event JSON>` to a log file.
+public enum HookSettings {
+    public static let events: [HookEventName] = [
+        .sessionStart, .userPromptSubmit, .preToolUse, .postToolUse, .notification, .stop, .sessionEnd,
+    ]
+
+    public static func command(appSessionID: UUID, eventsPath: String) -> String {
+        // Read the whole event first so the append is a single write.
+        #"line=$(tr -d '\n'); printf '%s\t%s\n' '"# + appSessionID.uuidString + #"' "$line" >> "# + ShellQuote.quote(eventsPath)
     }
 
-    private struct ControlLine: Encodable {
-        struct Request: Encodable { let subtype: String }
-        let type = "control_request"
-        let request_id: String
-        let request: Request
-    }
-
-    public static func userMessage(_ text: String) throws -> String {
-        try encode(UserLine(message: .init(content: text)))
-    }
-
-    public static func interrupt(requestID: String = UUID().uuidString) throws -> String {
-        try encode(ControlLine(request_id: requestID, request: .init(subtype: "interrupt")))
-    }
-
-    private static func encode<T: Encodable>(_ value: T) throws -> String {
+    public static func json(appSessionID: UUID, eventsPath: String) -> String {
+        let hook: JSONValue = .object(["type": .string("command"), "command": .string(command(appSessionID: appSessionID, eventsPath: eventsPath))])
+        var hooks: [String: JSONValue] = [:]
+        for event in events {
+            hooks[event.rawValue] = .array([.object(["hooks": .array([hook])])])
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return String(decoding: try encoder.encode(value), as: UTF8.self)
+        let data = (try? encoder.encode(JSONValue.object(["hooks": .object(hooks)]))) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
     }
 }
 
@@ -91,6 +108,12 @@ public enum ClaudeExecutableLocator {
             if isExecutable(candidate) { return candidate }
         }
         return nil
+    }
+
+    /// The user's login shell.
+    public static func defaultShell(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let shell = environment["SHELL"], !shell.isEmpty { return shell }
+        return "/bin/zsh"
     }
 
     /// Environment for the child process: PATH gains the executable's own

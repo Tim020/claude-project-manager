@@ -63,6 +63,10 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             model.refreshAll()
         }
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+            // Status updates from the Claude Code hooks of running sessions.
+            model.pollHookEvents()
+        }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
     }
