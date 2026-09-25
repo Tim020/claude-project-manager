@@ -343,6 +343,12 @@ private struct SessionRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            if model.isOpenInTerminal(session.id) {
+                Image(systemName: "terminal")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.dim)
+                    .help("Running in a terminal")
+            }
             if Worktree.name(ofPath: session.workingDirectory) != nil {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 10))

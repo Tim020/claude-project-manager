@@ -60,6 +60,14 @@ struct ContentView: View {
             commands.offeredFirstRunImport = true
             if !model.importableProjects().isEmpty { commands.showImportProjects = true }
         }
+        .alert(copyTitle, isPresented: copyBinding) {
+            Button("Resume a Copy") {
+                if let id = model.copyConfirmation { model.resumeCopy(of: id) }
+            }
+            Button("Cancel", role: .cancel) { model.copyConfirmation = nil }
+        } message: {
+            Text("This session is open in a terminal. Resuming it here starts a separate copy of the conversation; to keep working on the original, switch to that terminal.")
+        }
         .alert("Session Manager", isPresented: errorBinding) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
@@ -85,6 +93,15 @@ struct ContentView: View {
         .task { await model.refreshAgents() }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
+    }
+
+    private var copyTitle: String {
+        let name = model.copyConfirmation.flatMap { model.workspace.session($0)?.name } ?? "Session"
+        return "“\(name)” is running in a terminal"
+    }
+
+    private var copyBinding: Binding<Bool> {
+        Binding(get: { model.copyConfirmation != nil }, set: { if !$0 { model.copyConfirmation = nil } })
     }
 
     private var errorBinding: Binding<Bool> {

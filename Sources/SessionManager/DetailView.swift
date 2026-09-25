@@ -430,6 +430,7 @@ struct SessionPane: View {
 
     private var idleMessage: String {
         if model.isAgentAlive(session.id) { return "The agent is running in the background." }
+        if model.isOpenInTerminal(session.id) { return "Running in a terminal — continue it there." }
         return session.hasConversation ? "This session isn't running." : "This session hasn't started yet."
     }
 }
@@ -456,7 +457,9 @@ private struct ResumeBar: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            Button(model.isAgentAlive(session.id) ? "Attach" : session.hasConversation ? "Resume" : "Start") {
+            Button(model.isAgentAlive(session.id) ? "Attach"
+                   : model.isOpenInTerminal(session.id) ? "Resume a Copy…"
+                   : session.hasConversation ? "Resume" : "Start") {
                 model.select(session.id)
                 model.resume(session.id)
             }

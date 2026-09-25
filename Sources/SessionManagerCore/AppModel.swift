@@ -61,6 +61,11 @@ public final class AppModel {
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
     private var agents: [String: BackgroundAgent] = [:]
+    /// Interactive `claude` processes running in terminals, by session id.
+    private var terminalSessions: [String: InteractiveSession] = [:]
+    /// A session the user asked to resume while it's open in a terminal;
+    /// the UI asks whether to start a copy (`resumeCopy(of:)`).
+    public var copyConfirmation: UUID?
     /// Agent state last applied per agent, so polling doesn't clobber newer
     /// hook updates with an unchanged state.
     @ObservationIgnored private var appliedAgentStates: [String: String] = [:]
@@ -169,6 +174,12 @@ public final class AppModel {
     /// Whether the session has a live terminal in the app.
     public func isRunning(_ sessionID: UUID) -> Bool {
         running.contains(sessionID)
+    }
+
+    /// Whether the session is open in an interactive `claude` in a terminal.
+    public func isOpenInTerminal(_ sessionID: UUID) -> Bool {
+        guard let claudeID = state.workspace.session(sessionID)?.claudeSessionID else { return false }
+        return terminalSessions[claudeID] != nil
     }
 
     /// Whether the session's background agent process is alive (it may be
@@ -435,6 +446,9 @@ public final class AppModel {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
         if isAgentAlive(sessionID) {
             attach(sessionID)
+        } else if isOpenInTerminal(sessionID) {
+            // Resuming would fork the conversation; let the user decide.
+            copyConfirmation = sessionID
         } else if state.settings.useBackgroundAgents && session.hasConversation && session.claudeSessionID != nil {
             enqueue { await self.resumeInBackground(sessionID) }
         } else {
@@ -442,13 +456,49 @@ public final class AppModel {
         }
     }
 
+    /// Starts a background copy of a session that's open in a terminal.
+    public func resumeCopy(of sessionID: UUID) {
+        copyConfirmation = nil
+        enqueue { await self.resumeInBackground(sessionID) }
+    }
+
     /// Re-reads `claude agents --json --all`: links and updates known
     /// sessions, and adds agents started elsewhere for projects in the sidebar.
     public func refreshAgents() async {
         guard let commands = agentCommands(reportErrors: false) else { return }
         let result = await runner.run(commands.list())
-        guard result.exitCode == 0, let listed = try? AgentListParser.parse(Data(result.output.utf8)) else { return }
+        let data = Data(result.output.utf8)
+        guard result.exitCode == 0, let listed = try? AgentListParser.parse(data) else { return }
         apply(listed)
+        applyTerminalSessions((try? AgentListParser.parseInteractive(data)) ?? [])
+    }
+
+    func applyTerminalSessions(_ listed: [InteractiveSession]) {
+        var changed = false
+        var unknownProjects = Set<UUID>()
+        for terminal in listed {
+            guard let session = state.workspace.session(claudeSessionID: terminal.sessionID) else {
+                if let project = state.workspace.projectID(forWorkingDirectory: terminal.cwd) { unknownProjects.insert(project) }
+                continue
+            }
+            let key = "terminal|\(terminal.status ?? "")"
+            guard appliedAgentStates[terminal.sessionID] != key else { continue }
+            appliedAgentStates[terminal.sessionID] = key
+            state.workspace.updateSession(session.id) { session in
+                if terminal.isBusy {
+                    session.status = .working
+                    session.needsAction = nil
+                } else if session.status == .working {
+                    session.status = .completed
+                }
+                session.lastActivity = now()
+            }
+            changed = true
+        }
+        terminalSessions = Dictionary(listed.map { ($0.sessionID, $0) }, uniquingKeysWith: { $1 })
+        // A new terminal session in a known project: pick it up from its history.
+        unknownProjects.forEach(importSessions)
+        if changed || !unknownProjects.isEmpty { save() }
     }
 
     func apply(_ listed: [BackgroundAgent]) {
@@ -522,6 +572,11 @@ public final class AppModel {
             save()
             return
         }
+        if let copyID = AgentListParser.copiedID(from: result.output + "\n" + result.errorOutput) {
+            addCopy(of: sessionID, agentID: copyID)
+            await refreshAgents()
+            return
+        }
         state.workspace.updateSession(sessionID) { session in
             session.agentID = agentID
             session.hasConversation = true
@@ -529,6 +584,23 @@ public final class AppModel {
         save()
         attach(sessionID)
         await refreshAgents()
+    }
+
+    /// The CLI started a copy of the conversation: keep it as its own
+    /// session beside the original rather than relinking the original.
+    private func addCopy(of originalID: UUID, agentID: String) {
+        guard let original = state.workspace.session(originalID) else { return }
+        var copy = Session(projectID: original.projectID, hasConversation: true, name: "\(original.name) (copy)",
+                           role: original.role, workingDirectory: original.workingDirectory, status: .working,
+                           model: original.model, permissionMode: original.permissionMode, createdAt: now())
+        copy.agentID = agentID
+        copy.hasCustomName = true
+        var folderID: UUID?
+        if case .folder(let id)? = state.workspace.group(of: originalID) { folderID = id }
+        try? state.workspace.addSession(copy, toFolder: folderID)
+        select(copy.id)
+        save()
+        attach(copy.id)
     }
 
     private func attach(_ sessionID: UUID) {

@@ -162,3 +162,24 @@ final class ProcessCommandRunnerTests: XCTestCase {
         XCTAssertNotEqual(result.exitCode, 0)
     }
 }
+
+final class InteractiveSessionParserTests: XCTestCase {
+    func testParsesInteractiveTerminalSessions() throws {
+        let data = Data(try Fixtures.string("agents-interactive.json").utf8)
+        let sessions = try AgentListParser.parseInteractive(data)
+        XCTAssertEqual(sessions, [InteractiveSession(sessionID: "312fdcb6-6989-492e-a86f-3afc149f9c90", pid: 64054,
+                                                     cwd: "/Users/tim/Documents/Code/DigiScript", status: "busy")])
+        XCTAssertEqual(sessions[0].isBusy, true)
+        XCTAssertEqual(try AgentListParser.parse(data).map(\.id), ["2bd6a047"], "background parsing unaffected")
+    }
+
+    func testParsesCopyNoteFromResume() {
+        let output = """
+        note: started a copy of that conversation as 2bd6a047. To continue a session under its own id, pass its full session id (lowercase, as `claude agents --json` prints it) to --resume.
+        backgrounded · 2bd6a047
+        """
+        XCTAssertEqual(AgentListParser.copiedID(from: output), "2bd6a047")
+        XCTAssertEqual(AgentListParser.dispatchedID(from: output), "2bd6a047")
+        XCTAssertNil(AgentListParser.copiedID(from: "backgrounded · 2bd6a047\n"))
+    }
+}

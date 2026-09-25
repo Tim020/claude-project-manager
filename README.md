@@ -25,6 +25,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
   - Closing a tab only detaches; the agent keeps running and its sidebar status keeps updating. Quitting the app leaves agents running, and they reattach when you reopen them.
   - Agents you start elsewhere (`claude --bg`, the `claude agents` view) show up in their project automatically. Worktree sessions are grouped under their repository.
+  - Sessions open in an interactive `claude` in a terminal get a live status and a terminal icon. Resuming one asks first, because it starts a copy of the conversation; the copy appears beside the original as "<name> (copy)".
   - Stop runs `claude stop`, and Delete runs `claude rm`, which also removes the worktree when that's safe. A stopped session resumes in the background with `claude --bg --resume`.
   - Commands run through your login shell, so your `PATH` and node setup match your terminal. You can turn background agents off in Settings; tabs then run `claude` directly.
 - **Live status.** `claude agents --json --all` is polled every 3 seconds for liveness, state and titles. Claude Code hooks, passed with `--settings` to the sessions the app launches, give instant updates:

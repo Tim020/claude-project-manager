@@ -270,4 +270,93 @@ final class AgentModelTests: XCTestCase {
             XCTAssertEqual(model.workspace.session(id)?.status, .working, "the agent's own state decides, not the attach process")
         }
     }
+
+    // MARK: Sessions open in a terminal
+
+    private func interactiveJSON(_ sessionID: String, status: String) -> String {
+        #"[{"pid":64054,"cwd":"\#(repo)","kind":"interactive","startedAt":1790343098828,"sessionId":"\#(sessionID)","name":"x-57","status":"\#(status)"}]"#
+    }
+
+    @MainActor
+    private func modelWithImportedSession(claudeSessionID: String) throws -> (AppModel, UUID) {
+        var state = PersistedState()
+        let p = state.workspace.addProject(path: repo)
+        let f = try state.workspace.createFolder(in: p, named: "Storage fix")
+        try state.workspace.addSession(Session(projectID: p, claudeSessionID: claudeSessionID, hasConversation: true,
+                                               name: "investigate issue correlation", workingDirectory: repo), toFolder: f)
+        store.state = state
+        let model = try makeModel()
+        return (model, model.workspace.sessions[0].id)
+    }
+
+    func testTerminalSessionsGetLiveStatus() async throws {
+        let sid = "312fdcb6-6989-492e-a86f-3afc149f9c90"
+        let (model, id) = try await MainActor.run { try modelWithImportedSession(claudeSessionID: sid) }
+        runner.agentsJSON = interactiveJSON(sid, status: "busy")
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertTrue(model.isOpenInTerminal(id))
+            XCTAssertEqual(model.workspace.session(id)?.status, .working)
+        }
+        runner.agentsJSON = interactiveJSON(sid, status: "idle")
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertTrue(model.isOpenInTerminal(id))
+            XCTAssertEqual(model.workspace.session(id)?.status, .completed)
+        }
+        runner.agentsJSON = "[]"
+        await model.refreshAgents()
+        await MainActor.run { XCTAssertFalse(model.isOpenInTerminal(id), "terminal closed") }
+    }
+
+    func testIdleTerminalSessionKeepsAwaitingInput() async throws {
+        let sid = "312fdcb6-6989-492e-a86f-3afc149f9c90"
+        let (model, id) = try await MainActor.run { try modelWithImportedSession(claudeSessionID: sid) }
+        await MainActor.run { model.applyStatus(id, .awaitingInput) }
+        runner.agentsJSON = interactiveJSON(sid, status: "idle")
+        await model.refreshAgents()
+        await MainActor.run { XCTAssertEqual(model.workspace.session(id)?.status, .awaitingInput) }
+    }
+
+    func testResumingATerminalSessionAsksFirstThenStartsALabelledCopy() async throws {
+        let sid = "312fdcb6-6989-492e-a86f-3afc149f9c90"
+        let (model, original) = try await MainActor.run { try modelWithImportedSession(claudeSessionID: sid) }
+        runner.agentsJSON = interactiveJSON(sid, status: "idle")
+        await model.refreshAgents()
+        await MainActor.run {
+            model.resume(original)
+            XCTAssertEqual(model.copyConfirmation, original, "asks before copying a session open elsewhere")
+            XCTAssertNil(model.lastTask)
+        }
+        runner.dispatchOutput = "note: started a copy of that conversation as 2bd6a047. To continue…\nbackgrounded · 2bd6a047\n"
+        await MainActor.run { model.resumeCopy(of: original) }
+        await model.lastTask?.value
+        try await MainActor.run {
+            XCTAssertNil(model.copyConfirmation)
+            XCTAssertEqual(Array(runner.commands.last { $0.contains("--bg") }!.prefix(3)), ["--bg", "--resume", sid])
+            let copy = try XCTUnwrap(model.workspace.sessions.first { $0.id != original })
+            XCTAssertEqual(copy.name, "investigate issue correlation (copy)")
+            XCTAssertEqual(copy.agentID, "2bd6a047")
+            XCTAssertEqual(model.workspace.group(of: copy.id), model.workspace.group(of: original), "sits beside the original")
+            XCTAssertEqual(model.selectedSessionID, copy.id)
+            XCTAssertEqual(model.takePendingLaunch(copy.id)?.claudeArguments, ["attach", "2bd6a047"])
+            XCTAssertEqual(model.workspace.session(original)?.claudeSessionID, sid, "original untouched")
+            XCTAssertNil(model.workspace.session(original)?.agentID)
+        }
+    }
+
+    func testUnexpectedCopyOnResumeAlsoBecomesASeparateSession() async throws {
+        // Resuming a stopped session normally continues it; if the CLI copies it
+        // anyway (e.g. it's still open somewhere we couldn't see), don't relink.
+        let sid = "83526b6d-2eed-464a-b7ae-5f52c45500d0"
+        let (model, original) = try await MainActor.run { try modelWithImportedSession(claudeSessionID: sid) }
+        runner.dispatchOutput = "note: started a copy of that conversation as 99990000.\nbackgrounded · 99990000\n"
+        await MainActor.run { model.resume(original) }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.sessions.count, 2)
+            XCTAssertNil(model.workspace.session(original)?.agentID)
+            XCTAssertEqual(model.workspace.sessions.first { $0.id != original }?.agentID, "99990000")
+        }
+    }
 }

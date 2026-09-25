@@ -41,6 +41,26 @@ public struct BackgroundAgent: Equatable, Sendable {
     }
 }
 
+/// An interactive `claude` running in a terminal somewhere
+/// (`kind: "interactive"` in `claude agents --json`). It has no short id, so
+/// it's matched to sessions by its full session id.
+public struct InteractiveSession: Equatable, Sendable {
+    public var sessionID: String
+    public var pid: Int?
+    public var cwd: String
+    /// busy / idle.
+    public var status: String?
+
+    public init(sessionID: String, pid: Int?, cwd: String, status: String?) {
+        self.sessionID = sessionID
+        self.pid = pid
+        self.cwd = cwd
+        self.status = status
+    }
+
+    public var isBusy: Bool { status == "busy" }
+}
+
 public enum AgentListParser {
     public struct InvalidOutput: Error, LocalizedError {
         public var errorDescription: String? { "Unexpected output from `claude agents --json`." }
@@ -66,6 +86,31 @@ public enum AgentListParser {
                 waitingFor: item["waitingFor"]?.stringValue,
                 startedAt: item["startedAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 / 1000) })
         }
+    }
+
+    public static func parseInteractive(_ data: Data) throws -> [InteractiveSession] {
+        guard let value = try? JSONDecoder().decode(JSONValue.self, from: data), let items = value.arrayValue else {
+            throw InvalidOutput()
+        }
+        return items.compactMap { item in
+            guard item["kind"]?.stringValue == "interactive", let sessionID = item["sessionId"]?.stringValue else { return nil }
+            return InteractiveSession(sessionID: sessionID,
+                                      pid: item["pid"]?.doubleValue.map { Int($0) },
+                                      cwd: item["cwd"]?.stringValue ?? "",
+                                      status: item["status"]?.stringValue)
+        }
+    }
+
+    private static let copied = try! NSRegularExpression(pattern: #"started a copy of that conversation as ([0-9a-f]{6,})"#)
+
+    /// The new agent id when `claude --bg --resume` copied the conversation
+    /// instead of continuing it (e.g. because it's still open elsewhere).
+    public static func copiedID(from output: String) -> String? {
+        let plain = ansi.stringByReplacingMatches(in: output, range: NSRange(output.startIndex..., in: output), withTemplate: "")
+        guard let match = copied.firstMatch(in: plain, range: NSRange(plain.startIndex..., in: plain)),
+              let range = Range(match.range(at: 1), in: plain)
+        else { return nil }
+        return String(plain[range])
     }
 
     private static let ansi = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;]*[A-Za-z]")

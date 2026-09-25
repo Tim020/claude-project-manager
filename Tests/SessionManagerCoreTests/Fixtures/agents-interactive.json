@@ -1,0 +1,21 @@
+[
+  {
+    "pid": 64054,
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "interactive",
+    "startedAt": 1790343098828,
+    "sessionId": "312fdcb6-6989-492e-a86f-3afc149f9c90",
+    "name": "claude-project-manager-57",
+    "status": "busy"
+  },
+  {
+    "pid": 16807,
+    "id": "2bd6a047",
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "background",
+    "startedAt": 1790343210514,
+    "sessionId": "2bd6a047-18b2-45fc-a52a-87652e08a7ab",
+    "name": "reply with: copy",
+    "state": "working"
+  }
+]
