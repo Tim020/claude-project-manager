@@ -42,7 +42,11 @@ final class ClaudeProcessTests: XCTestCase {
         lock.lock(); defer { lock.unlock() }
         XCTAssertEqual(exitCode, 3)
         XCTAssertEqual(events.count, 3)
-        XCTAssertEqual(events.first, .initialized(sessionID: "sid", model: "claude-opus-5-5", cwd: fake.directory.path))
+        guard case .initialized(let sessionID, let model, let cwd)? = events.first else { return XCTFail("expected init first") }
+        XCTAssertEqual(sessionID, "sid")
+        XCTAssertEqual(model, "claude-opus-5-5")
+        // macOS reports /var/... as /private/var/..., so compare the directory name.
+        XCTAssertEqual(cwd.map { URL(fileURLWithPath: $0).lastPathComponent }, fake.directory.lastPathComponent)
         XCTAssertEqual(events.last, .result(ResultInfo(isError: false, subtype: "success", text: "hi", sessionID: nil, costUSD: nil, permissionDenials: 0)))
 
         let args = try String(contentsOf: fake.directory.appendingPathComponent("args.txt"), encoding: .utf8)
@@ -66,7 +70,7 @@ final class ClaudeProcessTests: XCTestCase {
     }
 
     func testTerminateStopsALongRunningProcess() throws {
-        let fake = try makeFakeClaude("sleep 30\n")
+        let fake = try makeFakeClaude("exec sleep 30\n")
         let process = ClaudeProcess(configuration: config(fake.executable, cwd: fake.directory), callbackQueue: DispatchQueue(label: "test"))
         let exited = expectation(description: "exit")
         process.onExit = { _, _ in exited.fulfill() }

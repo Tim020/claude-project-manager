@@ -95,6 +95,11 @@ public final class ClaudeProcess: AgentProcess {
         guard process.isRunning else { return }
         try? stdin.fileHandleForWriting.close()
         process.terminate()
+        // Escalate if SIGTERM is ignored or deferred.
+        let pid = process.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [process] in
+            if process.isRunning { kill(pid, SIGKILL) }
+        }
     }
 
     // MARK: - Output handling
