@@ -46,7 +46,10 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     }
 
     private func makeView() -> LocalProcessTerminalView {
-        let view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        let view = SessionTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        view.onBlockedLeave = { [weak self] in
+            self?.model.log.append(.info, "Blocked ← that would have left the session for the agents view")
+        }
         view.processDelegate = self
         view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         view.nativeBackgroundColor = NSColor(hex: 0x222222)
@@ -62,6 +65,28 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     fileprivate func processExited(_ source: AnyObject, exitCode: Int32?) {
         guard let id = sessionID(for: source) else { return }
         model.terminalExited(id, exitCode: exitCode)
+    }
+}
+
+/// A terminal that stays in its session: the ← that would switch Claude
+/// Code to its agents view is dropped (the app's sidebar and tabs do that job).
+final class SessionTerminalView: LocalProcessTerminalView {
+    var onBlockedLeave: (() -> Void)?
+
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        let input = Array(data)
+        if LeaveSessionGuard.isLeftArrow(input), LeaveSessionGuard.shouldBlock(input: input, screen: bottomLines(12)) {
+            onBlockedLeave?()
+            return
+        }
+        super.send(source: source, data: data)
+    }
+
+    /// The last few visible lines, where Claude Code shows its hints.
+    private func bottomLines(_ count: Int) -> [String] {
+        let terminal = getTerminal()
+        let rows = terminal.rows
+        return (max(0, rows - count)..<rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
     }
 }
 
