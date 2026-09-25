@@ -299,6 +299,18 @@ public final class AppModel {
         return id
     }
 
+    /// Reads one project in each protected location (Documents, Desktop…) so
+    /// macOS asks for any access it needs at launch, not mid-action.
+    public func preflightFolderAccess(probe: @escaping @Sendable (String) -> Void = FolderAccess.touch) async {
+        let probes = FolderAccess.probePaths(for: state.workspace.projects.map(\.path), home: home)
+        guard !probes.isEmpty else { return }
+        await Task.detached(priority: .userInitiated) {
+            for (_, path) in probes { probe(path) }
+        }.value
+        log.append(.info, "Checked folder access at launch",
+                   detail: probes.map { "\($0.0.rawValue): \(PathDisplay.tilde($0.1, home: home))" }.joined(separator: "\n"))
+    }
+
     /// Claude Code projects on this Mac that aren't in the sidebar yet.
     public func importableProjects(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [DiscoveredProject] {
         importCandidates(fileExists: fileExists).projects

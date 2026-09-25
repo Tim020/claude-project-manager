@@ -59,6 +59,10 @@ struct ContentView: View {
                 .environment(model)
         }
         .task {
+            // Ask for Documents/Desktop/… access now, not in the middle of an action.
+            await model.preflightFolderAccess()
+        }
+        .task {
             // First launch: offer to import existing Claude Code projects.
             guard !commands.offeredFirstRunImport, model.workspace.projects.isEmpty else { return }
             commands.offeredFirstRunImport = true

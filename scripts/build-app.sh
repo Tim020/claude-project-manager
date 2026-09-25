@@ -76,12 +76,33 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are in your Documents folder.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are on your Desktop.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are in your Downloads folder.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are on an external drive.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are on a network volume.</string>
 </dict>
 </plist>
 PLIST
 
-# Ad-hoc sign so Gatekeeper lets a locally built copy run.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# Sign with a stable identity when there is one. macOS remembers folder access
+# (Documents, Desktop…) and notification permission per signing identity; an
+# ad-hoc signature changes with every build, so each rebuild would ask again.
+# Override with CODESIGN_IDENTITY="Apple Development: …" (or "-" for ad hoc).
+if [ -z "${CODESIGN_IDENTITY:-}" ] && [ -z "${CI:-}" ]; then
+  CODESIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -nE 's/^ *[0-9]+\) [0-9A-F]{40} "((Apple Development|Developer ID Application|Mac Developer)[^"]*)"$/\1/p' | head -1)"
+fi
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+  [ -z "${CI:-}" ] && note "Signed ad hoc: macOS may ask for folder access again after each rebuild. Sign in to Xcode with your Apple ID (Settings > Accounts) to get an Apple Development certificate, and this script will use it."
+elif codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP" >build/codesign.log 2>&1; then
+  note "Signed with $CODESIGN_IDENTITY"
+else
+  note "Signing with $CODESIGN_IDENTITY failed ($(tr '\n' ' ' < build/codesign.log | cut -c1-200)); signing ad hoc"
+  codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+fi
 
 (cd build && rm -f "$APP_NAME.zip" && ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME.zip")
 echo "Built $APP"

@@ -50,6 +50,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - **General:** the `claude` executable, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
   - **New Sessions:** Direct or Background sessions, plus the default model and permissions.
   - **Notifications**, **Roles** and **About**.
+- **Folder access up front.** macOS asks before an app reads Documents, Desktop, Downloads, iCloud Drive or another volume, and there's no way to request that ahead of time. So at launch Claudio reads one project in each of those places, and any prompts appear together at startup instead of in the middle of an action.
 - **Dock badge.** Shows how many sessions are awaiting input.
 - **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
@@ -67,6 +68,8 @@ swift run Claudio                 # run directly from the package
 ./scripts/build-app.sh            # build/Claudio.app (+ .zip), then open it
 ./scripts/build-app.sh --no-open  # build only
 ```
+
+`build-app.sh` signs the app with your Apple Development (or Developer ID) certificate if you have one, so macOS remembers the folder and notification permissions you grant between builds. Without one it signs ad hoc, and macOS asks again after each rebuild. To get a certificate, sign in to Xcode with your Apple ID (Settings → Accounts). To choose one, set `CODESIGN_IDENTITY`.
 
 App state (projects, folders, names, settings) is saved to `~/Library/Application Support/Claudio/state.json`. Hook events (`hook-events.log`) and the latest plan usage (`usage.json`) are written to the same folder. Data from before the rename (the `SessionManager` folder) is moved there on first launch. Conversation history stays in Claude Code's own store.
 
