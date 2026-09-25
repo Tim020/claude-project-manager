@@ -73,6 +73,14 @@ struct SessionManagerApp: App {
                 Button("Import Claude Code Projects…") { commands.showImportProjects = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .saveItem) {
+                Button("Close Tab") {
+                    if let id = model.selectedSessionID { model.closeTab(id) } else { NSApp.keyWindow?.performClose(nil) }
+                }
+                .keyboardShortcut("w")
+                Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                    .keyboardShortcut("w", modifiers: [.command, .shift])
+            }
             CommandMenu("Session") {
                 Button("Refresh Sessions") { model.refreshAll() }
                     .keyboardShortcut("r")

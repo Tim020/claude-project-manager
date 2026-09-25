@@ -52,6 +52,8 @@ public final class AppModel {
     @ObservationIgnored private var pendingLaunches: [UUID: TerminalLaunch] = [:]
     private var exitCodes: [UUID: Int32] = [:]
     @ObservationIgnored private var histories: [UUID: [TranscriptLine]] = [:]
+    /// Most recently selected first; decides which tabs get split panes.
+    private var recentSessionIDs: [UUID] = []
 
     @ObservationIgnored public weak var terminals: TerminalControlling?
     @ObservationIgnored private let store: StateStore
@@ -109,10 +111,30 @@ public final class AppModel {
         selectedSessionID.flatMap { state.workspace.group(of: $0) }
     }
 
-    /// The selected session's folder siblings, shown as tabs or split panes.
+    /// Open tabs in the selected session's folder.
     public var tabs: [Session] {
         guard let group = selectedGroup else { return [] }
-        return state.workspace.sessions(in: group)
+        return state.workspace.openSessions(in: group)
+    }
+
+    /// Sessions in the selected folder whose tabs are closed (to reopen).
+    public var closedTabs: [Session] {
+        guard let group = selectedGroup else { return [] }
+        return state.workspace.sessions(in: group).filter { !state.workspace.isOpen($0.id) }
+    }
+
+    /// Split view is for a real folder with more than one open tab; Unfiled
+    /// is a catch-all, so it always uses tabs.
+    public var canSplit: Bool {
+        guard case .folder? = selectedGroup else { return false }
+        return tabs.count > 1
+    }
+
+    /// The open tabs to show side by side, given how many panes fit.
+    public func splitPanes(capacity: Int) -> [Session] {
+        let open = tabs
+        let ids = SplitLayout.panes(open: open.map(\.id), selected: selectedSessionID, recent: recentSessionIDs, capacity: capacity)
+        return open.filter { ids.contains($0.id) }
     }
 
     public var breadcrumb: Breadcrumb? {
@@ -266,8 +288,48 @@ public final class AppModel {
 
     // MARK: - Sessions
 
+    /// Selects a session and opens its tab.
     public func select(_ sessionID: UUID?) {
         selectedSessionID = sessionID
+        guard let sessionID, state.workspace.session(sessionID) != nil else { return }
+        recentSessionIDs.removeAll { $0 == sessionID }
+        recentSessionIDs.insert(sessionID, at: 0)
+        if !state.workspace.isOpen(sessionID) {
+            state.workspace.openTab(sessionID)
+            save()
+        }
+    }
+
+    /// Closes a tab. The session keeps running (its sidebar status still
+    /// updates) unless `stop` is true.
+    public func closeTab(_ sessionID: UUID, stop shouldStop: Bool = false) {
+        if selectedSessionID == sessionID {
+            let open = tabs
+            let index = open.firstIndex { $0.id == sessionID } ?? 0
+            let remaining = open.filter { $0.id != sessionID }
+            selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
+        }
+        state.workspace.closeTab(sessionID)
+        recentSessionIDs.removeAll { $0 == sessionID }
+        if shouldStop { stop(sessionID) }
+        save()
+    }
+
+    public func closeOtherTabs(keeping sessionID: UUID) {
+        state.workspace.closeOtherTabs(keeping: sessionID)
+        if let selected = selectedSessionID, !state.workspace.isOpen(selected) { select(sessionID) }
+        save()
+    }
+
+    /// Closes completed tabs in the selected folder.
+    public func closeCompletedTabs() {
+        guard let group = selectedGroup else { return }
+        let selected = selectedSessionID
+        state.workspace.closeCompletedTabs(in: group)
+        if let selected, !state.workspace.isOpen(selected) {
+            selectedSessionID = state.workspace.openSessions(in: group).first?.id
+        }
+        save()
     }
 
     public func moveSession(_ id: UUID, to group: SessionGroup, at index: Int? = nil) {
@@ -288,6 +350,7 @@ public final class AppModel {
             selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
         }
         stop(id)
+        recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         histories[id] = nil
         state.workspace.removeSession(id)
@@ -330,6 +393,11 @@ public final class AppModel {
                                                          initialPrompt: prompt, hookEventsPath: hookEventsURL.path)
         running.insert(sessionID)
         exitCodes[sessionID] = nil
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Hooks confirm this shortly; an early exit resets it.
+            state.workspace.updateSession(sessionID) { $0.status = .working; $0.lastActivity = now() }
+            save()
+        }
         return true
     }
 

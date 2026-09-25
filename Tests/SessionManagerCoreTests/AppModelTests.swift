@@ -183,6 +183,7 @@ final class AppModelTests: XCTestCase {
             XCTAssertEqual(model.workspace.group(of: id), .folder(f))
             XCTAssertEqual(session.workingDirectory, "/code/app")
             XCTAssertTrue(model.isRunning(id))
+            XCTAssertEqual(session.status, .working, "started with a prompt")
 
             let launch = try XCTUnwrap(model.takePendingLaunch(id))
             XCTAssertEqual(launch.executable, "/bin/zsh")
@@ -200,6 +201,7 @@ final class AppModelTests: XCTestCase {
             req.name = ""
             let id = try XCTUnwrap(model.createSession(req))
             XCTAssertEqual(model.workspace.session(id)?.name, "New session")
+            XCTAssertEqual(model.workspace.session(id)?.status, .completed, "idle at an empty prompt")
             let launch = try XCTUnwrap(model.takePendingLaunch(id))
             XCTAssertEqual(launch.claudeArguments.first, "--session-id")
         }
@@ -337,6 +339,123 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    // MARK: Tabs
+
+    func testSelectingOpensATabAndTabsAreOpenSiblings() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: projectPath)
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let unfiled = model.workspace.sessions(in: .unfiled(projectID: p))
+            unfiled.forEach { model.moveSession($0.id, to: .folder(f)) }
+            model.select(unfiled[0].id)
+            XCTAssertEqual(model.tabs.map(\.id), [unfiled[0].id], "only opened sessions are tabs")
+            model.select(unfiled[1].id)
+            XCTAssertEqual(model.tabs.map(\.id), [unfiled[0].id, unfiled[1].id])
+            XCTAssertEqual(store.state.workspace.openSessionIDs, Set(unfiled.map(\.id)))
+        }
+    }
+
+    func testClosingSelectedTabSelectsNeighbourAndKeepsItRunning() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let c = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            model.select(b)
+            model.closeTab(b)
+            XCTAssertEqual(model.selectedSessionID, a)
+            XCTAssertEqual(model.tabs.map(\.id), [a, c])
+            XCTAssertTrue(model.isRunning(b), "closing a tab doesn't stop the session")
+            XCTAssertTrue(terminals.terminated.isEmpty)
+        }
+    }
+
+    func testClosingLastTabClearsSelection() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            model.closeTab(a)
+            XCTAssertNil(model.selectedSessionID)
+            XCTAssertEqual(model.tabs, [])
+        }
+    }
+
+    func testClosingAnUnselectedTabKeepsSelection() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            let b = try XCTUnwrap(model.createSession(request(project: p)))
+            model.closeTab(a)
+            XCTAssertEqual(model.selectedSessionID, b)
+        }
+    }
+
+    func testCloseAndStop() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            model.closeTab(a, stop: true)
+            XCTAssertEqual(terminals.terminated, [a])
+            XCTAssertFalse(model.workspace.isOpen(a))
+        }
+    }
+
+    func testCloseOtherAndCompletedTabs() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let c = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            model.closeOtherTabs(keeping: a)
+            XCTAssertEqual(model.tabs.map(\.id), [a])
+            XCTAssertEqual(model.selectedSessionID, a)
+            [b, c].forEach { model.select($0) }
+            model.closeCompletedTabs()
+            XCTAssertEqual(model.tabs.count, 3, "sessions started with a prompt are working")
+            model.terminalExited(b, exitCode: 0)
+            model.closeCompletedTabs()
+            XCTAssertEqual(model.tabs.map(\.id), [a, c])
+        }
+    }
+
+    func testSplitIsOnlyForFoldersWithSeveralOpenTabs() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            _ = try XCTUnwrap(model.createSession(request(project: p)))
+            _ = try XCTUnwrap(model.createSession(request(project: p)))
+            model.setLayout(.split)
+            XCTAssertFalse(model.canSplit, "Unfiled always uses tabs")
+
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            XCTAssertFalse(model.canSplit, "one open tab")
+            let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            XCTAssertTrue(model.canSplit)
+            XCTAssertEqual(model.splitPanes(capacity: 4).map(\.id), [a, b])
+        }
+    }
+
+    func testSplitPanesPreferRecentlySelected() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let ids = try (0..<5).map { _ in try XCTUnwrap(model.createSession(request(project: p, folder: f))) }
+            model.select(ids[0])
+            model.select(ids[3])
+            XCTAssertEqual(model.splitPanes(capacity: 2).map(\.id), [ids[0], ids[3]])
+        }
+    }
+
     // MARK: Selection & presentation
 
     func testHistoryIsLoadedForImportedSessions() throws {
@@ -357,6 +476,7 @@ final class AppModelTests: XCTestCase {
             let unfiled = model.workspace.sessions(in: .unfiled(projectID: p))
             model.moveSession(unfiled[0].id, to: .folder(f))
             model.moveSession(unfiled[1].id, to: .folder(f))
+            model.select(unfiled[0].id)
             model.select(unfiled[1].id)
             XCTAssertEqual(model.tabs.map(\.id), [unfiled[0].id, unfiled[1].id])
             XCTAssertEqual(model.breadcrumb, Breadcrumb(project: "DigiScript", folder: "New Folder", session: "pr review inline 1427"))

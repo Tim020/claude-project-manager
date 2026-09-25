@@ -38,7 +38,8 @@ struct SidebarView: View {
             }
             footer
         }
-        .frame(width: 290)
+        .frame(minWidth: 290, maxWidth: 290)
+        .fixedSize(horizontal: true, vertical: false)
         .background(DS.sidebar)
     }
 

@@ -38,6 +38,7 @@ struct ContentView: View {
         @Bindable var commands = commands
         HStack(spacing: 0) {
             SidebarView()
+                .layoutPriority(1)
             VerticalRule()
             DetailView()
         }

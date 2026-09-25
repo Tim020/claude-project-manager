@@ -3,8 +3,8 @@ import AppKit
 import SessionManagerCore
 import SwiftUI
 
-/// Right-hand side: breadcrumb header, then the selected session's folder
-/// siblings as tabs (design 1a) or side by side (design 1b).
+/// Right-hand side: breadcrumb header, then the folder's open tabs (design 1a),
+/// optionally side by side in a grid of up to 2×2 (design 1b).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
@@ -16,20 +16,21 @@ struct DetailView: View {
             if let session = model.selectedSession, let crumb = model.breadcrumb {
                 VStack(spacing: 0) {
                     DetailHeader(session: session, breadcrumb: crumb)
-                    if model.settings.layout == .tabs || model.tabs.count < 2 {
-                        TabStrip(sessions: model.tabs, selectedID: session.id)
+                    TabStrip(sessions: model.tabs, selectedID: session.id)
+                    if model.settings.layout == .split && model.canSplit {
+                        SplitGrid(selectedID: session.id)
+                    } else {
                         SessionPane(session: session, style: .full)
                             .id(session.id)
-                    } else {
-                        SplitPanes(sessions: model.tabs, selectedID: session.id)
                     }
                 }
             } else {
                 emptyState
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.window)
+        .clipped()
     }
 
     private var emptyState: some View {
@@ -90,7 +91,7 @@ private struct DetailHeader: View {
                 .lineLimit(1)
             Spacer(minLength: 10)
             StatusPill(status: session.status)
-            if model.tabs.count > 1 {
+            if model.canSplit {
                 LayoutToggle()
             }
             pullRequestButton
@@ -189,20 +190,27 @@ private struct TabStrip: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(sessions) { session in
-                        tab(session)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(sessions) { session in
+                            TabItem(session: session, isSelected: session.id == selectedID)
+                                .id(session.id)
+                        }
                     }
+                }
+                .onChange(of: selectedID, initial: true) { _, id in
+                    withAnimation { proxy.scrollTo(id) }
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
+            overflowMenu
             Button { presentNewSession(model.selectedGroup) } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12))
                     .foregroundStyle(DS.dim)
                     .padding(.vertical, 10)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 8)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -213,38 +221,109 @@ private struct TabStrip: View {
         .overlay(alignment: .bottom) { HorizontalRule() }
     }
 
-    private func tab(_ session: Session) -> some View {
-        let selected = session.id == selectedID
-        return HStack(spacing: 7) {
+    /// Every open tab, plus the folder's closed sessions to reopen.
+    private var overflowMenu: some View {
+        Menu {
+            Section("Open") {
+                ForEach(sessions) { session in
+                    Button(session.name) { model.select(session.id) }
+                }
+            }
+            let closed = model.closedTabs
+            if !closed.isEmpty {
+                Section("Closed") {
+                    ForEach(closed) { session in
+                        Button(session.name) { model.select(session.id) }
+                    }
+                }
+            }
+            Divider()
+            Button("Close Other Tabs") { model.closeOtherTabs(keeping: selectedID) }
+                .disabled(sessions.count < 2)
+            Button("Close Completed Tabs") { model.closeCompletedTabs() }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.dim)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.horizontal, 6)
+        .help("All tabs in this folder")
+    }
+}
+
+private struct TabItem: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    let isSelected: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 7) {
             StatusDot(status: session.status, size: 7)
             Text(session.name)
                 .lineLimit(1)
             Text(session.role.label)
                 .font(DS.font(11))
                 .foregroundStyle(DS.dim)
+            Button { model.closeTab(session.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(hovering ? DS.text : DS.dim)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(hovering ? Color.white.opacity(0.08) : .clear))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isSelected || hovering ? 1 : 0)
+            .help(model.isRunning(session.id) ? "Close Tab (keeps running)" : "Close Tab")
         }
         .font(DS.font(13.5))
-        .foregroundStyle(selected ? DS.text : DS.muted)
+        .foregroundStyle(isSelected ? DS.text : DS.muted)
         .padding(.vertical, 10)
-        .padding(.horizontal, 14)
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(selected ? DS.teal : .clear).frame(height: 2)
+            Rectangle().fill(isSelected ? DS.teal : .clear).frame(height: 2)
         }
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onTapGesture { model.select(session.id) }
+        .contextMenu {
+            Button("Close Tab") { model.closeTab(session.id) }
+            if model.isRunning(session.id) {
+                Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
+            }
+            Button("Close Other Tabs") { model.closeOtherTabs(keeping: session.id) }
+            Button("Close Completed Tabs") { model.closeCompletedTabs() }
+        }
     }
 }
 
-private struct SplitPanes: View {
-    let sessions: [Session]
+/// Open tabs side by side: at most 2×2, each pane at least the minimum size.
+/// When more tabs are open than fit, the selected and most recently used win.
+private struct SplitGrid: View {
+    @Environment(AppModel.self) private var model
     let selectedID: UUID
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                SessionPane(session: session, style: .compact(isFocused: session.id == selectedID))
-                    .frame(maxWidth: .infinity)
-                if index < sessions.count - 1 { VerticalRule() }
+        GeometryReader { geometry in
+            let grid = SplitLayout.grid(paneCount: model.tabs.count, width: geometry.size.width, height: geometry.size.height)
+            let panes = model.splitPanes(capacity: grid.capacity)
+            let rows = stride(from: 0, to: panes.count, by: grid.columns).map { Array(panes[$0..<min($0 + grid.columns, panes.count)]) }
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                    HStack(spacing: 0) {
+                        ForEach(Array(row.enumerated()), id: \.element.id) { index, session in
+                            SessionPane(session: session, style: .compact(isFocused: session.id == selectedID))
+                                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                            if index < row.count - 1 { VerticalRule() }
+                        }
+                    }
+                    if rowIndex < rows.count - 1 { HorizontalRule() }
+                }
             }
         }
     }
@@ -303,11 +382,12 @@ struct SessionPane: View {
                     .background(DS.window)
                     .simultaneousGesture(TapGesture().onEnded { model.select(session.id) })
                 if !running {
-                    ResumeBar(session: session, message: exitMessage(exitCode))
+                    ResumeBar(session: session, message: exitMessage(exitCode), compact: style.isCompact)
                 }
             } else {
                 TranscriptView(session: session, lines: model.history(for: session.id), compact: style.isCompact)
-                ResumeBar(session: session, message: session.hasConversation ? "This session isn't running." : "This session hasn't started yet.")
+                ResumeBar(session: session, message: session.hasConversation ? "This session isn't running." : "This session hasn't started yet.",
+                          compact: style.isCompact)
             }
         }
     }
@@ -323,28 +403,36 @@ private struct ResumeBar: View {
     @Environment(AppModel.self) private var model
     let session: Session
     let message: String
+    var compact = false
 
     var body: some View {
         HStack(spacing: 10) {
             Text(message)
                 .font(DS.font(13))
                 .foregroundStyle(DS.muted)
-            Spacer()
-            Text(ModelName.display(session.model))
-                .font(DS.font(12))
-                .foregroundStyle(DS.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            if !compact {
+                Text(ModelName.display(session.model))
+                    .font(DS.font(12))
+                    .foregroundStyle(DS.muted)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             Button(session.hasConversation ? "Resume" : "Start") {
                 model.select(session.id)
                 model.start(session.id)
             }
             .buttonStyle(PrimaryButtonStyle())
+            .fixedSize()
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
+        .padding(.vertical, compact ? 8 : 10)
+        .padding(.horizontal, compact ? 10 : 12)
         .fieldChrome()
-        .padding(.top, 14)
-        .padding(.bottom, 18)
-        .padding(.horizontal, 20)
+        .padding(.top, compact ? 10 : 14)
+        .padding(.bottom, compact ? 10 : 18)
+        .padding(.horizontal, compact ? 12 : 20)
         .overlay(alignment: .top) { HorizontalRule() }
     }
 }
