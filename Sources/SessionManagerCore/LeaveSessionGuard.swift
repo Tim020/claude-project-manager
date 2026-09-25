@@ -22,3 +22,36 @@ public enum LeaveSessionGuard {
         return screen.contains { line in confirmations.contains { line.contains($0) } }
     }
 }
+
+/// Recognises Claude Code's agents view, which a single ← on an empty prompt
+/// switches an attached terminal to, so the app can put the terminal straight
+/// back into its session.
+public enum AgentsViewDetector {
+    /// The agents view sets the terminal title to "claude agents", prefixed
+    /// with "N awaiting input · " when sessions need attention.
+    public static func isAgentsViewTitle(_ title: String) -> Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        return trimmed == "claude agents" || trimmed.hasSuffix("· claude agents")
+    }
+
+    private static let countsLine = try! NSRegularExpression(pattern: #"\d+ awaiting input · \d+ working · \d+ completed"#)
+    private static let sectionHints = [
+        "Finished sessions wait here for you to review",
+        "they keep running even if you close the terminal",
+    ]
+
+    public static func isAgentsViewScreen(_ lines: [String]) -> Bool {
+        lines.contains { line in
+            if sectionHints.contains(where: line.contains) { return true }
+            return countsLine.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil
+        }
+    }
+
+    /// The title is definitive; the list's text only counts right after a ←,
+    /// so session content that happens to mention it can't trigger a reattach.
+    public static func shouldReturnToSession(title: String?, screen: [String], secondsSinceLeftArrow: TimeInterval?) -> Bool {
+        if let title, isAgentsViewTitle(title) { return true }
+        guard let seconds = secondsSinceLeftArrow, seconds < 3 else { return false }
+        return isAgentsViewScreen(screen)
+    }
+}

@@ -359,4 +359,32 @@ final class AgentModelTests: XCTestCase {
             XCTAssertEqual(model.workspace.sessions.first { $0.id != original }?.agentID, "99990000")
         }
     }
+
+    func testReturnToSessionQueuesAFreshAttach() async throws {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            return (model, try XCTUnwrap(model.createSession(request(p))))
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertNotNil(model.takePendingLaunch(id))
+            XCTAssertTrue(model.returnToSession(id))
+            XCTAssertTrue(model.isRunning(id))
+            XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "abcd1234"])
+            XCTAssertTrue(model.log.entries.contains { $0.title.hasPrefix("Returned to") })
+        }
+    }
+
+    func testReturnToSessionNeedsAnAgent() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            let p = model.addProject(path: repo)
+            let id = try XCTUnwrap(model.createSession(request(p)))
+            XCTAssertFalse(model.returnToSession(id))
+        }
+    }
 }

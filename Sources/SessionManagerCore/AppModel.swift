@@ -647,6 +647,17 @@ public final class AppModel {
         attach(copy.id)
     }
 
+    /// Claude Code's agents view took over an attached terminal (a ← on an
+    /// empty prompt): queue a fresh `claude attach` so the tab shows its
+    /// session again. The UI swaps the terminal in place.
+    @discardableResult
+    public func returnToSession(_ sessionID: UUID) -> Bool {
+        guard let session = state.workspace.session(sessionID), session.agentID != nil else { return false }
+        log.append(.info, "Returned to “\(session.name)” after ← opened Claude Code's agents view")
+        attach(sessionID)
+        return running.contains(sessionID)
+    }
+
     private func attach(_ sessionID: UUID) {
         guard let session = state.workspace.session(sessionID), let agentID = session.agentID,
               let commands = agentCommands(reportErrors: true) else { return }
