@@ -58,6 +58,8 @@ public final class AppModel {
     private var exitCodes: [UUID: Int32] = [:]
     /// Read-only transcripts loaded from history files (see `loadHistory`).
     private var historyLines: [UUID: [TranscriptLine]] = [:]
+    /// Latest plan usage reported by a session's status line.
+    public private(set) var usage: UsageSnapshot?
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
@@ -85,6 +87,8 @@ public final class AppModel {
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored private let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
+    @ObservationIgnored private let usageURL: URL?
+    @ObservationIgnored private var usageModified: Date?
     @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let runner: CommandRunning
     @ObservationIgnored private let locateClaude: (String?) -> String?
@@ -97,6 +101,7 @@ public final class AppModel {
         store: StateStore,
         discovery: SessionDiscovery,
         hookEventsURL: URL,
+        usageURL: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
@@ -109,6 +114,7 @@ public final class AppModel {
         self.store = store
         self.discovery = discovery
         self.hookEventsURL = hookEventsURL
+        self.usageURL = usageURL
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
         self.locateClaude = locateClaude
@@ -123,6 +129,7 @@ public final class AppModel {
             errorMessage = "Couldn't load saved sessions: \(AppModel.describe(error))"
         }
         log.append(.info, "Claudio started", detail: errorMessage)
+        pollUsage()
         // Nothing is running at launch, whatever was saved.
         for session in state.workspace.sessions where session.status == .working {
             state.workspace.updateSession(session.id) { $0.status = .completed }
@@ -276,6 +283,11 @@ public final class AppModel {
         save()
     }
 
+    public func toggleCollapsed(_ group: SessionGroup) {
+        state.workspace.toggleCollapsed(group)
+        save()
+    }
+
     public func toggleCollapsed(_ projectID: UUID) {
         state.workspace.toggleCollapsed(projectID)
         save()
@@ -420,6 +432,12 @@ public final class AppModel {
 
     public func moveSession(_ id: UUID, to group: SessionGroup, at index: Int? = nil) {
         attempt { try state.workspace.moveSession(id, to: group, at: index) }
+        save()
+    }
+
+    /// Drag to reorder: places the session just before another one.
+    public func moveSession(_ id: UUID, before targetID: UUID) {
+        attempt { try state.workspace.moveSession(id, before: targetID) }
         save()
     }
 
@@ -683,7 +701,8 @@ public final class AppModel {
             if reportErrors { report("Claude Code CLI not found. Install it, or set its location in Settings.") }
             return nil
         }
-        return AgentCommands(claudeExecutable: executable, shell: shell, hookEventsPath: hookEventsURL.path)
+        return AgentCommands(claudeExecutable: executable, shell: shell, hookEventsPath: hookEventsURL.path,
+                             statusLine: statusLineCapture())
     }
 
     /// Runs CLI work in order, one operation after another.
@@ -734,7 +753,8 @@ public final class AppModel {
         }
         try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         pendingLaunches[sessionID] = TerminalLaunch.make(session: session, claudeExecutable: executable, shell: shell,
-                                                         initialPrompt: prompt, hookEventsPath: hookEventsURL.path)
+                                                         initialPrompt: prompt, hookEventsPath: hookEventsURL.path,
+                                                         statusLine: statusLineCapture())
         running.insert(sessionID)
         exitCodes[sessionID] = nil
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -806,7 +826,34 @@ public final class AppModel {
         if changed { save() }
     }
 
+    // MARK: - Usage
+
+    /// Status line settings for launched sessions: records plan usage for the
+    /// app and still runs the user's own status line.
+    private func statusLineCapture() -> StatusLineCapture? {
+        guard let usageURL else { return nil }
+        let userSettings = discovery.claudeHome.appendingPathComponent("settings.json")
+        return StatusLineCapture(usagePath: usageURL.path, userStatusLine: UserStatusLine.load(from: userSettings))
+    }
+
+    /// Re-reads the usage file when a session's status line has updated it.
+    public func pollUsage() {
+        guard let usageURL,
+              let modified = (try? FileManager.default.attributesOfItem(atPath: usageURL.path))?[.modificationDate] as? Date,
+              modified != usageModified
+        else { return }
+        usageModified = modified
+        if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
+            usage = snapshot
+        }
+    }
+
     // MARK: - Settings
+
+    public func setSidebarWidth(_ width: Double) {
+        state.settings.sidebarWidth = AppSettings.clampSidebarWidth(width)
+        save()
+    }
 
     public func setLayout(_ layout: LayoutMode) {
         state.settings.layout = layout

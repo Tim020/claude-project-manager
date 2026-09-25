@@ -33,13 +33,17 @@ struct NewSessionTarget: Identifiable {
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
+    /// Sidebar width while its divider is being dragged.
+    @State private var draggingWidth: Double?
+    @State private var dragStartWidth: Double?
 
     var body: some View {
         @Bindable var commands = commands
         HStack(spacing: 0) {
-            SidebarView()
+            SidebarView(width: draggingWidth ?? model.settings.sidebarWidth)
                 .layoutPriority(1)
             VerticalRule()
+                .overlay { sidebarResizeHandle }
             DetailView()
         }
         .background(DS.window)
@@ -85,6 +89,7 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
             // Status updates from the Claude Code hooks of running sessions.
             model.pollHookEvents()
+            model.pollUsage()
         }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             // Background agents: liveness, state and titles from `claude agents --json`.
@@ -93,6 +98,28 @@ struct ContentView: View {
         .task { await model.refreshAgents() }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
+    }
+
+    /// Invisible, slightly wider hit area on the divider for resizing the sidebar.
+    private var sidebarResizeHandle: some View {
+        Color.clear
+            .frame(width: 8)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let start = dragStartWidth ?? model.settings.sidebarWidth
+                        dragStartWidth = start
+                        draggingWidth = AppSettings.clampSidebarWidth(start + value.translation.width)
+                    }
+                    .onEnded { _ in
+                        if let width = draggingWidth { model.setSidebarWidth(width) }
+                        draggingWidth = nil
+                        dragStartWidth = nil
+                    })
     }
 
     private var copyTitle: String {

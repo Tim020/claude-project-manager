@@ -42,6 +42,7 @@ public struct TerminalLaunch: Equatable, Sendable {
         shell: String,
         initialPrompt: String?,
         hookEventsPath: String,
+        statusLine: StatusLineCapture? = nil,
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
@@ -53,7 +54,7 @@ public struct TerminalLaunch: Equatable, Sendable {
         claudeArguments += session.hasConversation ? ["--resume", claudeID] : ["--session-id", claudeID]
         if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
         if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
-        claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath)]
+        claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
         return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: session.workingDirectory,
                      shell: shell, loginShell: true, baseEnvironment: baseEnvironment,
                      extraEnvironment: ["CLAUDIO_SESSION_ID": session.id.uuidString])
@@ -103,7 +104,7 @@ public enum HookSettings {
         #"line=$(tr -d '\n'); printf '%s\t%s\n' '"# + appSessionID.uuidString + #"' "$line" >> "# + ShellQuote.quote(eventsPath)
     }
 
-    public static func json(appSessionID: UUID, eventsPath: String) -> String {
+    public static func json(appSessionID: UUID, eventsPath: String, statusLine: StatusLineCapture? = nil) -> String {
         let hook: JSONValue = .object(["type": .string("command"), "command": .string(command(appSessionID: appSessionID, eventsPath: eventsPath))])
         var hooks: [String: JSONValue] = [:]
         for event in events {
@@ -111,7 +112,9 @@ public enum HookSettings {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = (try? encoder.encode(JSONValue.object(["hooks": .object(hooks)]))) ?? Data("{}".utf8)
+        var settings: [String: JSONValue] = ["hooks": .object(hooks)]
+        if let statusLine { settings["statusLine"] = statusLine.settingsValue }
+        let data = (try? encoder.encode(JSONValue.object(settings))) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
 }

@@ -5,7 +5,11 @@ public struct SidebarFolder: Identifiable, Equatable, Sendable {
     public var group: SessionGroup
     public var name: String
     public var isUnfiled: Bool
+    public var isCollapsed: Bool
+    /// Sessions shown (empty when collapsed, unless filtering).
     public var sessions: [Session]
+    /// All visible sessions in the group, for the count badge.
+    public var sessionCount: Int
 }
 
 public struct SidebarProject: Identifiable, Equatable, Sendable {
@@ -48,7 +52,9 @@ public enum Sidebar {
                 case .folder(let folderID): id = folderID.uuidString
                 case .unfiled(let projectID): id = "unfiled-\(projectID.uuidString)"
                 }
-                folders.append(SidebarFolder(id: id, group: group, name: name, isUnfiled: isUnfiled, sessions: sessions))
+                let collapsed = workspace.isCollapsed(group)
+                folders.append(SidebarFolder(id: id, group: group, name: name, isUnfiled: isUnfiled, isCollapsed: collapsed,
+                                             sessions: collapsed && !filtering ? [] : sessions, sessionCount: sessions.count))
             }
 
             if filtering && folders.isEmpty && !projectMatches { return nil }

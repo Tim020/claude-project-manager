@@ -186,9 +186,12 @@ public struct AgentCommands: Sendable {
     public var hookEventsPath: String
     public var baseEnvironment: [String: String]
     public var loginShell: Bool
+    public var statusLine: StatusLineCapture?
 
     public init(claudeExecutable: String, shell: String, hookEventsPath: String,
-                baseEnvironment: [String: String] = ProcessInfo.processInfo.environment, loginShell: Bool = true) {
+                baseEnvironment: [String: String] = ProcessInfo.processInfo.environment, loginShell: Bool = true,
+                statusLine: StatusLineCapture? = nil) {
+        self.statusLine = statusLine
         self.claudeExecutable = claudeExecutable
         self.shell = shell
         self.hookEventsPath = hookEventsPath
@@ -240,7 +243,7 @@ public struct AgentCommands: Sendable {
         var args: [String] = []
         if let model = session.model, !model.isEmpty { args += ["--model", model] }
         if session.permissionMode != .standard { args += ["--permission-mode", session.permissionMode.rawValue] }
-        args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath)]
+        args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
         return args
     }
 

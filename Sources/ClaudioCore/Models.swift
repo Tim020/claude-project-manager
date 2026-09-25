@@ -137,11 +137,21 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
     public var name: String
     /// Ordered session membership. A session is in at most one folder.
     public var sessionIDs: [UUID]
+    public var isCollapsed: Bool
 
-    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = []) {
+    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false) {
         self.id = id
         self.name = name
         self.sessionIDs = sessionIDs
+        self.isCollapsed = isCollapsed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id),
+                  name: try c.decode(String.self, forKey: .name),
+                  sessionIDs: try c.decodeIfPresent([UUID].self, forKey: .sessionIDs) ?? [],
+                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false)
     }
 }
 
@@ -152,13 +162,27 @@ public struct Project: Identifiable, Codable, Equatable, Sendable {
     public var path: String
     public var folders: [Folder]
     public var isCollapsed: Bool
+    /// Whether the project's Unfiled group is collapsed in the sidebar.
+    public var isUnfiledCollapsed: Bool
 
-    public init(id: UUID = UUID(), name: String, path: String, folders: [Folder] = [], isCollapsed: Bool = false) {
+    public init(id: UUID = UUID(), name: String, path: String, folders: [Folder] = [], isCollapsed: Bool = false,
+                isUnfiledCollapsed: Bool = false) {
         self.id = id
         self.name = name
         self.path = path
         self.folders = folders
         self.isCollapsed = isCollapsed
+        self.isUnfiledCollapsed = isUnfiledCollapsed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id),
+                  name: try c.decode(String.self, forKey: .name),
+                  path: try c.decode(String.self, forKey: .path),
+                  folders: try c.decodeIfPresent([Folder].self, forKey: .folders) ?? [],
+                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
+                  isUnfiledCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isUnfiledCollapsed) ?? false)
     }
 }
 

@@ -159,6 +159,24 @@ public struct Workspace: Codable, Equatable, Sendable {
         sessions.removeAll { $0.projectID == id }
     }
 
+    public func isCollapsed(_ group: SessionGroup) -> Bool {
+        switch group {
+        case .folder(let id): return folder(id)?.isCollapsed ?? false
+        case .unfiled(let projectID): return project(projectID)?.isUnfiledCollapsed ?? false
+        }
+    }
+
+    public mutating func toggleCollapsed(_ group: SessionGroup) {
+        switch group {
+        case .folder(let id):
+            guard let (p, f) = folderIndex(id) else { return }
+            projects[p].folders[f].isCollapsed.toggle()
+        case .unfiled(let projectID):
+            guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+            projects[index].isUnfiledCollapsed.toggle()
+        }
+    }
+
     public mutating func toggleCollapsed(_ projectID: UUID) {
         guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
         projects[index].isCollapsed.toggle()
@@ -243,6 +261,23 @@ public struct Workspace: Codable, Equatable, Sendable {
             ids.insert(sessionID, at: position)
             projects[p].folders[f].sessionIDs = ids
         }
+    }
+
+    /// Moves a session to just before another one (drag to reorder). Moving
+    /// before an Unfiled session unfiles it; Unfiled has no manual order.
+    public mutating func moveSession(_ sessionID: UUID, before targetID: UUID) throws {
+        guard sessionID != targetID else { return }
+        guard session(sessionID) != nil, let group = group(of: targetID) else { throw WorkspaceError.sessionNotFound }
+        guard case .folder(let folderID) = group else {
+            try moveSession(sessionID, to: group)
+            return
+        }
+        try moveSession(sessionID, to: group)
+        guard let (p, f) = folderIndex(folderID) else { return }
+        var ids = projects[p].folders[f].sessionIDs
+        ids.removeAll { $0 == sessionID }
+        ids.insert(sessionID, at: ids.firstIndex(of: targetID) ?? ids.count)
+        projects[p].folders[f].sessionIDs = ids
     }
 
     public mutating func removeSession(_ id: UUID) {

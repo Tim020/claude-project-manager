@@ -7,6 +7,8 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
+    /// Current width (live while the divider is being dragged).
+    let width: Double
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
 
@@ -36,10 +38,10 @@ struct SidebarView: View {
                 }
                 .scrollIndicators(.automatic)
             }
+            UsageSection(usage: model.usage)
             footer
         }
-        .frame(minWidth: 290, maxWidth: 290)
-        .fixedSize(horizontal: true, vertical: false)
+        .frame(width: width)
         .background(DS.sidebar)
     }
 
@@ -222,6 +224,10 @@ private struct FolderSection: View {
 
     private var row: some View {
         HStack(spacing: 7) {
+            Image(systemName: folder.isCollapsed ? "chevron.right" : "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(DS.dim)
+                .frame(width: 8)
             Image(systemName: folder.isUnfiled ? "tray" : "folder")
                 .font(.system(size: 13))
                 .foregroundStyle(folder.isUnfiled ? DS.dim : DS.blue)
@@ -232,12 +238,12 @@ private struct FolderSection: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
-            Text("\(folder.sessions.count)")
+            Text("\(folder.sessionCount)")
                 .font(DS.font(11, .semibold))
                 .foregroundStyle(DS.dim)
         }
         .padding(.vertical, 5)
-        .padding(.leading, 14)
+        .padding(.leading, 6)
         .padding(.trailing, 8)
         .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
@@ -245,6 +251,7 @@ private struct FolderSection: View {
         .onTapGesture(count: 2) {
             if let folderID { model.beginRenaming(folderID: folderID) }
         }
+        .onTapGesture { model.toggleCollapsed(folder.group) }
         .dropDestination(for: String.self) { items, _ in
             let ids = items.compactMap(UUID.init(uuidString:))
             ids.forEach { model.moveSession($0, to: folder.group) }
@@ -309,7 +316,7 @@ private struct FolderRenameField: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
         .fieldChrome(background: DS.window, border: DS.blue)
-        .padding(.leading, 14)
+        .padding(.leading, 6)
         .padding(.top, 4)
         .onAppear {
             name = initialName
@@ -331,6 +338,7 @@ private struct SessionRow: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmDelete = false
+    @State private var isDropTarget = false
 
     private var isSelected: Bool { model.selectedSessionID == session.id }
 
@@ -374,6 +382,17 @@ private struct SessionRow: View {
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
+        }
+        // Drop another session here to put it just above this one.
+        .dropDestination(for: String.self) { items, _ in
+            let ids = items.compactMap(UUID.init(uuidString:)).filter { $0 != session.id }
+            ids.forEach { model.moveSession($0, before: session.id) }
+            return !ids.isEmpty
+        } isTargeted: { isDropTarget = $0 }
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, 30).offset(y: -1)
+            }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
         .alert("Rename Session", isPresented: $renaming) {
@@ -452,6 +471,75 @@ private struct DeleteSessionConfirmation: ViewModifier {
             } else {
                 Text("The session is removed from Claudio. Its Claude Code history stays on disk.")
             }
+        }
+    }
+}
+/// Plan usage from Claude Code (5-hour session and weekly limits), as
+/// reported to the status line of sessions Claudio launched.
+private struct UsageSection: View {
+    let usage: UsageSnapshot?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("PLAN USAGE")
+                        .font(DS.font(10.5, .extraBold))
+                        .kerning(0.6)
+                        .foregroundStyle(DS.dim)
+                    Spacer()
+                    if let plan = usage?.subscriptionType {
+                        Text(plan.capitalized)
+                            .font(DS.font(11, .semibold))
+                            .foregroundStyle(DS.dim)
+                    }
+                }
+                if let usage, usage.fiveHour != nil || usage.sevenDay != nil {
+                    if let window = usage.fiveHour { row("Session", window, now: context.date) }
+                    if let window = usage.sevenDay { row("Week", window, now: context.date) }
+                } else {
+                    Text("Shows up once a session has run in Claudio.")
+                        .font(DS.font(11.5))
+                        .foregroundStyle(DS.dim)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .overlay(alignment: .top) { HorizontalRule() }
+            .help(usage.map { "Updated \(RelativeAge.string(from: $0.updatedAt, now: context.date)) ago" } ?? "")
+        }
+    }
+
+    private func row(_ title: String, _ window: UsageWindow, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(DS.font(12, .semibold))
+                    .foregroundStyle(DS.muted)
+                Spacer(minLength: 4)
+                Text(window.percentLabel)
+                    .font(DS.font(12, .bold))
+                    .foregroundStyle(color(window))
+                Text(window.resetLabel(now: now))
+                    .font(DS.font(11))
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(DS.border)
+                    Capsule().fill(color(window)).frame(width: geometry.size.width * window.fraction)
+                }
+            }
+            .frame(height: 4)
+        }
+    }
+
+    private func color(_ window: UsageWindow) -> Color {
+        switch window.usedPercentage {
+        case ..<70: return DS.teal
+        case ..<90: return DS.orange
+        default: return DS.red
         }
     }
 }

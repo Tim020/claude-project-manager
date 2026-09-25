@@ -14,11 +14,12 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 ## Features
 
-- **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages.
+- **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages. Drag the divider to resize it.
   - The footer counts Working / Awaiting Input / Completed sessions.
   - Sessions that aren't in a folder appear under **Unfiled**.
 - **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place. Double-click a folder to rename it later.
-  - Drag sessions onto a folder to move them. Drop one on a project header to unfile it.
+  - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
+  - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** The other sessions in the selected session's folder show as tabs, or as side-by-side panes. Toggle between them in the header, or with ⌥⌘1 / ⌥⌘2.
 - **Claude Code background agents.** New sessions start as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
@@ -39,6 +40,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Imports existing sessions.** Adding a project reads `~/.claude/projects/<project>/*.jsonl`, so sessions you started in a terminal appear too, with their titles, summaries, PR links and history.
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
+- **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. Claude Code passes these figures to status line commands, so sessions started in Claudio get a status line that records them (every 60 seconds and on each update). It then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
 - **Dock badge.** Shows how many sessions are awaiting input.
 - **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
@@ -57,7 +59,7 @@ swift run Claudio                 # run directly from the package
 ./scripts/build-app.sh --no-open  # build only
 ```
 
-App state (projects, folders, names, settings) is saved to `~/Library/Application Support/Claudio/state.json`, and hook events are written to `hook-events.log` in the same folder. Conversation history stays in Claude Code's own store.
+App state (projects, folders, names, settings) is saved to `~/Library/Application Support/Claudio/state.json`. Hook events (`hook-events.log`) and the latest plan usage (`usage.json`) are written to the same folder. Data from before the rename (the `SessionManager` folder) is moved there on first launch. Conversation history stays in Claude Code's own store.
 
 ## Tests
 
@@ -83,9 +85,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS
 ## Layout
 
 ```
-Sources/ClaudioCore/   models, workspace ops, hooks, history, launch commands, AppModel
+Sources/ClaudioCore/          models, workspace ops, hooks, history, launch commands, AppModel
 Sources/Claudio/              SwiftUI app (macOS only): SwiftTerm terminals, theme, bundled Nunito Sans (OFL)
 Resources/Assets.xcassets/    app icon
-Tests/ClaudioCoreTests/ XCTest suite and fixtures
+Tests/ClaudioCoreTests/       XCTest suite and fixtures
 design/                       Claude Design handoff (prototype HTML, chat transcript)
 ```

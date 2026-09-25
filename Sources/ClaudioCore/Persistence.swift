@@ -17,14 +17,23 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Run new sessions as Claude Code background agents (`claude --bg`),
     /// attached in a terminal, instead of plain interactive processes.
     public var useBackgroundAgents: Bool
+    /// Width of the resizable sidebar, in points.
+    public var sidebarWidth: Double
+
+    public static let sidebarWidthRange: ClosedRange<Double> = 220...520
+
+    public static func clampSidebarWidth(_ width: Double) -> Double {
+        min(max(width, sidebarWidthRange.lowerBound), sidebarWidthRange.upperBound)
+    }
 
     public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .standard,
-                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true) {
+                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true, sidebarWidth: Double = 290) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
         self.layout = layout
         self.useBackgroundAgents = useBackgroundAgents
+        self.sidebarWidth = AppSettings.clampSidebarWidth(sidebarWidth)
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,7 +43,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
             defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .standard,
             layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs,
-            useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true)
+            useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
+            sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290)
     }
 }
 
