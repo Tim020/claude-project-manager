@@ -70,6 +70,8 @@ struct SessionManagerApp: App {
                 Divider()
                 Button("Add Project…") { chooseProjectDirectory(model: model) }
                     .keyboardShortcut("o")
+                Button("Import Claude Code Projects…") { commands.showImportProjects = true }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
             }
             CommandMenu("Session") {
                 Button("Refresh Sessions") { model.refreshAll() }

@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 # Build a release binary with SwiftPM and wrap it in a macOS .app bundle.
 # Output: build/Session Manager.app (and a zipped copy for CI artifacts).
+# Then relaunches the app, unless running in CI or given --no-open.
+#
+#   ./scripts/build-app.sh            build and open
+#   ./scripts/build-app.sh --no-open  build only
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+OPEN_APP=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-open) OPEN_APP=0 ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+[ -n "${CI:-}" ] && OPEN_APP=0
 
 CONFIG="${CONFIG:-release}"
 APP_NAME="Session Manager"
@@ -72,3 +85,12 @@ codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 
 (cd build && rm -f "$APP_NAME.zip" && ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME.zip")
 echo "Built $APP"
+
+if [ "$OPEN_APP" = 1 ]; then
+  # Quit a running copy politely (so it can stop its sessions), then open the new build.
+  if pgrep -xq SessionManager; then
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    for _ in $(seq 1 50); do pgrep -xq SessionManager || break; sleep 0.1; done
+  fi
+  open "$APP"
+fi

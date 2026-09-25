@@ -1,0 +1,2 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-20T09:00:00.000Z","sessionId":"eeeeeeee-0000-0000-0000-000000000005"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Migrate the docs to vitepress"},"uuid":"u1","timestamp":"2026-09-20T09:00:01.000Z","cwd":"/Users/tim/Code/dreamteam-web","sessionId":"eeeeeeee-0000-0000-0000-000000000005"}

@@ -36,6 +36,25 @@ public struct DiscoveredSession: Equatable, Sendable {
     }
 }
 
+/// A project directory that Claude Code has sessions for.
+public struct DiscoveredProject: Identifiable, Equatable, Sendable {
+    public var path: String
+    public var sessionCount: Int
+    public var lastActivity: Date
+    /// Whether the working directory still exists on disk.
+    public var exists: Bool
+
+    public var id: String { path }
+    public var name: String { (path as NSString).lastPathComponent }
+
+    public init(path: String, sessionCount: Int, lastActivity: Date, exists: Bool) {
+        self.path = path
+        self.sessionCount = sessionCount
+        self.lastActivity = lastActivity
+        self.exists = exists
+    }
+}
+
 /// Reads Claude Code's own session store so existing sessions for a project
 /// show up in the app, and loads their history for display.
 public struct SessionDiscovery: Sendable {
@@ -84,6 +103,53 @@ public struct SessionDiscovery: Sendable {
                                               fallbackDate: modified, defaultWorkingDirectory: projectPath)
         }
         .sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    /// Every project Claude Code has sessions for, newest activity first.
+    /// Directory names are a lossy encoding of the path, so the real path is
+    /// read from the `cwd` recorded in the session files.
+    public func discoverProjects(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws -> [DiscoveredProject] {
+        let root = claudeHome.appendingPathComponent("projects")
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: root.path) else { return [] }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+        var projects: [String: DiscoveredProject] = [:]
+
+        for directory in try fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: keys) {
+            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  let entries = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)
+            else { continue }
+            let sessions = entries
+                .filter { $0.pathExtension == "jsonl" }
+                .map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+                .sorted { $0.1 > $1.1 }
+            guard let newest = sessions.first?.1,
+                  let path = sessions.lazy.compactMap({ SessionDiscovery.recordedWorkingDirectory(in: $0.0) }).first
+            else { continue }
+
+            if var existing = projects[path] {
+                existing.sessionCount += sessions.count
+                existing.lastActivity = max(existing.lastActivity, newest)
+                projects[path] = existing
+            } else {
+                projects[path] = DiscoveredProject(path: path, sessionCount: sessions.count, lastActivity: newest, exists: fileExists(path))
+            }
+        }
+        return projects.values.sorted { ($0.lastActivity, $1.path) > ($1.lastActivity, $0.path) }
+    }
+
+    /// The first `cwd` recorded near the start of a session file.
+    static func recordedWorkingDirectory(in file: URL, scanLimit: Int = 256 * 1024) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: scanLimit) else { return nil }
+        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") where line.contains("\"cwd\"") {
+            if let record = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+               let cwd = record["cwd"]?.stringValue, !cwd.isEmpty {
+                return cwd
+            }
+        }
+        return nil
     }
 
     /// Events from a session's history file, suitable for `TranscriptBuilder`.

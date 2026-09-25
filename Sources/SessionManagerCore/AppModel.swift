@@ -159,6 +159,35 @@ public final class AppModel {
         return id
     }
 
+    /// Claude Code projects on this Mac that aren't in the sidebar yet.
+    public func importableProjects(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [DiscoveredProject] {
+        do {
+            return try discovery.discoverProjects(fileExists: fileExists)
+                .filter { $0.exists && state.workspace.project(atPath: $0.path) == nil }
+        } catch {
+            errorMessage = "Couldn't read Claude Code projects: \(AppModel.describe(error))"
+            return []
+        }
+    }
+
+    /// Adds projects (with their existing sessions). Returns how many were new.
+    @discardableResult
+    public func importProjects(paths: [String]) -> Int {
+        var added: [UUID] = []
+        for path in paths where state.workspace.project(atPath: path) == nil {
+            let id = state.workspace.addProject(path: path)
+            importSessions(for: id)
+            added.append(id)
+        }
+        if selectedSessionID == nil {
+            selectedSessionID = state.workspace.sessions
+                .filter { added.contains($0.projectID) && !$0.isArchived }
+                .max { $0.lastActivity < $1.lastActivity }?.id
+        }
+        save()
+        return added.count
+    }
+
     public func removeProject(_ id: UUID) {
         let ids = state.workspace.sessions.filter { $0.projectID == id }.map(\.id)
         ids.forEach(stop)

@@ -7,6 +7,7 @@ import SwiftUI
 /// siblings as tabs (design 1a) or side by side (design 1b).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
 
@@ -40,11 +41,15 @@ struct DetailView: View {
                 Text("Add a project to get started")
                     .font(DS.font(18))
                     .foregroundStyle(DS.text)
-                Text("Pick a working directory. Its existing Claude Code sessions appear under Unfiled.")
+                Text("Import the projects you've used Claude Code in, or pick a working directory.")
                     .font(DS.font(13))
                     .foregroundStyle(DS.muted)
-                Button("Add Project…") { addProject() }
-                    .buttonStyle(PrimaryButtonStyle(horizontalPadding: 14, verticalPadding: 5))
+                HStack(spacing: 10) {
+                    Button("Import Claude Code Projects…") { commands.showImportProjects = true }
+                        .buttonStyle(PrimaryButtonStyle(horizontalPadding: 14, verticalPadding: 5))
+                    Button("Add Project…") { addProject() }
+                        .buttonStyle(OutlineButtonStyle())
+                }
             } else {
                 Text("No session selected")
                     .font(DS.font(18))

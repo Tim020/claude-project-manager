@@ -97,6 +97,28 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    func testImportableProjectsExcludeOnesAlreadyAdded() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            XCTAssertEqual(Set(model.importableProjects(fileExists: { _ in true }).map(\.name)), ["DigiScript", "dreamteam-web"])
+            model.addProject(path: projectPath)
+            XCTAssertEqual(model.importableProjects(fileExists: { _ in true }).map(\.name), ["dreamteam-web"])
+            XCTAssertEqual(model.importableProjects(fileExists: { _ in false }).count, 0, "only directories that still exist")
+        }
+    }
+
+    func testImportProjectsAddsThemWithTheirSessions() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let added = model.importProjects(paths: [projectPath, "/Users/tim/Code/dreamteam-web", projectPath])
+            XCTAssertEqual(added, 2)
+            XCTAssertEqual(model.workspace.projects.map(\.name), ["DigiScript", "dreamteam-web"])
+            XCTAssertEqual(model.workspace.sessions.count, 3)
+            XCTAssertNotNil(model.selectedSessionID, "selects the newest imported session when nothing was selected")
+            XCTAssertEqual(store.state.workspace.projects.count, 2)
+        }
+    }
+
     // MARK: Folders
 
     func testCreateFolderStartsInlineRenameAndCommitRenames() throws {

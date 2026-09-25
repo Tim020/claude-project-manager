@@ -49,6 +49,16 @@ struct ContentView: View {
             NewSessionSheet(initialGroup: target.group ?? model.selectedGroup)
                 .environment(model)
         }
+        .sheet(isPresented: $commands.showImportProjects) {
+            ImportProjectsSheet()
+                .environment(model)
+        }
+        .task {
+            // First launch: offer to import existing Claude Code projects.
+            guard !commands.offeredFirstRunImport, model.workspace.projects.isEmpty else { return }
+            commands.offeredFirstRunImport = true
+            if !model.importableProjects().isEmpty { commands.showImportProjects = true }
+        }
         .alert("Session Manager", isPresented: errorBinding) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
@@ -99,5 +109,8 @@ func chooseProjectDirectory(model: AppModel) {
 @Observable
 final class UICommands {
     var newSessionTarget: NewSessionTarget?
+    var showImportProjects = false
+    /// The import sheet is offered automatically once, on a first launch.
+    var offeredFirstRunImport = false
 }
 #endif

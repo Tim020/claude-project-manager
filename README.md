@@ -30,6 +30,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - A permission request, or a reply that ends in a question, marks it **Awaiting Input**.
   - A finished turn marks it **Completed**, and Claude's last message becomes the summary.
   - Your own hook settings are left untouched.
+- **Import Claude Code projects.** File → Import Claude Code Projects… (⇧⌘I) lists every project on this Mac that you've used Claude Code in and that isn't in the sidebar yet. It's offered automatically on first launch, and projects active in the last 30 days start out ticked.
 - **Imports existing sessions.** Adding a project reads `~/.claude/projects/<project>/*.jsonl`, so sessions you started in a terminal appear too, with their titles, summaries, PR links and history.
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
@@ -46,7 +47,8 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 ```sh
 swift run SessionManager          # run directly from the package
-./scripts/build-app.sh            # build/Session Manager.app (+ .zip)
+./scripts/build-app.sh            # build/Session Manager.app (+ .zip), then open it
+./scripts/build-app.sh --no-open  # build only
 ```
 
 App state (projects, folders, names, settings) is saved to `~/Library/Application Support/SessionManager/state.json`, and hook events are written to `hook-events.log` in the same folder. Conversation history stays in Claude Code's own store.

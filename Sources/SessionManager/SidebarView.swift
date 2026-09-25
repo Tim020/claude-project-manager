@@ -6,6 +6,7 @@ import SwiftUI
 /// Design 1a: source list with the full Project → Folder → Session tree.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
 
@@ -87,11 +88,15 @@ struct SidebarView: View {
             Text("No projects yet")
                 .font(DS.font(13, .bold))
                 .foregroundStyle(DS.text)
-            Text("Add a project directory to see its Claude Code sessions.")
+            Text("Import the projects you've used Claude Code in, or add a directory.")
                 .font(DS.font(12))
                 .foregroundStyle(DS.muted)
-            Button("Add Project…") { addProject() }
-                .buttonStyle(OutlineButtonStyle())
+            HStack(spacing: 8) {
+                Button("Import…") { commands.showImportProjects = true }
+                    .buttonStyle(PrimaryButtonStyle())
+                Button("Add Project…") { addProject() }
+                    .buttonStyle(OutlineButtonStyle())
+            }
         }
         .padding(8)
         .padding(.top, 10)
@@ -123,6 +128,7 @@ struct SidebarView: View {
 
 private struct ProjectSection: View {
     @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     @Environment(\.presentNewSession) private var presentNewSession
     let project: SidebarProject
     let now: Date
@@ -170,6 +176,7 @@ private struct ProjectSection: View {
             Button("New Folder") { model.createFolder(in: project.id) }
             Divider()
             Button("Refresh Sessions") { model.refreshAll() }
+            Button("Import Claude Code Projects…") { commands.showImportProjects = true }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path)
             }

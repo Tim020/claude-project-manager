@@ -122,3 +122,41 @@ final class WorkspaceImportTests: XCTestCase {
         XCTAssertEqual(ws.session(s.id)?.status, .working)
     }
 }
+
+final class ProjectDiscoveryTests: XCTestCase {
+    private func discovery() throws -> SessionDiscovery {
+        SessionDiscovery(claudeHome: try Fixtures.url("claude-home"))
+    }
+
+    func testFindsProjectsFromRecordedWorkingDirectories() throws {
+        let projects = try discovery().discoverProjects(fileExists: { _ in true }).sorted { $0.path < $1.path }
+        XCTAssertEqual(projects.map(\.path), ["/Users/tim/Code/dreamteam-web", "/Users/tim/Documents/Code/DigiScript"])
+        XCTAssertEqual(projects.map(\.name), ["dreamteam-web", "DigiScript"])
+        XCTAssertEqual(projects.map(\.sessionCount), [1, 3])
+        XCTAssertTrue(projects.allSatisfy(\.exists))
+    }
+
+    func testReportsWhetherTheDirectoryStillExists() throws {
+        let projects = try discovery().discoverProjects(fileExists: { $0 == "/Users/tim/Code/dreamteam-web" })
+        XCTAssertEqual(projects.first { $0.name == "dreamteam-web" }?.exists, true)
+        XCTAssertEqual(projects.first { $0.name == "DigiScript" }?.exists, false)
+    }
+
+    func testMissingClaudeHomeYieldsNothing() throws {
+        let empty = SessionDiscovery(claudeHome: try makeTemporaryDirectory())
+        XCTAssertEqual(try empty.discoverProjects(), [])
+    }
+
+    func testNewestProjectsFirst() throws {
+        let home = try makeTemporaryDirectory()
+        for (name, age) in [("old", 5000.0), ("new", 10.0)] {
+            let dir = home.appendingPathComponent("projects/-x-\(name)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("s.jsonl")
+            try #"{"type":"user","cwd":"/x/\#(name)","message":{"content":"hi"}}"#.write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: file.path)
+        }
+        let projects = try SessionDiscovery(claudeHome: home).discoverProjects(fileExists: { _ in true })
+        XCTAssertEqual(projects.map(\.name), ["new", "old"])
+    }
+}
