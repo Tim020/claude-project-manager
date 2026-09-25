@@ -285,6 +285,16 @@ private struct ProjectSection: View {
     }
 }
 
+/// Leading offsets for the tree's levels, so each level sits inside its
+/// parent: a project's name starts at 28pt (8 padding + 14 chevron + 6
+/// spacing), and folders start just inside that.
+enum SidebarIndent {
+    static let folder: CGFloat = 22
+    /// A session's status dot sits just before its folder's name, which starts
+    /// at folder + chevron (8) + spacing (7) + icon (16) + spacing (7).
+    static let session: CGFloat = folder + 8 + 7 + 16 + 7 - 6
+}
+
 private struct FolderSection: View {
     @Environment(AppModel.self) private var model
     @Environment(\.presentNewSession) private var presentNewSession
@@ -334,7 +344,7 @@ private struct FolderSection: View {
                 .help(folder.sessionCount == 1 ? "1 session" : "\(folder.sessionCount) sessions")
         }
         .padding(.vertical, 5)
-        .padding(.leading, 6)
+        .padding(.leading, SidebarIndent.folder)
         .padding(.trailing, 8)
         .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
@@ -407,7 +417,7 @@ private struct FolderRenameField: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
         .fieldChrome(background: DS.window, border: DS.blue)
-        .padding(.leading, 6)
+        .padding(.leading, SidebarIndent.folder)
         .padding(.top, 4)
         .onAppear {
             name = initialName
@@ -461,7 +471,7 @@ private struct SessionRow: View {
                 .help("Last active \(session.lastActivity.formatted(date: .abbreviated, time: .shortened))")
         }
         .padding(.vertical, 5)
-        .padding(.leading, 38)
+        .padding(.leading, SidebarIndent.session)
         .padding(.trailing, 8)
         .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
         .contentShape(Rectangle())
@@ -483,7 +493,7 @@ private struct SessionRow: View {
         } isTargeted: { isDropTarget = $0 }
         .overlay(alignment: .top) {
             if isDropTarget {
-                Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, 30).offset(y: -1)
+                Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session - 8).offset(y: -1)
             }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
