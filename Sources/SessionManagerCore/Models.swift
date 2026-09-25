@@ -80,6 +80,11 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var lastActivity: Date
     public var isArchived: Bool
 
+    enum CodingKeys: String, CodingKey {
+        case id, projectID, claudeSessionID, hasConversation, name, role, status, summary, needsAction
+        case workingDirectory, model, permissionMode, pullRequestURLs, createdAt, lastActivity, isArchived
+    }
+
     public init(
         id: UUID = UUID(),
         projectID: UUID,
