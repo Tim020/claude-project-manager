@@ -278,12 +278,18 @@ public final class AppModel {
 
     /// Claude Code projects on this Mac that aren't in the sidebar yet.
     public func importableProjects(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> [DiscoveredProject] {
+        importCandidates(fileExists: fileExists).projects
+    }
+
+    /// Importable projects, plus the paths skipped because the folder is gone.
+    public func importCandidates(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> ImportCandidates {
         do {
-            return try discovery.discoverProjects(fileExists: fileExists)
-                .filter { $0.exists && state.workspace.project(atPath: $0.path) == nil }
+            let found = try discovery.discoverProjects(fileExists: fileExists)
+                .filter { state.workspace.project(atPath: $0.path) == nil }
+            return ImportCandidates(projects: found.filter(\.exists), missingPaths: found.filter { !$0.exists }.map(\.path).sorted())
         } catch {
             report("Couldn't read Claude Code projects: \(AppModel.describe(error))")
-            return []
+            return ImportCandidates(projects: [], missingPaths: [])
         }
     }
 

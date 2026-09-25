@@ -15,7 +15,8 @@ enum AppEnvironment {
     private static func makeModel() -> AppModel {
         AppModel(
             store: JSONFileStore(url: JSONFileStore.defaultURL),
-            discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome),
+            discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome,
+                                         configFile: SessionDiscovery.defaultConfigFile),
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
             usageURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("usage.json"),
             statusDirectory: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("status"),

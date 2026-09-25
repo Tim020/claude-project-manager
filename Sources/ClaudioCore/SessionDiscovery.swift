@@ -49,6 +49,9 @@ public struct DiscoveredProject: Identifiable, Equatable, Sendable {
     public var exists: Bool
 
     public var id: String { path }
+    /// False for projects known only from ~/.claude.json, whose history
+    /// Claude Code has since cleaned up.
+    public var hasHistory: Bool { sessionCount > 0 }
     public var name: String { (path as NSString).lastPathComponent }
 
     public init(path: String, sessionCount: Int, lastActivity: Date, exists: Bool) {
@@ -56,6 +59,17 @@ public struct DiscoveredProject: Identifiable, Equatable, Sendable {
         self.sessionCount = sessionCount
         self.lastActivity = lastActivity
         self.exists = exists
+    }
+}
+
+public struct ImportCandidates: Equatable, Sendable {
+    public var projects: [DiscoveredProject]
+    /// Projects whose folder no longer exists, so can't be imported.
+    public var missingPaths: [String]
+
+    public init(projects: [DiscoveredProject], missingPaths: [String]) {
+        self.projects = projects
+        self.missingPaths = missingPaths
     }
 }
 
@@ -96,9 +110,30 @@ public struct SessionDiscovery: Sendable {
     public static let maxTitleLength = 60
 
     public let claudeHome: URL
+    /// Claude Code's `.claude.json`, whose `projects` lists every folder it has
+    /// been run in, including ones whose history has been cleaned up.
+    public let configFile: URL?
 
-    public init(claudeHome: URL) {
+    public init(claudeHome: URL, configFile: URL? = nil) {
         self.claudeHome = claudeHome
+        self.configFile = configFile
+    }
+
+    /// `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json`.
+    public static var defaultConfigFile: URL {
+        if let override = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override).appendingPathComponent(".claude.json")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude.json")
+    }
+
+    /// Folder paths listed under `projects` in a `.claude.json`, sorted.
+    static func knownProjectPaths(in configFile: URL) -> [String] {
+        guard let data = try? Data(contentsOf: configFile),
+              let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+              case .object(let projects)? = value["projects"]
+        else { return [] }
+        return projects.keys.filter { $0.hasPrefix("/") }.sorted()
     }
 
     public static var defaultClaudeHome: URL {
@@ -183,6 +218,14 @@ public struct SessionDiscovery: Sendable {
                 projects[path] = existing
             } else {
                 projects[path] = DiscoveredProject(path: path, sessionCount: sessions.count, lastActivity: newest, exists: fileExists(path))
+            }
+        }
+        // Folders Claude Code remembers but whose history has been cleaned up.
+        if let configFile {
+            for recorded in SessionDiscovery.knownProjectPaths(in: configFile) {
+                let path = Worktree.repositoryRoot(of: recorded) ?? recorded
+                guard projects[path] == nil else { continue }
+                projects[path] = DiscoveredProject(path: path, sessionCount: 0, lastActivity: .distantPast, exists: fileExists(path))
             }
         }
         return projects.values.sorted { ($0.lastActivity, $1.path) > ($1.lastActivity, $0.path) }

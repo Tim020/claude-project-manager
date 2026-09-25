@@ -9,6 +9,8 @@ struct ImportProjectsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var projects: [DiscoveredProject] = []
+    @State private var missingPaths: [String] = []
+    @State private var showMissing = false
     @State private var selected: Set<String> = []
     @State private var loaded = false
 
@@ -21,7 +23,7 @@ struct ImportProjectsSheet: View {
                 Text("Import Claude Code Projects")
                     .font(DS.font(18, .bold))
                     .foregroundStyle(DS.text)
-                Text("Projects you've used Claude Code in on this Mac. Their existing sessions appear under Unfiled.")
+                Text("Projects you've used Claude Code in on this Mac. Their existing sessions appear under Unfiled. Projects with no saved sessions had their history cleaned up by Claude Code (after 30 days, unless you've set cleanupPeriodDays).")
                     .font(DS.font(12.5))
                     .foregroundStyle(DS.muted)
             }
@@ -57,6 +59,27 @@ struct ImportProjectsSheet: View {
                 .fieldChrome(background: DS.window)
             }
 
+            if loaded && !missingPaths.isEmpty {
+                DisclosureGroup(isExpanded: $showMissing) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(missingPaths, id: \.self) { path in
+                            Text(PathDisplay.tilde(path, home: model.home))
+                                .font(DS.mono(11.5))
+                                .foregroundStyle(DS.dim)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                } label: {
+                    Text("\(missingPaths.count) hidden because the folder no longer exists")
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.muted)
+                }
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -76,7 +99,9 @@ struct ImportProjectsSheet: View {
         .background(DS.sidebar)
         .preferredColorScheme(.dark)
         .task {
-            projects = model.importableProjects()
+            let candidates = model.importCandidates()
+            projects = candidates.projects
+            missingPaths = candidates.missingPaths
             let cutoff = Date().addingTimeInterval(-Self.recentWindow)
             selected = Set(projects.filter { $0.lastActivity > cutoff }.map(\.path))
             loaded = true
@@ -100,7 +125,9 @@ struct ImportProjectsSheet: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Text("\(project.sessionCount) session\(project.sessionCount == 1 ? "" : "s") · \(RelativeAge.string(from: project.lastActivity, now: Date()))")
+            Text(project.hasHistory
+                 ? "\(project.sessionCount) session\(project.sessionCount == 1 ? "" : "s") · \(RelativeAge.string(from: project.lastActivity, now: Date()))"
+                 : "No saved sessions")
                 .font(DS.font(11.5))
                 .foregroundStyle(DS.dim)
         }
