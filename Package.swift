@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "SessionManager",
+    name: "Claudio",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "SessionManager", targets: ["SessionManager"]),
-        .library(name: "SessionManagerCore", targets: ["SessionManagerCore"]),
+        .executable(name: "Claudio", targets: ["Claudio"]),
+        .library(name: "ClaudioCore", targets: ["ClaudioCore"]),
     ],
     dependencies: [
         // Terminal emulator for each session's interactive `claude`.
@@ -16,22 +16,22 @@ let package = Package(
         // Platform-independent logic: models, workspace operations, Claude Code
         // hook events and history, terminal launch commands, persistence and
         // AppModel. Builds and tests on Linux as well as macOS.
-        .target(name: "SessionManagerCore"),
+        .target(name: "ClaudioCore"),
 
         // The SwiftUI macOS app. Sources are guarded with `#if os(macOS)` so the
         // package still builds on Linux CI.
         .executableTarget(
-            name: "SessionManager",
+            name: "Claudio",
             dependencies: [
-                "SessionManagerCore",
+                "ClaudioCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm", condition: .when(platforms: [.macOS])),
             ],
             resources: [.copy("Resources/Fonts")]
         ),
 
         .testTarget(
-            name: "SessionManagerCoreTests",
-            dependencies: ["SessionManagerCore"],
+            name: "ClaudioCoreTests",
+            dependencies: ["ClaudioCore"],
             resources: [.copy("Fixtures")]
         ),
     ]

@@ -1,0 +1,223 @@
+#if os(macOS)
+import AppKit
+import ClaudioCore
+import SwiftTerm
+import SwiftUI
+
+/// Owns one SwiftTerm terminal view per session, independent of SwiftUI's view
+/// lifecycle, so a session keeps running (and keeps its scrollback) while you
+/// look at other tabs or folders.
+@MainActor
+final class TerminalRegistry: NSObject, TerminalControlling {
+    private unowned let model: AppModel
+    private var views: [UUID: LocalProcessTerminalView] = [:]
+
+    init(model: AppModel) {
+        self.model = model
+    }
+
+    /// The terminal for a session, starting its queued launch if there is one.
+    /// Returns nil when the session has never had a terminal this app run.
+    func terminal(for sessionID: UUID) -> LocalProcessTerminalView? {
+        if let launch = model.takePendingLaunch(sessionID) {
+            views[sessionID]?.processDelegate = nil
+            let view = makeView()
+            views[sessionID] = view
+            view.startProcess(executable: launch.executable,
+                              args: launch.arguments,
+                              environment: launch.environmentList,
+                              execName: nil,
+                              currentDirectory: launch.workingDirectory)
+        }
+        return views[sessionID]
+    }
+
+    func hasTerminal(_ sessionID: UUID) -> Bool {
+        views[sessionID] != nil
+    }
+
+    func terminate(_ sessionID: UUID) {
+        views[sessionID]?.terminate()
+    }
+
+    func focus(_ sessionID: UUID) {
+        guard let view = views[sessionID], let window = view.window else { return }
+        window.makeFirstResponder(view)
+    }
+
+    /// Replaces a session's terminal with a fresh attach, in place.
+    func returnToSession(_ sessionID: UUID) {
+        guard let old = views[sessionID], model.returnToSession(sessionID) else { return }
+        let container = old.superview
+        old.processDelegate = nil
+        old.terminate()
+        old.removeFromSuperview()
+        views[sessionID] = nil
+        guard let fresh = terminal(for: sessionID) else { return }
+        if let container { TerminalPane.pin(fresh, in: container) }
+        focus(sessionID)
+    }
+
+    private func makeView() -> LocalProcessTerminalView {
+        let view = SessionTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        view.onBlockedLeave = { [weak self] in
+            self?.model.log.append(.info, "Blocked ← that would have left the session for the agents view")
+        }
+        view.onAgentsViewShown = { [weak self, weak view] in
+            guard let self, let view, let id = self.sessionID(for: view) else { return }
+            self.returnToSession(id)
+        }
+        view.processDelegate = self
+        view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        view.nativeBackgroundColor = NSColor(hex: 0x222222)
+        view.nativeForegroundColor = NSColor(hex: 0xF1F3F5)
+        view.caretColor = NSColor(hex: 0x00BC8C)
+        return view
+    }
+
+    fileprivate func sessionID(for source: AnyObject) -> UUID? {
+        views.first { $0.value === source }?.key
+    }
+
+    fileprivate func processExited(_ source: AnyObject, exitCode: Int32?) {
+        guard let id = sessionID(for: source) else { return }
+        model.terminalExited(id, exitCode: exitCode)
+    }
+}
+
+/// A terminal that stays in its session: the ← that would switch Claude
+/// Code to its agents view is dropped (the app's sidebar and tabs do that job).
+final class SessionTerminalView: LocalProcessTerminalView {
+    var onBlockedLeave: (() -> Void)?
+    /// Claude Code switched this terminal to its agents view.
+    var onAgentsViewShown: (() -> Void)?
+    private var lastLeftArrow: Date?
+    private var checkScheduled = false
+
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        let input = Array(data)
+        if LeaveSessionGuard.isLeftArrow(input) {
+            if LeaveSessionGuard.shouldBlock(input: input, screen: bottomLines(12)) {
+                onBlockedLeave?()
+                return
+            }
+            lastLeftArrow = Date()
+        }
+        super.send(source: source, data: data)
+    }
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        super.dataReceived(slice: slice)
+        // Right after a ←, watch the output for the agents list.
+        guard let lastLeftArrow, Date().timeIntervalSince(lastLeftArrow) < 3, !checkScheduled else { return }
+        checkScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            self.checkScheduled = false
+            self.checkForAgentsView(title: nil)
+        }
+    }
+
+    func checkForAgentsView(title: String?) {
+        let seconds = lastLeftArrow.map { Date().timeIntervalSince($0) }
+        guard AgentsViewDetector.shouldReturnToSession(title: title, screen: title == nil ? visibleLines() : [],
+                                                       secondsSinceLeftArrow: seconds) else { return }
+        lastLeftArrow = nil
+        onAgentsViewShown?()
+    }
+
+    private func visibleLines() -> [String] {
+        bottomLines(getTerminal().rows)
+    }
+
+    /// The last few visible lines, where Claude Code shows its hints.
+    private func bottomLines(_ count: Int) -> [String] {
+        let terminal = getTerminal()
+        let rows = terminal.rows
+        return (max(0, rows - count)..<rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
+    }
+}
+
+extension TerminalRegistry: LocalProcessTerminalViewDelegate {
+    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+
+    nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        // The agents view titles the terminal "claude agents".
+        guard AgentsViewDetector.isAgentsViewTitle(title) else { return }
+        let box = UncheckedBox(source)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { (box.value as? SessionTerminalView)?.checkForAgentsView(title: title) }
+        }
+    }
+
+    nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
+        let box = UncheckedBox(source)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.processExited(box.value, exitCode: exitCode) }
+        }
+    }
+}
+
+private struct UncheckedBox<T: AnyObject>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
+extension NSColor {
+    convenience init(hex: UInt32) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                  green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255,
+                  alpha: 1)
+    }
+}
+
+/// Makes the registry available through the SwiftUI environment.
+@MainActor
+@Observable
+final class TerminalRegistryBox {
+    let registry: TerminalRegistry
+    init(_ registry: TerminalRegistry) { self.registry = registry }
+}
+
+/// Hosts a session's terminal view inside SwiftUI.
+struct TerminalPane: NSViewRepresentable {
+    let sessionID: UUID
+    let registry: TerminalRegistry
+    let isFocused: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(hex: 0x222222).cgColor
+        return container
+    }
+
+    /// Pins with constraints: the container can still be zero-sized, and a
+    /// frame inset from a zero rect is null, which left the terminal invisible.
+    static func pin(_ terminal: NSView, in container: NSView) {
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(terminal)
+        NSLayoutConstraint.activate([
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            terminal.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
+        ])
+    }
+
+    func updateNSView(_ container: NSView, context: Context) {
+        guard let terminal = registry.terminal(for: sessionID) else { return }
+        if terminal.superview !== container {
+            terminal.removeFromSuperview()
+            container.subviews.forEach { $0.removeFromSuperview() }
+            TerminalPane.pin(terminal, in: container)
+        }
+        if isFocused {
+            DispatchQueue.main.async { registry.focus(sessionID) }
+        }
+    }
+}
+#endif

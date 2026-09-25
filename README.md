@@ -1,6 +1,6 @@
-# Session Manager
+# Claudio
 
-A native macOS app for running and organising many [Claude Code](https://claude.com/claude-code) sessions.
+Claudio is a native macOS app for running and organising many [Claude Code](https://claude.com/claude-code) sessions.
 
 Sessions are grouped three levels deep:
 
@@ -40,7 +40,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
 - **Dock badge.** Shows how many sessions are awaiting input.
-- **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/SessionManager.log`.
+- **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
 
 ## Requirements
@@ -52,16 +52,16 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 ## Build and run
 
 ```sh
-swift run SessionManager          # run directly from the package
-./scripts/build-app.sh            # build/Session Manager.app (+ .zip), then open it
+swift run Claudio                 # run directly from the package
+./scripts/build-app.sh            # build/Claudio.app (+ .zip), then open it
 ./scripts/build-app.sh --no-open  # build only
 ```
 
-App state (projects, folders, names, settings) is saved to `~/Library/Application Support/SessionManager/state.json`, and hook events are written to `hook-events.log` in the same folder. Conversation history stays in Claude Code's own store.
+App state (projects, folders, names, settings) is saved to `~/Library/Application Support/Claudio/state.json`, and hook events are written to `hook-events.log` in the same folder. Conversation history stays in Claude Code's own store.
 
 ## Tests
 
-The project is built test-first. All logic lives in the platform-independent `SessionManagerCore` target, and the SwiftUI layer stays a thin view over `AppModel`. The core tests cover:
+The project is built test-first. All logic lives in the platform-independent `ClaudioCore` target, and the SwiftUI layer stays a thin view over `AppModel`. The core tests cover:
 
 - workspace operations
 - hook event parsing and status reduction, using fixtures recorded from real `claude` runs
@@ -83,9 +83,9 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS
 ## Layout
 
 ```
-Sources/SessionManagerCore/   models, workspace ops, hooks, history, launch commands, AppModel
-Sources/SessionManager/       SwiftUI app (macOS only): SwiftTerm terminals, theme, bundled Nunito Sans (OFL)
+Sources/ClaudioCore/   models, workspace ops, hooks, history, launch commands, AppModel
+Sources/Claudio/              SwiftUI app (macOS only): SwiftTerm terminals, theme, bundled Nunito Sans (OFL)
 Resources/Assets.xcassets/    app icon
-Tests/SessionManagerCoreTests/ XCTest suite and fixtures
+Tests/ClaudioCoreTests/ XCTest suite and fixtures
 design/                       Claude Design handoff (prototype HTML, chat transcript)
 ```

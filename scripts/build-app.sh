@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a release binary with SwiftPM and wrap it in a macOS .app bundle.
-# Output: build/Session Manager.app (and a zipped copy for CI artifacts).
+# Output: build/Claudio.app (and a zipped copy for CI artifacts).
 # Then relaunches the app, unless running in CI or given --no-open.
 #
 #   ./scripts/build-app.sh            build and open
@@ -18,22 +18,22 @@ done
 [ -n "${CI:-}" ] && OPEN_APP=0
 
 CONFIG="${CONFIG:-release}"
-APP_NAME="Session Manager"
-BUNDLE_ID="${BUNDLE_ID:-com.tim020.sessionmanager}"
+APP_NAME="Claudio"
+BUNDLE_ID="${BUNDLE_ID:-com.tim020.claudio}"
 VERSION="${VERSION:-0.1.0}"
 
-swift build -c "$CONFIG" --product SessionManager
+swift build -c "$CONFIG" --product Claudio
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
 APP="build/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build
 
-cp "$BIN_DIR/SessionManager" "$APP/Contents/MacOS/SessionManager"
+cp "$BIN_DIR/Claudio" "$APP/Contents/MacOS/Claudio"
 # SwiftPM resource bundle (fonts) — Bundle.module looks next to the executable
 # and in Contents/Resources.
-if [ -d "$BIN_DIR/SessionManager_SessionManager.bundle" ]; then
-  cp -R "$BIN_DIR/SessionManager_SessionManager.bundle" "$APP/Contents/Resources/"
+if [ -d "$BIN_DIR/Claudio_Claudio.bundle" ]; then
+  cp -R "$BIN_DIR/Claudio_Claudio.bundle" "$APP/Contents/Resources/"
 fi
 
 # App icon from Resources/Assets.xcassets (light design 3b). actool compiles it
@@ -67,7 +67,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$APP_NAME</string>
   <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-  <key>CFBundleExecutable</key><string>SessionManager</string>
+  <key>CFBundleExecutable</key><string>Claudio</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
@@ -88,9 +88,9 @@ echo "Built $APP"
 
 if [ "$OPEN_APP" = 1 ]; then
   # Quit a running copy politely (so it can stop its sessions), then open the new build.
-  if pgrep -xq SessionManager; then
+  if pgrep -xq Claudio; then
     osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-    for _ in $(seq 1 50); do pgrep -xq SessionManager || break; sleep 0.1; done
+    for _ in $(seq 1 50); do pgrep -xq Claudio || break; sleep 0.1; done
   fi
   open "$APP"
 fi
