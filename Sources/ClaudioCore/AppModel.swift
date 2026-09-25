@@ -80,6 +80,8 @@ public final class AppModel {
     private var contexts: [UUID: ContextUsage] = [:]
     /// Context estimated from history, for sessions with no status line data.
     private var estimatedContexts: [UUID: ContextUsage] = [:]
+    /// Sessions whose name still has to be written as their Claude Code title.
+    @ObservationIgnored private var pendingTitlePushes = Set<UUID>()
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
@@ -396,6 +398,10 @@ public final class AppModel {
             save()
         }
         if estimates != estimatedContexts { estimatedContexts = estimates }
+        if !pendingTitlePushes.isEmpty {
+            flushTitlePushes()
+            save()
+        }
     }
 
     private static func recordEstimates(_ found: [DiscoveredSession], in workspace: Workspace, into estimates: inout [UUID: ContextUsage]) {
@@ -560,9 +566,39 @@ public final class AppModel {
         save()
     }
 
+    /// Renames a session here and in Claude Code (its title, as `/rename` sets).
     public func renameSession(_ id: UUID, to name: String) {
-        attempt { try state.workspace.renameSession(id, to: name) }
+        guard attempt({ try state.workspace.renameSession(id, to: name) }) != nil else { return }
+        pushTitle(id)
         save()
+    }
+
+    /// Writes the session's name as its Claude Code title, once the session
+    /// has a history file. Sessions still waiting for one are retried after
+    /// the next refresh.
+    @discardableResult
+    private func pushTitle(_ id: UUID) -> Bool {
+        guard let session = state.workspace.session(id), let claudeID = session.claudeSessionID else {
+            pendingTitlePushes.insert(id)
+            return false
+        }
+        let file = discovery.historyFile(projectPath: session.workingDirectory, claudeSessionID: claudeID)
+        guard SessionTitleWriter.append(title: session.name, claudeSessionID: claudeID, to: file) else {
+            pendingTitlePushes.insert(id)
+            return false
+        }
+        pendingTitlePushes.remove(id)
+        state.workspace.updateSession(id) { $0.claudeTitle = session.name }
+        log.append(.info, "Set Claude Code's title for “\(session.name)”", detail: PathDisplay.tilde(file.path, home: home))
+        return true
+    }
+
+    private func flushTitlePushes() {
+        for id in pendingTitlePushes {
+            guard let session = state.workspace.session(id), session.hasCustomName else { pendingTitlePushes.remove(id); continue }
+            if session.claudeTitle == session.name { pendingTitlePushes.remove(id); continue }
+            pushTitle(id)
+        }
     }
 
     public func setRole(_ id: UUID, to role: SessionRole) {
@@ -617,6 +653,8 @@ public final class AppModel {
                               permissionMode: request.permissionMode,
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
+        // Give Claude Code the same name once the session has a history file.
+        if session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }
         guard attempt({ try state.workspace.addSession(session, toFolder: request.folderID) }) != nil else { return nil }
         select(session.id)

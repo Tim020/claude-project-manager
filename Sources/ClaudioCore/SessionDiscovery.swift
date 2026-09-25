@@ -13,10 +13,12 @@ public struct DiscoveredSession: Equatable, Sendable {
     public var status: SessionStatus
     /// Tokens in context after the latest reply (nil if unknown or just compacted).
     public var contextTokens: Int?
+    /// The latest title set with `/rename` (or by Claudio), if any.
+    public var customTitle: String?
 
     public init(claudeSessionID: String, title: String, firstPrompt: String?, summary: String, model: String?,
                 workingDirectory: String, lastActivity: Date, pullRequestURLs: [String], status: SessionStatus,
-                contextTokens: Int? = nil) {
+                contextTokens: Int? = nil, customTitle: String? = nil) {
         self.claudeSessionID = claudeSessionID
         self.title = title
         self.firstPrompt = firstPrompt
@@ -27,6 +29,7 @@ public struct DiscoveredSession: Equatable, Sendable {
         self.pullRequestURLs = pullRequestURLs
         self.status = status
         self.contextTokens = contextTokens
+        self.customTitle = customTitle
     }
 
     public var role: SessionRole { SessionRole.infer(fromName: title) }
@@ -334,7 +337,8 @@ public struct SessionDiscovery: Sendable {
             lastActivity: latest ?? fallbackDate,
             pullRequestURLs: pullRequests,
             status: status,
-            contextTokens: contextTokens)
+            contextTokens: contextTokens,
+            customTitle: customTitle)
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
@@ -368,11 +372,26 @@ extension Workspace {
     /// known ones get fresher summary/status unless they are live (`skipping`).
     /// Returns the number of sessions added.
     @discardableResult
+    /// Follows a rename made in Claude Code (`/rename`). The first time a
+    /// title is seen for a session the user named in Claudio, Claudio's name
+    /// is kept, since there's no telling which is newer.
+    mutating func syncTitle(_ id: UUID, claudeTitle: String?) {
+        guard let title = claudeTitle, let current = session(id), current.claudeTitle != title else { return }
+        let firstSight = current.claudeTitle == nil
+        updateSession(id) { session in
+            session.claudeTitle = title
+            if firstSight && session.hasCustomName && session.name != title { return }
+            session.name = title
+            session.hasCustomName = true
+        }
+    }
+
     public mutating func importDiscovered(_ discovered: [DiscoveredSession], into projectID: UUID, skipping live: Set<UUID>) -> Int {
         guard project(projectID) != nil else { return 0 }
         var added = 0
         for found in discovered {
             if let existing = session(claudeSessionID: found.claudeSessionID) {
+                syncTitle(existing.id, claudeTitle: found.customTitle)
                 guard !live.contains(existing.id), found.lastActivity >= existing.lastActivity else { continue }
                 updateSession(existing.id) { session in
                     if !found.summary.isEmpty { session.summary = found.summary }

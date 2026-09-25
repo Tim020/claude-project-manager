@@ -206,5 +206,6 @@ extension Session {
         self.needsAction = try c.decodeIfPresent(String.self, forKey: .needsAction)
         self.agentID = try c.decodeIfPresent(String.self, forKey: .agentID)
         self.hasCustomName = try c.decodeIfPresent(Bool.self, forKey: .hasCustomName) ?? false
+        self.claudeTitle = try c.decodeIfPresent(String.self, forKey: .claudeTitle)
     }
 }
