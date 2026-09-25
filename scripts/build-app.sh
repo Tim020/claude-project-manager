@@ -34,7 +34,8 @@ if xcrun actool Resources/Assets.xcassets --compile "$APP/Contents/Resources" \
      --output-partial-info-plist build/AppIcon-partial.plist \
      --output-format human-readable-text --errors --warnings >build/actool.log 2>&1 \
    && [ -f "$APP/Contents/Resources/Assets.car" ]; then
-  note "App icon: compiled asset catalog with light and dark variants"
+  dark=$(xcrun assetutil --info "$APP/Contents/Resources/Assets.car" 2>/dev/null | grep -c '"Appearance" : "NSAppearanceNameDarkAqua"' || true)
+  note "App icon: compiled asset catalog (${dark} dark-appearance renditions)"
 else
   note "App icon: actool unavailable or failed, using light-only iconutil fallback ($(tr '\n' ' ' < build/actool.log | cut -c1-300))"
   ICONSET="build/AppIcon.iconset"
