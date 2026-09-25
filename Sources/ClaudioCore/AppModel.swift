@@ -171,7 +171,28 @@ public final class AppModel {
     public var settings: AppSettings { state.settings }
 
     public var sidebar: [SidebarProject] {
-        Sidebar.build(state.workspace, filter: filterText, status: statusFilter, home: home)
+        Sidebar.build(state.workspace, filter: filterText, status: statusFilter,
+                      activeSince: state.settings.activitySince(now: now()), alwaysShow: alwaysShownSessionIDs, home: home)
+    }
+
+    /// Sessions shown whatever their age: open tabs, the selection, and ones
+    /// with a live terminal.
+    private var alwaysShownSessionIDs: Set<UUID> {
+        var ids = Set(state.workspace.openTabIDs).union(running)
+        if let selectedSessionID { ids.insert(selectedSessionID) }
+        return ids
+    }
+
+    /// How many sessions the recent-activity window is hiding.
+    public var hiddenByRecencyCount: Int {
+        Sidebar.hiddenByRecency(state.workspace, activeSince: state.settings.activitySince(now: now()), alwaysShow: alwaysShownSessionIDs)
+    }
+
+    /// Sets the recent-activity window in days (0: show every session).
+    public func setActivityWindow(days: Int) {
+        var settings = state.settings
+        settings.activityWindowDays = max(0, days)
+        updateSettings(settings)
     }
 
     public var selectedSession: Session? {

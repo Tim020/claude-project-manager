@@ -11,6 +11,7 @@ struct SidebarView: View {
     let width: Double
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var model = model
@@ -32,6 +33,7 @@ struct SidebarView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.top, 12)
                         }
+                        recencyHint
                     }
                     .padding(.horizontal, 8)
                     .padding(.bottom, 12)
@@ -138,7 +140,30 @@ struct SidebarView: View {
         .overlay(alignment: .top) { HorizontalRule() }
     }
 
-    /// Status filter menu at the end of the filter field.
+    /// Says how many sessions the recent-activity window hides, with a way
+    /// to show them.
+    @ViewBuilder private var recencyHint: some View {
+        let hidden = model.hiddenByRecencyCount
+        if hidden > 0 {
+            let window = AppSettings.activityWindowLabel(days: model.settings.activityWindowDays).lowercased()
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11))
+                Text("\(hidden) \(hidden == 1 ? "session" : "sessions") not active in the \(window)")
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button("Show All") { model.setActivityWindow(days: 0) }
+                    .buttonStyle(.link)
+                    .help("Show every session, whatever its age. Change this in the filter menu or Settings.")
+            }
+            .font(DS.font(11.5))
+            .foregroundStyle(DS.dim)
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+        }
+    }
+
+    /// Status and recent-activity filters, at the end of the filter field.
     private var statusFilterMenu: some View {
         Menu {
             Button {
@@ -154,6 +179,22 @@ struct SidebarView: View {
                     if model.statusFilter == status { Label(status.label, systemImage: "checkmark") } else { Text(status.label) }
                 }
             }
+            Section("Active Within") {
+                let current = model.settings.activityWindowDays
+                let choices = AppSettings.activityWindowPresets.contains(current)
+                    ? AppSettings.activityWindowPresets
+                    : (AppSettings.activityWindowPresets.dropLast() + [current, 0]).sorted { ($0 == 0 ? Int.max : $0) < ($1 == 0 ? Int.max : $1) }
+                ForEach(choices, id: \.self) { days in
+                    Button { model.setActivityWindow(days: days) } label: {
+                        let label = AppSettings.activityWindowLabel(days: days)
+                        if days == current { Label(label, systemImage: "checkmark") } else { Text(label) }
+                    }
+                }
+                Button("Custom…") {
+                    UserDefaults.standard.set(SettingsPane.general.rawValue, forKey: "settingsPane")
+                    openSettings()
+                }
+            }
         } label: {
             Image(systemName: model.statusFilter == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 .font(.system(size: 13))
@@ -162,7 +203,7 @@ struct SidebarView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(model.statusFilter.map { "Showing only \($0.label) sessions" } ?? "Filter by status")
+        .help(model.statusFilter.map { "Showing only \($0.label) sessions" } ?? "Filter by status or recent activity")
     }
 
     private var noMatchesText: String {

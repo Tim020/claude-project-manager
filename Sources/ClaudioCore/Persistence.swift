@@ -22,6 +22,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The roles offered for new sessions (editable in Settings).
     public var roles: [String]
     public var notifications = NotificationSettings()
+    /// The sidebar only shows sessions active within this many days (plus
+    /// ones working, awaiting input or open in a tab). 0 shows every session.
+    public var activityWindowDays = AppSettings.defaultActivityWindowDays
+    public static let defaultActivityWindowDays = 14
+
+    /// Quick choices for the window, in days (0 is any time).
+    public static let activityWindowPresets = [1, 3, 7, 14, 30, 90, 0]
+
+    /// "Any time", "Last day", "Last week", "Last 2 weeks", "Last 45 days"…
+    public static func activityWindowLabel(days: Int) -> String {
+        switch days {
+        case ...0: return "Any time"
+        case 1: return "Last day"
+        case 7: return "Last week"
+        case 14: return "Last 2 weeks"
+        default: return "Last \(days) days"
+        }
+    }
+
+    /// The cutoff for `activityWindowDays`, or nil for any time.
+    public func activitySince(now: Date) -> Date? {
+        activityWindowDays > 0 ? now.addingTimeInterval(-Double(activityWindowDays) * 86_400) : nil
+    }
 
     public static func cleanRoles(_ roles: [String]) -> [String] {
         var seen = Set<String>()
@@ -58,6 +81,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
+        activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)
     }
 }
 

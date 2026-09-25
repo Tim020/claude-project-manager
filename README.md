@@ -16,6 +16,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 - **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages. Drag the divider to resize it.
   - The footer counts Working / Awaiting Input / Completed sessions. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
+  - Only sessions active in the last 2 weeks are shown by default; sessions that are working, awaiting input, open in a tab or selected always show. The end of the list says how many are hidden, with Show All. Change the window (a preset or any number of days, or Any time) from the filter button or Settings → General.
   - Icons beside a session: a terminal (also open in a terminal outside Claudio), a branch (runs in its own git worktree) and a pull request (with a count when there's more than one). Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.
 - **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place. Double-click a folder to rename it later.
@@ -46,7 +47,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. It's read at launch and every 5 minutes with `claude -p /usage`, which makes no model call. Sessions started in Claudio also update it live through their status line: it records Claude Code's usage and context data, then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
 - **Notifications.** macOS notifications when a session needs your input or finishes (and, if you turn it on, when an agent stops unexpectedly). They're skipped for the session you're looking at while Claudio is in front; clicking one opens its session. Choose which ones, and whether they play a sound, in Settings. They need the bundled `Claudio.app` (not `swift run`), and macOS asks for permission on first launch.
 - **Settings** (⌘,). A sidebar of pages, each with grouped rows:
-  - **General:** the `claude` executable, and where Claudio's data, its log and Claude Code's history are kept.
+  - **General:** the `claude` executable, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
   - **New Sessions:** Direct or Background sessions, plus the default model and permissions.
   - **Notifications**, **Roles** and **About**.
 - **Dock badge.** Shows how many sessions are awaiting input.

@@ -20,7 +20,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .general: return "Where to find Claude Code, and where Claudio keeps its data."
+        case .general: return "Where to find Claude Code, which sessions the sidebar shows, and where Claudio keeps its data."
         case .sessions: return "How new sessions start: as background agents or directly, with which model and permissions."
         case .notifications: return "Choose which session changes tap you on the shoulder."
         case .roles: return "Labels for sessions, offered when you create one and shown on tabs."
@@ -151,6 +151,8 @@ private struct GeneralSettings: View {
         .onAppear { claudePath = model.settings.claudePath ?? "" }
         .onDisappear(perform: savePath)
 
+        SidebarSettingsGroup()
+
         SettingsGroup(title: "Data", footer: "Conversation history stays in Claude Code's own store; Claudio only keeps its sidebar layout and settings.") {
             locationRow("Claudio data", url: JSONFileStore.defaultURL.deletingLastPathComponent())
             locationRow("Activity log", url: ActivityLog.defaultFileURL)
@@ -192,6 +194,61 @@ private struct GeneralSettings: View {
             savePath()
         }
     }
+}
+
+// MARK: - Sidebar
+
+private struct SidebarSettingsGroup: View {
+    @Environment(AppModel.self) private var model
+    @State private var customDays = AppSettings.defaultActivityWindowDays
+
+    var body: some View {
+        let current = model.settings.activityWindowDays
+        let isPreset = AppSettings.activityWindowPresets.contains(current)
+
+        SettingsGroup(title: "Sidebar",
+                      footer: "Older sessions are hidden to keep the sidebar short. Sessions that are working, awaiting input, open in a tab or selected always show.") {
+            SettingsRow(title: "Show sessions active within") {
+                Picker("Show sessions active within", selection: Binding(
+                    get: { isPreset ? current : -1 },
+                    set: { value in
+                        if value == -1 {
+                            model.setActivityWindow(days: max(1, customDays))
+                        } else {
+                            model.setActivityWindow(days: value)
+                        }
+                    })) {
+                    ForEach(AppSettings.activityWindowPresets, id: \.self) { days in
+                        Text(AppSettings.activityWindowLabel(days: days)).tag(days)
+                    }
+                    Divider()
+                    Text("Custom").tag(-1)
+                }
+                .labelsHidden()
+                .frame(width: 180)
+            }
+            SettingsRow(title: "Custom window", subtitle: "Any number of days, from 1 to 3650.", showsSeparator: false) {
+                HStack(spacing: 6) {
+                    TextField("", value: $customDays, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 64)
+                        .onSubmit { model.setActivityWindow(days: clamp(customDays)) }
+                    Stepper("", value: $customDays, in: 1...3650)
+                        .labelsHidden()
+                    Text(customDays == 1 ? "day" : "days")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.muted)
+                    Button("Apply") { model.setActivityWindow(days: clamp(customDays)) }
+                        .disabled(clamp(customDays) == current)
+                }
+            }
+        }
+        .onAppear { customDays = current > 0 ? current : AppSettings.defaultActivityWindowDays }
+        .onChange(of: current) { _, value in if value > 0 { customDays = value } }
+    }
+
+    private func clamp(_ days: Int) -> Int { min(max(days, 1), 3650) }
 }
 
 // MARK: - New sessions

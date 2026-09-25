@@ -26,9 +26,30 @@ public struct SidebarProject: Identifiable, Equatable, Sendable {
 }
 
 /// Builds the Project → Folder → Session source list, applying the filter
-/// field and, optionally, a status filter.
+/// field and, optionally, a status filter and a recent-activity window.
 public enum Sidebar {
-    public static func build(_ workspace: Workspace, filter: String, status: SessionStatus? = nil, home: String) -> [SidebarProject] {
+    /// Whether a session shows under the recent-activity window: active since
+    /// the cutoff, still working or awaiting input, or in `alwaysShow` (open
+    /// tabs, the selection).
+    static func isRecent(_ session: Session, since: Date?, alwaysShow: Set<UUID>) -> Bool {
+        guard let since else { return true }
+        return session.lastActivity >= since || session.status != .completed || alwaysShow.contains(session.id)
+    }
+
+    /// Sessions the recent-activity window hides.
+    public static func hiddenByRecency(_ workspace: Workspace, activeSince: Date?, alwaysShow: Set<UUID>) -> Int {
+        guard activeSince != nil else { return 0 }
+        return workspace.projects.reduce(0) { total, project in
+            var groups: [SessionGroup] = project.folders.map { .folder($0.id) }
+            groups.append(.unfiled(projectID: project.id))
+            return total + groups.reduce(0) { count, group in
+                count + workspace.sessions(in: group).filter { !isRecent($0, since: activeSince, alwaysShow: alwaysShow) }.count
+            }
+        }
+    }
+
+    public static func build(_ workspace: Workspace, filter: String, status: SessionStatus? = nil,
+                             activeSince: Date? = nil, alwaysShow: Set<UUID> = [], home: String) -> [SidebarProject] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let textFiltering = !query.isEmpty
         let filtering = textFiltering || status != nil
@@ -44,6 +65,11 @@ public enum Sidebar {
             var folders: [SidebarFolder] = []
             for (group, name, isUnfiled) in groups {
                 var sessions = workspace.sessions(in: group)
+                if activeSince != nil && !sessions.isEmpty {
+                    sessions = sessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
+                    // Hide folders whose sessions are all old; keep ones that are simply empty.
+                    if sessions.isEmpty { continue }
+                }
                 if let status {
                     sessions = sessions.filter { $0.status == status }
                     if sessions.isEmpty { continue }
