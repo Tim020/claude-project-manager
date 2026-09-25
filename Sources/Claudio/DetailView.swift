@@ -90,6 +90,7 @@ private struct DetailHeader: View {
                 .font(DS.font(14, .bold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
+            RoleChip(session: session)
             if let worktree = Worktree.name(ofPath: session.workingDirectory) {
                 WorktreeChip(name: worktree)
             }
@@ -373,6 +374,8 @@ private struct TabItem: View {
                 Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
             }
             Divider()
+            Menu("Role") { RoleMenuItems(session: session) }
+            Divider()
             Button("Close Other Tabs") { model.closeOtherTabs(keeping: session.id) }
                 .disabled(model.tabs.count < 2)
             Button("Close Tabs to the Left") { model.closeTabs(leftOf: session.id) }
@@ -442,12 +445,7 @@ struct SessionPane: View {
         VStack(spacing: 0) {
             if case .compact(let focused) = style {
                 HStack(spacing: 8) {
-                    if !session.role.isNone {
-                        Text(session.role.label)
-                            .font(DS.font(11, .extraBold))
-                            .kerning(0.66)
-                            .foregroundStyle(DS.muted)
-                    }
+                    RoleChip(session: session, compact: true)
                     Text(session.name)
                         .font(DS.font(13.5, .bold))
                         .foregroundStyle(DS.text)

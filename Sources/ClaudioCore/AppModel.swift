@@ -532,6 +532,23 @@ public final class AppModel {
         save()
     }
 
+    public func setRole(_ id: UUID, to role: SessionRole) {
+        guard let session = state.workspace.session(id), session.role != role else { return }
+        state.workspace.updateSession(id) { $0.role = role }
+        save()
+    }
+
+    /// Roles offered for a session: the Settings list, plus its current role
+    /// if that has since been removed from the list.
+    public func roleChoices(for id: UUID) -> [SessionRole] {
+        var choices = settings.roles.map { SessionRole($0) }
+        if let current = state.workspace.session(id)?.role, !current.isNone,
+           !choices.contains(where: { $0.rawValue.caseInsensitiveCompare(current.rawValue) == .orderedSame }) {
+            choices.append(current)
+        }
+        return choices
+    }
+
     public func deleteSession(_ id: UUID) {
         if selectedSessionID == id {
             let siblings = tabs
