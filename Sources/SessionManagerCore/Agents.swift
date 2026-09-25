@@ -204,10 +204,14 @@ public struct AgentCommands: Sendable {
         return command(args, in: session.workingDirectory)
     }
 
-    /// Continues a stopped session in the background under the same id.
-    public func resume(session: Session) -> TerminalLaunch {
+    /// Continues a stopped session in the background under the same id,
+    /// optionally with a first message.
+    public func resume(session: Session, prompt: String? = nil) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
-        return command(["--bg", "--resume", claudeID] + sessionOptions(session), in: session.workingDirectory)
+        var args: [String] = []
+        if let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty { args.append(prompt) }
+        args += ["--bg", "--resume", claudeID]
+        return command(args + sessionOptions(session), in: session.workingDirectory)
     }
 
     /// Opens a background agent in a terminal; closing the terminal detaches.

@@ -24,6 +24,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Claude Code background agents.** New sessions start as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
   - The terminal stays in its session. In Claude Code, ← on an empty prompt switches an attached terminal to its agents view; the app spots that (the terminal title becomes "claude agents") and reattaches the tab straight away, since the sidebar and tabs handle navigation. ← still moves the cursor as normal.
+  - A session that isn't running shows its history with a message box: type and press Return to resume it with that message as the first prompt, or click Resume to resume without one.
   - Closing a tab only detaches; the agent keeps running and its sidebar status keeps updating. Quitting the app leaves agents running, and they reattach when you reopen them.
   - Agents you start elsewhere (`claude --bg`, the `claude agents` view) show up in their project automatically. Worktree sessions are grouped under their repository.
   - Sessions open in an interactive `claude` in a terminal get a live status and a terminal icon. Resuming one asks first, because it starts a copy of the conversation; the copy appears beside the original as "<name> (copy)".

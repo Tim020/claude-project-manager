@@ -387,4 +387,55 @@ final class AgentModelTests: XCTestCase {
             XCTAssertFalse(model.returnToSession(id))
         }
     }
+
+    // MARK: Resuming with a message
+
+    func testResumeWithMessageSendsItAsTheFirstPrompt() async throws {
+        runner.agentsJSON = #"[{"id":"83526b6d","sessionId":"83526b6d-2eed","kind":"background","cwd":"\#(repo)","name":"n","state":"done"}]"#
+        runner.dispatchOutput = "backgrounded · 83526b6d\n"
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel()
+            model.addProject(path: repo)
+            return model
+        }
+        await model.refreshAgents()
+        let id = await MainActor.run { () -> UUID in
+            let id = model.workspace.sessions[0].id
+            model.resume(id, message: "Carry on")
+            XCTAssertEqual(model.workspace.session(id)?.status, .working, "shows Working straight away")
+            return id
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertEqual(Array(runner.commands.last { $0.contains("--bg") }!.prefix(4)), ["Carry on", "--bg", "--resume", "83526b6d-2eed"])
+            XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "83526b6d"])
+        }
+    }
+
+    func testResumeWithMessageInDirectMode() throws {
+        try MainActor.assumeIsolated {
+            var state = PersistedState()
+            state.settings.useBackgroundAgents = false
+            let p = state.workspace.addProject(path: repo)
+            try state.workspace.addSession(Session(projectID: p, claudeSessionID: "abc", hasConversation: true, name: "s", workingDirectory: repo))
+            store.state = state
+            let model = try makeModel()
+            let id = model.workspace.sessions[0].id
+            model.resume(id, message: "Carry on")
+            XCTAssertEqual(Array(model.takePendingLaunch(id)!.claudeArguments.prefix(3)), ["Carry on", "--resume", "abc"])
+            XCTAssertEqual(model.workspace.session(id)?.status, .working)
+        }
+    }
+
+    func testCopyConfirmationKeepsTheMessage() async throws {
+        let sid = "312fdcb6-6989-492e-a86f-3afc149f9c90"
+        let (model, original) = try await MainActor.run { try modelWithImportedSession(claudeSessionID: sid) }
+        runner.agentsJSON = interactiveJSON(sid, status: "idle")
+        await model.refreshAgents()
+        await MainActor.run { model.resume(original, message: "Try again") }
+        runner.dispatchOutput = "note: started a copy of that conversation as 2bd6a047.\nbackgrounded · 2bd6a047\n"
+        await MainActor.run { model.resumeCopy(of: original) }
+        await model.lastTask?.value
+        XCTAssertEqual(runner.commands.last { $0.contains("--bg") }?.first, "Try again")
+    }
 }

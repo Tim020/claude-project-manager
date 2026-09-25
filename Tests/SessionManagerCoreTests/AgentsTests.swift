@@ -133,6 +133,14 @@ final class AgentCommandTests: XCTestCase {
         XCTAssertTrue(command.arguments[2].hasPrefix("cd '/code/app/.claude/worktrees/x' && "))
     }
 
+    func testResumeInBackgroundWithAMessage() {
+        var s = session
+        s.claudeSessionID = "fb72709a-291a-41a1-ab00-ed7fe2d9115b"
+        let command = context().resume(session: s, prompt: "  Carry on with the tests  ")
+        XCTAssertEqual(Array(command.claudeArguments.prefix(4)), ["Carry on with the tests", "--bg", "--resume", "fb72709a-291a-41a1-ab00-ed7fe2d9115b"])
+        XCTAssertEqual(context().resume(session: s, prompt: "   ").claudeArguments.first, "--bg", "a blank message is just a resume")
+    }
+
     func testAttachStopRemoveAndList() {
         let c = context()
         XCTAssertEqual(c.attach(agentID: "fb72709a", workingDirectory: "/code").claudeArguments, ["attach", "fb72709a"])

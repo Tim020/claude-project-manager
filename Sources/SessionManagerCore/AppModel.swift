@@ -78,6 +78,8 @@ public final class AppModel {
     @ObservationIgnored private var lastAgentsOutput: String?
     @ObservationIgnored private var isRefreshingAgents = false
     @ObservationIgnored private var isRefreshingProjects = false
+    /// The message to send once the user confirms resuming a copy.
+    @ObservationIgnored private var pendingCopyMessages: [UUID: String] = [:]
 
     @ObservationIgnored public weak var terminals: TerminalControlling?
     @ObservationIgnored private let store: StateStore
@@ -480,25 +482,35 @@ public final class AppModel {
     // MARK: - Background agents
 
     /// Opens a session: reattaches a live agent, resumes a stopped one in the
-    /// background, or (without an agent) starts `claude` directly.
-    public func resume(_ sessionID: UUID) {
+    /// background, or (without an agent) starts `claude` directly. A message,
+    /// if given, is sent as the first prompt after resuming.
+    public func resume(_ sessionID: UUID, message: String? = nil) {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        let message = message.flatMap(Workspace.trimmed)
         if isAgentAlive(sessionID) {
             attach(sessionID)
         } else if isOpenInTerminal(sessionID) {
             // Resuming would fork the conversation; let the user decide.
+            pendingCopyMessages[sessionID] = message
             copyConfirmation = sessionID
         } else if state.settings.useBackgroundAgents && session.hasConversation && session.claudeSessionID != nil {
-            enqueue { await self.resumeInBackground(sessionID) }
+            if message != nil { markWorking(sessionID) }
+            enqueue { await self.resumeInBackground(sessionID, prompt: message) }
         } else {
-            start(sessionID)
+            start(sessionID, prompt: message)
         }
     }
 
     /// Starts a background copy of a session that's open in a terminal.
     public func resumeCopy(of sessionID: UUID) {
         copyConfirmation = nil
-        enqueue { await self.resumeInBackground(sessionID) }
+        let message = pendingCopyMessages.removeValue(forKey: sessionID)
+        enqueue { await self.resumeInBackground(sessionID, prompt: message) }
+    }
+
+    private func markWorking(_ sessionID: UUID) {
+        state.workspace.updateSession(sessionID) { $0.status = .working; $0.needsAction = nil; $0.lastActivity = now() }
+        save()
     }
 
     /// Re-reads `claude agents --json --all`: links and updates known
@@ -602,9 +614,9 @@ public final class AppModel {
         await linkDispatched(sessionID, result: result)
     }
 
-    private func resumeInBackground(_ sessionID: UUID) async {
+    private func resumeInBackground(_ sessionID: UUID, prompt: String? = nil) async {
         guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
-        let result = await run(commands.resume(session: session))
+        let result = await run(commands.resume(session: session, prompt: prompt))
         await linkDispatched(sessionID, result: result)
     }
 

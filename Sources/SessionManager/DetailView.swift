@@ -434,49 +434,90 @@ struct SessionPane: View {
 
     private var idleMessage: String {
         if model.isAgentAlive(session.id) { return "The agent is running in the background." }
-        if model.isOpenInTerminal(session.id) { return "Running in a terminal — continue it there." }
+        if model.isOpenInTerminal(session.id) { return "Running in a terminal — sending here starts a copy." }
         return session.hasConversation ? "This session isn't running." : "This session hasn't started yet."
     }
 }
 
 /// "Not running" bar with the teal Resume / Start button.
+/// Bottom bar for a session that isn't attached. Typing a message and pressing
+/// Return resumes the session with it as the first prompt; the button resumes
+/// without one. A live background agent just gets Attach.
 private struct ResumeBar: View {
     @Environment(AppModel.self) private var model
     let session: Session
     let message: String
     var compact = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var agentAlive: Bool { model.isAgentAlive(session.id) }
+    private var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var placeholder: String {
+        if model.isOpenInTerminal(session.id) { return "Type a message and press Return to resume a copy…" }
+        if !session.hasConversation { return "Type a message and press Return to start this session…" }
+        return "Type a message and press Return to resume…"
+    }
+
+    private var buttonTitle: String {
+        if agentAlive { return "Attach" }
+        if hasDraft { return "Send" }
+        if model.isOpenInTerminal(session.id) { return "Resume a Copy…" }
+        return session.hasConversation ? "Resume" : "Start"
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(message)
-                .font(DS.font(13))
-                .foregroundStyle(DS.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 4)
-            if !compact {
-                Text(ModelName.display(session.model))
+        VStack(alignment: .leading, spacing: 6) {
+            if agentAlive || message.hasPrefix("Session ended") || message.hasPrefix("Detached") {
+                Text(message)
                     .font(DS.font(12))
-                    .foregroundStyle(DS.muted)
+                    .foregroundStyle(DS.dim)
                     .lineLimit(1)
+                    .padding(.horizontal, 2)
+            }
+            HStack(spacing: 10) {
+                if agentAlive {
+                    Text("The agent is running in the background.")
+                        .font(DS.font(compact ? 13 : 14))
+                        .foregroundStyle(DS.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                } else {
+                    TextField(placeholder, text: $draft, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(DS.font(compact ? 13 : 14))
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1...6)
+                        .focused($focused)
+                        .onSubmit(send)
+                }
+                if !compact {
+                    Text(ModelName.display(session.model))
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.muted)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Button(buttonTitle, action: send)
+                    .buttonStyle(PrimaryButtonStyle())
                     .fixedSize()
             }
-            Button(model.isAgentAlive(session.id) ? "Attach"
-                   : model.isOpenInTerminal(session.id) ? "Resume a Copy…"
-                   : session.hasConversation ? "Resume" : "Start") {
-                model.select(session.id)
-                model.resume(session.id)
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .fixedSize()
+            .padding(.vertical, compact ? 8 : 10)
+            .padding(.horizontal, compact ? 10 : 12)
+            .fieldChrome(border: focused ? DS.blue.opacity(0.7) : DS.border)
         }
-        .padding(.vertical, compact ? 8 : 10)
-        .padding(.horizontal, compact ? 10 : 12)
-        .fieldChrome()
         .padding(.top, compact ? 10 : 14)
         .padding(.bottom, compact ? 10 : 18)
         .padding(.horizontal, compact ? 12 : 20)
         .overlay(alignment: .top) { HorizontalRule() }
+    }
+
+    private func send() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        model.select(session.id)
+        model.resume(session.id, message: text.isEmpty ? nil : text)
+        draft = ""
     }
 }
 #endif
