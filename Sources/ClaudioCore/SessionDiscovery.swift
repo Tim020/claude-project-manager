@@ -368,10 +368,6 @@ public struct SessionDiscovery: Sendable {
 }
 
 extension Workspace {
-    /// Merges sessions found on disk into a project. New ones land in Unfiled;
-    /// known ones get fresher summary/status unless they are live (`skipping`).
-    /// Returns the number of sessions added.
-    @discardableResult
     /// Follows a rename made in Claude Code (`/rename`). The first time a
     /// title is seen for a session the user named in Claudio, Claudio's name
     /// is kept, since there's no telling which is newer.
@@ -386,6 +382,10 @@ extension Workspace {
         }
     }
 
+    /// Merges sessions found on disk into a project. New ones land in Unfiled;
+    /// known ones get fresher summary/status unless they are live (`skipping`).
+    /// Returns the number of sessions added.
+    @discardableResult
     public mutating func importDiscovered(_ discovered: [DiscoveredSession], into projectID: UUID, skipping live: Set<UUID>) -> Int {
         guard project(projectID) != nil else { return 0 }
         var added = 0

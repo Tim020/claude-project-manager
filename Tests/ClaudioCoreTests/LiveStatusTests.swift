@@ -53,7 +53,7 @@ final class LiveStatusTests: XCTestCase {
     }
 
     private func append(_ text: String, to url: URL) throws {
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: nil) }
+        if !FileManager.default.fileExists(atPath: url.path) { _ = FileManager.default.createFile(atPath: url.path, contents: nil) }
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
         try handle.write(contentsOf: Data(text.utf8))

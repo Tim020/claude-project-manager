@@ -323,15 +323,18 @@ public struct ProcessCommandRunner: CommandRunning {
         let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
 
-        var errorData = Data()
+        // Drain stderr on another thread so neither pipe fills and blocks.
+        final class ErrorBuffer: @unchecked Sendable { var data = Data() }
+        let errorBuffer = ErrorBuffer()
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global().async {
-            errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            errorBuffer.data = stderr.fileHandleForReading.readDataToEndOfFile()
             group.leave()
         }
         let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
         group.wait()
+        let errorData = errorBuffer.data
         process.waitUntilExit()
         timer.cancel()
         return CommandResult(exitCode: process.terminationStatus,

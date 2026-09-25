@@ -80,7 +80,7 @@ public final class ActivityLog: @unchecked Sendable {
             try? fileManager.moveItem(at: url, to: rotated)
         }
         if !fileManager.fileExists(atPath: url.path) {
-            fileManager.createFile(atPath: url.path, contents: nil)
+            _ = fileManager.createFile(atPath: url.path, contents: nil)
         }
     }
 }

@@ -72,6 +72,7 @@ final class AppModelActivityTests: XCTestCase {
     let repo = "/Users/tim/Documents/Code/DigiScript"
     var store = MemoryStore()
     var runner = FakeRunner()
+    var terminals: FakeTerminals!
 
     @MainActor
     private func makeModel(claudeHome: URL? = nil) throws -> AppModel {
@@ -85,7 +86,8 @@ final class AppModelActivityTests: XCTestCase {
             shell: "/bin/zsh",
             now: { Date(timeIntervalSince1970: 1_790_340_000) },
             home: "/Users/tim")
-        model.terminals = FakeTerminals()
+        terminals = FakeTerminals()
+        model.terminals = terminals
         return model
     }
 

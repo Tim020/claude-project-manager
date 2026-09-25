@@ -11,6 +11,7 @@ final class ResumeAgentTests: XCTestCase {
     let sid = "b3f8f7e8-3932-40da-8035-6f1c5e5cecfd"
     var store = MemoryStore()
     var runner = FakeRunner()
+    var terminals: FakeTerminals!
 
     func testContinuingAnAgentPassesNoFlags() {
         var session = Session(projectID: UUID(), claudeSessionID: sid, hasConversation: true, name: "s", workingDirectory: repo,
@@ -42,7 +43,8 @@ final class ResumeAgentTests: XCTestCase {
                              hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("hooks.log"), runner: runner,
                              locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/zsh",
                              now: { Date(timeIntervalSince1970: 1_790_352_600) }, home: "/Users/tim")
-        model.terminals = FakeTerminals()
+        terminals = FakeTerminals()
+        model.terminals = terminals
         return (model, session.id)
     }
 

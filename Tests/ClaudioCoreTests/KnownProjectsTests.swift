@@ -49,7 +49,7 @@ final class KnownProjectsTests: XCTestCase {
 
     func testImportCandidatesReportFoldersThatNoLongerExist() throws {
         let (home, config) = try makeHome()
-        try MainActor.assumeIsolated {
+        MainActor.assumeIsolated {
             let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: home, configFile: config),
                                  hookEventsURL: home.appendingPathComponent("h.log"), locateClaude: { _ in nil },
                                  shell: "/bin/sh", home: "/")
