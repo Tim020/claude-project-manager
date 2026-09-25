@@ -98,6 +98,7 @@ private struct DetailHeader: View {
                 ContextMeter(context: context, compact: false)
             }
             StatusPill(status: session.status)
+                .help(SessionIndicators.statusHelp(session))
             if model.canSplit {
                 LayoutToggle()
             }
@@ -241,6 +242,7 @@ private struct LayoutToggle: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(layout == .split ? "Show open tabs side by side (⌥⌘2)" : "Show one tab at a time (⌥⌘1)")
     }
 }
 
@@ -303,6 +305,7 @@ private struct TabStrip: View {
             Button("Close Other Tabs") { model.closeOtherTabs(keeping: selectedID) }
                 .disabled(sessions.count < 2)
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
+            Button("Close All Tabs") { model.closeAllTabs() }
         } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: 11, weight: .semibold))
@@ -325,12 +328,14 @@ private struct TabItem: View {
     var body: some View {
         HStack(spacing: 7) {
             StatusDot(status: session.status, size: 7)
+                .help(SessionIndicators.statusHelp(session))
             Text(session.name)
                 .lineLimit(1)
             if !session.role.isNone {
                 Text(session.role.label)
                     .font(DS.font(11))
                     .foregroundStyle(DS.dim)
+                    .help("Role: \(session.role.rawValue)")
             }
             if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
                 // Tabs come from several folders: say where this one lives.
@@ -367,8 +372,16 @@ private struct TabItem: View {
             if model.isRunning(session.id) {
                 Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
             }
+            Divider()
             Button("Close Other Tabs") { model.closeOtherTabs(keeping: session.id) }
+                .disabled(model.tabs.count < 2)
+            Button("Close Tabs to the Left") { model.closeTabs(leftOf: session.id) }
+                .disabled(model.workspace.tabIDs(leftOf: session.id).isEmpty)
+            Button("Close Tabs to the Right") { model.closeTabs(rightOf: session.id) }
+                .disabled(model.workspace.tabIDs(rightOf: session.id).isEmpty)
+            Divider()
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
+            Button("Close All Tabs") { model.closeAllTabs() }
         }
     }
 }
@@ -444,6 +457,7 @@ struct SessionPane: View {
                         ContextMeter(context: context, compact: true)
                     }
                     StatusPill(status: session.status, fontSize: 11.5, verticalPadding: 1, horizontalPadding: 9)
+                        .help(SessionIndicators.statusHelp(session))
                 }
                 .padding(.vertical, 10)
                 .padding(.horizontal, 14)

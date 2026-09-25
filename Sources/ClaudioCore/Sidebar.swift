@@ -25,16 +25,18 @@ public struct SidebarProject: Identifiable, Equatable, Sendable {
     public var hasAwaitingInput: Bool
 }
 
-/// Builds the Project → Folder → Session source list, applying the filter field.
+/// Builds the Project → Folder → Session source list, applying the filter
+/// field and, optionally, a status filter.
 public enum Sidebar {
-    public static func build(_ workspace: Workspace, filter: String, home: String) -> [SidebarProject] {
+    public static func build(_ workspace: Workspace, filter: String, status: SessionStatus? = nil, home: String) -> [SidebarProject] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtering = !query.isEmpty
+        let textFiltering = !query.isEmpty
+        let filtering = textFiltering || status != nil
 
         func matches(_ text: String) -> Bool { text.lowercased().contains(query) }
 
         return workspace.projects.compactMap { project -> SidebarProject? in
-            let projectMatches = filtering && matches(project.name)
+            let projectMatches = textFiltering && matches(project.name)
 
             var groups: [(SessionGroup, String, Bool)] = project.folders.map { (.folder($0.id), $0.name, false) }
             groups.append((.unfiled(projectID: project.id), Workspace.unfiledName, true))
@@ -42,7 +44,11 @@ public enum Sidebar {
             var folders: [SidebarFolder] = []
             for (group, name, isUnfiled) in groups {
                 var sessions = workspace.sessions(in: group)
-                if filtering && !projectMatches && !matches(name) {
+                if let status {
+                    sessions = sessions.filter { $0.status == status }
+                    if sessions.isEmpty { continue }
+                }
+                if textFiltering && !projectMatches && !matches(name) {
                     sessions = sessions.filter { matches($0.name) || matches($0.summary) }
                     if sessions.isEmpty { continue }
                 }
@@ -57,7 +63,7 @@ public enum Sidebar {
                                              sessions: collapsed && !filtering ? [] : sessions, sessionCount: sessions.count))
             }
 
-            if filtering && folders.isEmpty && !projectMatches { return nil }
+            if filtering && folders.isEmpty && (status != nil || !projectMatches) { return nil }
 
             let all = workspace.sessions.filter { $0.projectID == project.id && !$0.isArchived }
             let active = all.filter { $0.status != .completed }

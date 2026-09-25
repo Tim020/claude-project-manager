@@ -26,7 +26,7 @@ struct SidebarView: View {
                         if model.workspace.projects.isEmpty {
                             emptyHint
                         } else if model.sidebar.isEmpty {
-                            Text("No sessions match “\(model.filterText)”")
+                            Text(noMatchesText)
                                 .font(DS.font(12))
                                 .foregroundStyle(DS.dim)
                                 .padding(.horizontal, 8)
@@ -76,7 +76,9 @@ struct SidebarView: View {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
+                .help("Clear the filter")
             }
+            statusFilterMenu
         }
         .foregroundStyle(DS.dim)
         .padding(.vertical, 5)
@@ -105,23 +107,70 @@ struct SidebarView: View {
         .padding(.top, 10)
     }
 
+    /// Status counts; click one to show only those sessions (again for all).
     private var footer: some View {
         let counts = model.statusCounts
-        return HStack(spacing: 14) {
+        return HStack(spacing: 6) {
             ForEach(SessionStatus.allCases, id: \.self) { status in
-                HStack(spacing: 5) {
-                    StatusDot(status: status, size: 7)
-                    Text("\(counts[status]) \(status.label)")
+                let isActive = model.statusFilter == status
+                Button { model.toggleStatusFilter(status) } label: {
+                    HStack(spacing: 5) {
+                        StatusDot(status: status, size: 7)
+                        Text("\(counts[status]) \(status.label)")
+                    }
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6)
+                    .background(Capsule().fill(isActive ? DS.color(for: status).opacity(0.25) : .clear))
+                    .overlay(Capsule().stroke(isActive ? DS.color(for: status).opacity(0.7) : .clear, lineWidth: 1))
+                    .foregroundStyle(isActive ? DS.text : DS.muted)
+                    .opacity(model.statusFilter == nil || isActive ? 1 : 0.55)
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .help(isActive ? "Show all sessions" : "Show only \(status.label) sessions")
             }
             Spacer(minLength: 0)
         }
         .font(DS.font(12))
-        .foregroundStyle(DS.muted)
         .lineLimit(1)
-        .padding(.vertical, 10)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
         .overlay(alignment: .top) { HorizontalRule() }
+    }
+
+    /// Status filter menu at the end of the filter field.
+    private var statusFilterMenu: some View {
+        Menu {
+            Button {
+                model.statusFilter = nil
+            } label: {
+                if model.statusFilter == nil { Label("All Sessions", systemImage: "checkmark") } else { Text("All Sessions") }
+            }
+            Divider()
+            ForEach(SessionStatus.allCases, id: \.self) { status in
+                Button {
+                    model.statusFilter = status
+                } label: {
+                    if model.statusFilter == status { Label(status.label, systemImage: "checkmark") } else { Text(status.label) }
+                }
+            }
+        } label: {
+            Image(systemName: model.statusFilter == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(model.statusFilter.map(DS.color(for:)) ?? DS.dim)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(model.statusFilter.map { "Showing only \($0.label) sessions" } ?? "Filter by status")
+    }
+
+    private var noMatchesText: String {
+        switch (model.statusFilter, model.filterText.isEmpty) {
+        case (nil, _): return "No sessions match “\(model.filterText)”"
+        case (let status?, true): return "No \(status.label) sessions"
+        case (let status?, false): return "No \(status.label) sessions match “\(model.filterText)”"
+        }
     }
 
     private var currentProjectID: UUID? {
@@ -241,6 +290,7 @@ private struct FolderSection: View {
             Text("\(folder.sessionCount)")
                 .font(DS.font(11, .semibold))
                 .foregroundStyle(DS.dim)
+                .help(folder.sessionCount == 1 ? "1 session" : "\(folder.sessionCount) sessions")
         }
         .padding(.vertical, 5)
         .padding(.leading, 6)
@@ -345,27 +395,29 @@ private struct SessionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             StatusDot(status: session.status)
+                .help(SessionIndicators.statusHelp(session))
             Text(session.name)
                 .font(DS.font(13.5))
                 .foregroundStyle(session.status == .completed && !isSelected ? DS.muted : DS.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .help(session.needsAction ?? (session.summary.isEmpty ? session.name : session.summary))
             Spacer(minLength: 4)
-            if model.isOpenInTerminal(session.id) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 10))
-                    .foregroundStyle(DS.dim)
-                    .help("Running in a terminal")
-            }
-            if Worktree.name(ofPath: session.workingDirectory) != nil {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.system(size: 10))
-                    .foregroundStyle(DS.dim)
-                    .help("Runs in its own git worktree")
+            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id)), id: \.symbol) { indicator in
+                HStack(spacing: 2) {
+                    Image(systemName: indicator.symbol)
+                        .font(.system(size: 10))
+                    if let text = indicator.text {
+                        Text(text).font(DS.font(10.5, .semibold))
+                    }
+                }
+                .foregroundStyle(DS.dim)
+                .help(indicator.help)
             }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
                 .font(DS.font(11))
                 .foregroundStyle(DS.muted)
+                .help("Last active \(session.lastActivity.formatted(date: .abbreviated, time: .shortened))")
         }
         .padding(.vertical, 5)
         .padding(.leading, 38)
@@ -374,7 +426,6 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.select(session.id) }
-        .help(session.needsAction ?? session.summary)
         .draggable(session.id.uuidString) {
             HStack(spacing: 6) {
                 StatusDot(status: session.status)

@@ -64,6 +64,32 @@ public struct Workspace: Codable, Equatable, Sendable {
         openTabIDs.removeAll { $0 != sessionID }
     }
 
+    /// Open tabs before (left of) a tab, in tab order.
+    public func tabIDs(leftOf sessionID: UUID) -> [UUID] {
+        guard let index = openTabIDs.firstIndex(of: sessionID) else { return [] }
+        return Array(openTabIDs[..<index])
+    }
+
+    /// Open tabs after (right of) a tab, in tab order.
+    public func tabIDs(rightOf sessionID: UUID) -> [UUID] {
+        guard let index = openTabIDs.firstIndex(of: sessionID) else { return [] }
+        return Array(openTabIDs[(index + 1)...])
+    }
+
+    public mutating func closeTabs(leftOf sessionID: UUID) {
+        let ids = Set(tabIDs(leftOf: sessionID))
+        openTabIDs.removeAll { ids.contains($0) }
+    }
+
+    public mutating func closeTabs(rightOf sessionID: UUID) {
+        let ids = Set(tabIDs(rightOf: sessionID))
+        openTabIDs.removeAll { ids.contains($0) }
+    }
+
+    public mutating func closeAllTabs() {
+        openTabIDs.removeAll()
+    }
+
     public mutating func closeCompletedTabs() {
         let completed = Set(sessions.filter { $0.status == .completed }.map(\.id))
         openTabIDs.removeAll { completed.contains($0) }

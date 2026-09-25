@@ -62,6 +62,8 @@ public final class AppModel {
     public private(set) var state: PersistedState
     public var selectedSessionID: UUID?
     public var filterText = ""
+    /// Shows only sessions with this status in the sidebar (nil: all).
+    public var statusFilter: SessionStatus?
     public var renamingFolderID: UUID?
     /// A user-facing error to show in an alert; the view clears it.
     public var errorMessage: String?
@@ -169,7 +171,7 @@ public final class AppModel {
     public var settings: AppSettings { state.settings }
 
     public var sidebar: [SidebarProject] {
-        Sidebar.build(state.workspace, filter: filterText, home: home)
+        Sidebar.build(state.workspace, filter: filterText, status: statusFilter, home: home)
     }
 
     public var selectedSession: Session? {
@@ -468,6 +470,40 @@ public final class AppModel {
         state.workspace.closeOtherTabs(keeping: sessionID)
         if let selected = selectedSessionID, !state.workspace.isOpen(selected) { select(sessionID) }
         save()
+    }
+
+    /// Closes the tabs left of `sessionID` (which stays open).
+    public func closeTabs(leftOf sessionID: UUID) {
+        closeTabs(state.workspace.tabIDs(leftOf: sessionID), fallback: sessionID)
+    }
+
+    /// Closes the tabs right of `sessionID` (which stays open).
+    public func closeTabs(rightOf sessionID: UUID) {
+        closeTabs(state.workspace.tabIDs(rightOf: sessionID), fallback: sessionID)
+    }
+
+    /// Closes every tab. Sessions keep running.
+    public func closeAllTabs() {
+        closeTabs(tabs.map(\.id), fallback: nil)
+    }
+
+    /// Closes several tabs, detaching from their agents; if the selected tab
+    /// closes, `fallback` is selected instead.
+    private func closeTabs(_ ids: [UUID], fallback: UUID?) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            state.workspace.closeTab(id)
+            recentSessionIDs.removeAll { $0 == id }
+            if state.workspace.session(id)?.agentID != nil { detach(id) }
+        }
+        if let selected = selectedSessionID, ids.contains(selected) { selectedSessionID = fallback }
+        save()
+    }
+
+    /// Shows only sessions with `status` in the sidebar, or all again if it's
+    /// already the filter.
+    public func toggleStatusFilter(_ status: SessionStatus) {
+        statusFilter = statusFilter == status ? nil : status
     }
 
     /// Closes every completed tab.

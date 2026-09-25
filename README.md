@@ -15,13 +15,14 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 ## Features
 
 - **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages. Drag the divider to resize it.
-  - The footer counts Working / Awaiting Input / Completed sessions.
+  - The footer counts Working / Awaiting Input / Completed sessions. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
+  - Icons beside a session: a terminal (also open in a terminal outside Claudio), a branch (runs in its own git worktree) and a pull request (with a count when there's more than one). Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.
 - **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place. Double-click a folder to rename it later.
   - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
   - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
-- **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running.
+- **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running. Right-click a tab for Close Other Tabs, Close Tabs to the Left / Right, Close Completed Tabs and Close All Tabs.
 - **Context window.** Each session's header (and split pane) shows how full its context window is: teal, then orange from 60%, red from 85%. Sessions started or resumed in Claudio report it exactly through Claude Code's status line. For other sessions it's estimated from the token counts in their history, shown with a `~` and a fainter bar. History doesn't record the window size, so the estimate assumes 200k until usage passes that (or the model is a `[1m]` one).
 - **Roles.** Optional labels for sessions (Code, Review, Research by default), chosen from a dropdown in the New Session sheet and editable in Settings.
 - **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
