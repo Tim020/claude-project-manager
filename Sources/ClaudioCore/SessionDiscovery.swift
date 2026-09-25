@@ -11,9 +11,12 @@ public struct DiscoveredSession: Equatable, Sendable {
     public var lastActivity: Date
     public var pullRequestURLs: [String]
     public var status: SessionStatus
+    /// Tokens in context after the latest reply (nil if unknown or just compacted).
+    public var contextTokens: Int?
 
     public init(claudeSessionID: String, title: String, firstPrompt: String?, summary: String, model: String?,
-                workingDirectory: String, lastActivity: Date, pullRequestURLs: [String], status: SessionStatus) {
+                workingDirectory: String, lastActivity: Date, pullRequestURLs: [String], status: SessionStatus,
+                contextTokens: Int? = nil) {
         self.claudeSessionID = claudeSessionID
         self.title = title
         self.firstPrompt = firstPrompt
@@ -23,6 +26,7 @@ public struct DiscoveredSession: Equatable, Sendable {
         self.lastActivity = lastActivity
         self.pullRequestURLs = pullRequestURLs
         self.status = status
+        self.contextTokens = contextTokens
     }
 
     public var role: SessionRole { SessionRole.infer(fromName: title) }
@@ -215,6 +219,7 @@ public struct SessionDiscovery: Sendable {
         var latest: Date?
         var pullRequests: [String] = []
         var postTurnCategory: String?
+        var contextTokens: Int?
 
         func addPullRequests(_ text: String) {
             for url in PullRequestDetector.urls(in: text) where !pullRequests.contains(url) { pullRequests.append(url) }
@@ -230,6 +235,7 @@ public struct SessionDiscovery: Sendable {
                 latest = max(latest ?? date, date)
             }
             if cwd == nil, let value = record["cwd"]?.stringValue { cwd = value }
+            if type == "system", record["subtype"]?.stringValue == "compact_boundary" { contextTokens = nil }
 
             switch StreamEventParser.parse(record: record, type: type) {
             case .customTitle(let title): customTitle = nonEmpty(title)
@@ -249,6 +255,11 @@ public struct SessionDiscovery: Sendable {
                 }
             case .assistant(let blocks, false):
                 if let value = record["message"]?["model"]?.stringValue, !value.hasPrefix("<") { model = value }
+                if let usage = record["message"]?["usage"] {
+                    let keys = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"]
+                    let total = keys.compactMap { usage[$0]?.doubleValue }.reduce(0, +)
+                    if total > 0 { contextTokens = Int(total) }
+                }
                 for case .text(let text) in blocks {
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { continue }
@@ -279,7 +290,8 @@ public struct SessionDiscovery: Sendable {
             workingDirectory: cwd ?? defaultWorkingDirectory,
             lastActivity: latest ?? fallbackDate,
             pullRequestURLs: pullRequests,
-            status: status)
+            status: status,
+            contextTokens: contextTokens)
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

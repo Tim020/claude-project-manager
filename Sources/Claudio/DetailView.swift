@@ -181,7 +181,8 @@ struct ContextMeter: View {
             }
             ZStack(alignment: .leading) {
                 Capsule().fill(DS.border)
-                Capsule().fill(color).frame(width: 44 * context.fraction)
+                // Estimates (from history) are drawn fainter than live figures.
+                Capsule().fill(color.opacity(context.isEstimate ? 0.55 : 1)).frame(width: 44 * context.fraction)
             }
             .frame(width: 44, height: 4)
             Text(context.label)

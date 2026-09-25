@@ -22,7 +22,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running.
-- **Context window.** Each session's header (and split pane) shows how full its context window is, from Claude Code's status line data.
+- **Context window.** Each session's header (and split pane) shows how full its context window is: teal, then orange from 60%, red from 85%. Sessions started or resumed in Claudio report it exactly through Claude Code's status line. For other sessions it's estimated from the token counts in their history, shown with a `~` and a fainter bar. History doesn't record the window size, so the estimate assumes 200k until usage passes that (or the model is a `[1m]` one).
 - **Roles.** Optional labels for sessions (Code, Review, Research by default), chosen from a dropdown in the New Session sheet and editable in Settings.
 - **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.

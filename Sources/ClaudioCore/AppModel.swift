@@ -76,6 +76,8 @@ public final class AppModel {
     public private(set) var usage: UsageSnapshot?
     /// Context window use per session, from its status line.
     private var contexts: [UUID: ContextUsage] = [:]
+    /// Context estimated from history, for sessions with no status line data.
+    private var estimatedContexts: [UUID: ContextUsage] = [:]
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
@@ -339,15 +341,26 @@ public final class AppModel {
             targets.map { id, path, name in (id, name, Result { try discovery.discover(projectPath: path, cache: cache) }) }
         }.value
         var workspace = state.workspace
+        var estimates = estimatedContexts
         for (id, name, result) in results {
             switch result {
-            case .success(let found): workspace.importDiscovered(found, into: id, skipping: running)
+            case .success(let found):
+                workspace.importDiscovered(found, into: id, skipping: running)
+                AppModel.recordEstimates(found, in: workspace, into: &estimates)
             case .failure(let error): log.append(.error, "Couldn't read Claude Code sessions for \(name)", detail: AppModel.describe(error))
             }
         }
         if workspace != state.workspace {
             state.workspace = workspace
             save()
+        }
+        if estimates != estimatedContexts { estimatedContexts = estimates }
+    }
+
+    private static func recordEstimates(_ found: [DiscoveredSession], in workspace: Workspace, into estimates: inout [UUID: ContextUsage]) {
+        for discovered in found {
+            guard let session = workspace.session(claudeSessionID: discovered.claudeSessionID) else { continue }
+            estimates[session.id] = discovered.contextTokens.map { ContextUsage.estimate(tokens: $0, model: discovered.model) }
         }
     }
 
@@ -356,6 +369,7 @@ public final class AppModel {
         do {
             let found = try discovery.discover(projectPath: project.path, cache: summaryCache)
             state.workspace.importDiscovered(found, into: projectID, skipping: running)
+            AppModel.recordEstimates(found, in: state.workspace, into: &estimatedContexts)
         } catch {
             report("Couldn't read Claude Code sessions for \(project.name): \(AppModel.describe(error))")
         }
@@ -958,7 +972,7 @@ public final class AppModel {
     }
 
     public func context(for sessionID: UUID) -> ContextUsage? {
-        contexts[sessionID]
+        contexts[sessionID] ?? estimatedContexts[sessionID]
     }
 
     /// Re-reads usage and per-session status files that sessions' status lines

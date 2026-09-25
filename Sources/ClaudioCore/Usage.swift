@@ -74,11 +74,23 @@ public struct ContextUsage: Equatable, Sendable {
     public var usedPercentage: Double
     public var windowSize: Int?
     public var inputTokens: Int?
+    /// Worked out from the session's history rather than reported by Claude
+    /// Code's status line, so the window size is a guess.
+    public var isEstimate: Bool
 
-    public init(usedPercentage: Double, windowSize: Int?, inputTokens: Int?) {
+    public init(usedPercentage: Double, windowSize: Int?, inputTokens: Int?, isEstimate: Bool = false) {
         self.usedPercentage = usedPercentage
         self.windowSize = windowSize
         self.inputTokens = inputTokens
+        self.isEstimate = isEstimate
+    }
+
+    /// History records tokens but not the window size: assume the standard
+    /// 200k window unless the model says 1M or usage has already passed 200k.
+    public static func estimate(tokens: Int, model: String?) -> ContextUsage {
+        let window = tokens > 200_000 || model?.lowercased().contains("[1m]") == true ? 1_000_000 : 200_000
+        return ContextUsage(usedPercentage: Double(tokens) / Double(window) * 100, windowSize: window,
+                            inputTokens: tokens, isEstimate: true)
     }
 
     public static func parse(_ data: Data) -> ContextUsage? {
@@ -91,12 +103,17 @@ public struct ContextUsage: Equatable, Sendable {
     }
 
     public var fraction: Double { min(1, max(0, usedPercentage / 100)) }
-    public var label: String { "\(Int(usedPercentage.rounded()))%" }
+    public var label: String { "\(isEstimate ? "~" : "")\(Int(usedPercentage.rounded()))%" }
 
     public var detail: String {
-        guard let windowSize else { return "\(label) of the context window used" }
-        let used = inputTokens.map(ContextUsage.compact) ?? label
-        return "\(used) of \(ContextUsage.compact(windowSize)) tokens"
+        let text: String
+        if let windowSize {
+            text = "\(inputTokens.map(ContextUsage.compact) ?? label) of \(ContextUsage.compact(windowSize)) tokens"
+        } else {
+            text = "\(label) of the context window used"
+        }
+        guard isEstimate else { return text }
+        return text + ". Estimated from the session history, which doesn't record the window size, so this may be off. Sessions started or resumed in Claudio report it exactly."
     }
 
     static func compact(_ tokens: Int) -> String {
