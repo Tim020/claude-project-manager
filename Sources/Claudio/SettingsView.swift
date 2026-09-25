@@ -35,6 +35,18 @@ struct SettingsView: View {
                 }
             }
             Section {
+                Toggle("A session needs your input", isOn: binding(\.notifications.awaitingInput))
+                Toggle("A session finishes", isOn: binding(\.notifications.finished))
+                Toggle("An agent stops unexpectedly", isOn: binding(\.notifications.stoppedUnexpectedly))
+                Toggle("Play a sound", isOn: binding(\.notifications.sound))
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Not shown for the session you're looking at while Claudio is in front. Click a notification to open its session. Allow Claudio in System Settings → Notifications if none appear.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 ForEach(roles.indices, id: \.self) { index in
                     HStack {
                         TextField("Role", text: $roles[index])

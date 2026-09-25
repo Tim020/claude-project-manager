@@ -21,6 +21,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var sidebarWidth: Double
     /// The roles offered for new sessions (editable in Settings).
     public var roles: [String]
+    public var notifications = NotificationSettings()
 
     public static func cleanRoles(_ roles: [String]) -> [String] {
         var seen = Set<String>()
@@ -56,6 +57,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
+        notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
     }
 }
 

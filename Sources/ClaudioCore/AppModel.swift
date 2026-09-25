@@ -100,6 +100,11 @@ public final class AppModel {
     @ObservationIgnored private var pendingCopyMessages: [UUID: String] = [:]
 
     @ObservationIgnored public weak var terminals: TerminalControlling?
+    @ObservationIgnored public weak var notifier: NotificationPosting?
+    /// Whether Claudio is the frontmost app (set by the UI); notifications
+    /// skip the session you're looking at only while it is.
+    @ObservationIgnored public var appIsActive = false
+    @ObservationIgnored private var notificationBaseline: [UUID: NotificationBaseline]?
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored private let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -647,8 +652,16 @@ public final class AppModel {
     }
 
     /// For tests: a status change as a hook would make.
-    func applyStatus(_ sessionID: UUID, _ status: SessionStatus) {
-        state.workspace.updateSession(sessionID) { $0.status = status }
+    func applyStatus(_ sessionID: UUID, _ status: SessionStatus, summary: String? = nil) {
+        state.workspace.updateSession(sessionID) { session in
+            session.status = status
+            if let summary { session.summary = summary }
+        }
+    }
+
+    /// For tests: a permission request as the Notification hook reports it.
+    func applyNeedsAction(_ sessionID: UUID, _ text: String) {
+        state.workspace.updateSession(sessionID) { $0.status = .awaitingInput; $0.needsAction = text }
     }
 
     private func dispatch(_ sessionID: UUID, prompt: String, worktree: String?) async {
@@ -852,6 +865,72 @@ public final class AppModel {
             changed = true
         }
         if changed { save() }
+    }
+
+    // MARK: - Notifications
+
+    struct NotificationBaseline: Equatable {
+        var status: SessionStatus
+        var agentAlive: Bool
+    }
+
+    /// Compares sessions with the last check and posts notifications for real
+    /// changes: → Awaiting Input, Working → Completed, and (optionally) a
+    /// working agent that exited. The first check only records a baseline.
+    public func checkNotifications() {
+        let current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
+            ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id)))
+        })
+        defer { notificationBaseline = current }
+        guard let previous = notificationBaseline else { return }
+        let settings = state.settings.notifications
+        for session in state.workspace.sessions {
+            guard let before = previous[session.id], let after = current[session.id], before != after else { continue }
+            let kind: SessionNotification.Kind
+            if after.status == .awaitingInput && before.status != .awaitingInput {
+                guard settings.awaitingInput else { continue }
+                kind = .awaitingInput
+            } else if after.status == .completed && before.status == .working {
+                guard settings.finished else { continue }
+                kind = .finished
+            } else if before.agentAlive && !after.agentAlive && after.status == .working {
+                guard settings.stoppedUnexpectedly else { continue }
+                kind = .stopped
+            } else {
+                continue
+            }
+            if appIsActive && isVisible(session.id) { continue }
+            notifier?.post(notification(kind, for: session), sound: settings.sound)
+        }
+    }
+
+    private func notification(_ kind: SessionNotification.Kind, for session: Session) -> SessionNotification {
+        let project = state.workspace.project(session.projectID)?.name ?? ""
+        let summary = session.summary.isEmpty ? nil : session.summary
+        switch kind {
+        case .awaitingInput:
+            return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) needs your input", subtitle: project,
+                                       body: session.needsAction ?? summary ?? "Claude is waiting for you.")
+        case .finished:
+            return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) finished", subtitle: project,
+                                       body: summary ?? "Claude finished its turn.")
+        case .stopped:
+            return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) stopped unexpectedly", subtitle: project,
+                                       body: "The agent exited while it was working.")
+        }
+    }
+
+    /// Whether the session is on screen: the selected tab, or a split pane.
+    private func isVisible(_ sessionID: UUID) -> Bool {
+        if selectedSessionID == sessionID { return true }
+        guard state.settings.layout == .split, canSplit else { return false }
+        return splitPanes(capacity: SplitLayout.maxPanes).contains { $0.id == sessionID }
+    }
+
+    /// Clicking a notification opens its session.
+    public func openFromNotification(_ sessionID: UUID) {
+        guard state.workspace.session(sessionID) != nil else { return }
+        select(sessionID)
     }
 
     // MARK: - Menu

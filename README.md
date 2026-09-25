@@ -43,6 +43,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
 - **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. It's read at launch and every 5 minutes with `claude -p /usage`, which makes no model call. Sessions started in Claudio also update it live through their status line: it records Claude Code's usage and context data, then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
+- **Notifications.** macOS notifications when a session needs your input or finishes (and, if you turn it on, when an agent stops unexpectedly). They're skipped for the session you're looking at while Claudio is in front; clicking one opens its session. Choose which ones, and whether they play a sound, in Settings. They need the bundled `Claudio.app` (not `swift run`), and macOS asks for permission on first launch.
 - **Dock badge.** Shows how many sessions are awaiting input.
 - **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
@@ -75,6 +76,7 @@ The project is built test-first. All logic lives in the platform-independent `Cl
 - session discovery from `.jsonl` history
 - launch arguments and executable lookup
 - persistence
+- notification rules (which status changes notify, and when they're suppressed)
 - `AppModel` itself
 
 ```sh

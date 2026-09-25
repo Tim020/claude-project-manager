@@ -28,6 +28,12 @@ enum AppEnvironment {
         return TerminalRegistryBox(registry)
     }()
     static let commands = UICommands()
+
+    static let notifier: SessionNotifier = {
+        let notifier = SessionNotifier(model: model)
+        model.notifier = notifier
+        return notifier
+    }()
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -52,9 +58,11 @@ struct ClaudioApp: App {
     private let model = AppEnvironment.model
     private let commands = AppEnvironment.commands
     private let terminals = AppEnvironment.terminals
+    private let notifier = AppEnvironment.notifier
 
     init() {
         FontRegistry.registerBundledFonts()
+        notifier.prepare()
     }
 
     var body: some Scene {

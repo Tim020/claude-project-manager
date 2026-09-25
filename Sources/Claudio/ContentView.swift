@@ -81,8 +81,13 @@ struct ContentView: View {
             NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.appIsActive = true
             Task { await model.refreshAll() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            model.appIsActive = false
+        }
+        .onAppear { model.appIsActive = NSApp.isActive }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             Task { await model.refreshAll() }
         }
@@ -91,6 +96,7 @@ struct ContentView: View {
             model.pollHookEvents()
             model.pollUsage()
             model.updateMenuFlags()
+            model.checkNotifications()
         }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             // Background agents: liveness, state and titles from `claude agents --json`.
