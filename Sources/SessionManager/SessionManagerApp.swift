@@ -8,7 +8,8 @@ enum AppEnvironment {
     static let model = AppModel(
         store: JSONFileStore(url: JSONFileStore.defaultURL),
         discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome),
-        hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"))
+        hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
+        logFileURL: ActivityLog.defaultFileURL)
     static let terminals: TerminalRegistryBox = {
         let registry = TerminalRegistry(model: model)
         model.terminals = registry
@@ -81,8 +82,12 @@ struct SessionManagerApp: App {
                 Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
                     .keyboardShortcut("w", modifiers: [.command, .shift])
             }
+            CommandGroup(before: .windowList) {
+                OpenActivityLogButton()
+                Divider()
+            }
             CommandMenu("Session") {
-                Button("Refresh Sessions") { model.refreshAll() }
+                Button("Refresh Sessions") { Task { await model.refreshAll() } }
                     .keyboardShortcut("r")
                 Divider()
                 Button("Tabs") { model.setLayout(.tabs) }
@@ -102,6 +107,11 @@ struct SessionManagerApp: App {
                 .disabled(model.selectedSessionID.map { !model.isRunning($0) && !model.isAgentAlive($0) } ?? true)
             }
         }
+
+        Window("Activity Log", id: ActivityLogView.windowID) {
+            ActivityLogView(log: model.log)
+        }
+        .defaultSize(width: 900, height: 560)
 
         Settings {
             SettingsView()

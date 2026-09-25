@@ -56,7 +56,8 @@ public final class AppModel {
     private var running: Set<UUID> = []
     @ObservationIgnored private var pendingLaunches: [UUID: TerminalLaunch] = [:]
     private var exitCodes: [UUID: Int32] = [:]
-    @ObservationIgnored private var histories: [UUID: [TranscriptLine]] = [:]
+    /// Read-only transcripts loaded from history files (see `loadHistory`).
+    private var historyLines: [UUID: [TranscriptLine]] = [:]
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
@@ -71,6 +72,12 @@ public final class AppModel {
     @ObservationIgnored private var appliedAgentStates: [String: String] = [:]
     /// The most recent background CLI operation (awaited by tests).
     @ObservationIgnored public private(set) var lastTask: Task<Void, Never>?
+    /// Commands, terminals and errors, for the Activity Log window.
+    @ObservationIgnored public let log: ActivityLog
+    @ObservationIgnored private let summaryCache = SessionSummaryCache()
+    @ObservationIgnored private var lastAgentsOutput: String?
+    @ObservationIgnored private var isRefreshingAgents = false
+    @ObservationIgnored private var isRefreshingProjects = false
 
     @ObservationIgnored public weak var terminals: TerminalControlling?
     @ObservationIgnored private let store: StateStore
@@ -93,8 +100,10 @@ public final class AppModel {
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
         shell: String = ClaudeExecutableLocator.defaultShell(),
         now: @escaping () -> Date = Date.init,
-        home: String = NSHomeDirectory()
+        home: String = NSHomeDirectory(),
+        logFileURL: URL? = nil
     ) {
+        self.log = ActivityLog(fileURL: logFileURL)
         self.store = store
         self.discovery = discovery
         self.hookEventsURL = hookEventsURL
@@ -111,6 +120,7 @@ public final class AppModel {
             state = PersistedState()
             errorMessage = "Couldn't load saved sessions: \(AppModel.describe(error))"
         }
+        log.append(.info, "Session Manager started", detail: errorMessage)
         // Nothing is running at launch, whatever was saved.
         for session in state.workspace.sessions where session.status == .working {
             state.workspace.updateSession(session.id) { $0.status = .completed }
@@ -195,17 +205,26 @@ public final class AppModel {
     }
 
     /// Read-only transcript from Claude Code's history file, for sessions that
-    /// aren't running.
+    /// aren't running. Empty until `loadHistory` has run.
     public func history(for sessionID: UUID) -> [TranscriptLine] {
-        if let cached = histories[sessionID] { return cached }
-        guard let session = state.workspace.session(sessionID) else { return [] }
-        var builder = TranscriptBuilder(workingDirectory: session.workingDirectory)
-        if session.hasConversation, let claudeID = session.claudeSessionID,
-           let events = try? discovery.loadHistory(projectPath: session.workingDirectory, claudeSessionID: claudeID) {
-            events.forEach { builder.apply($0) }
+        historyLines[sessionID] ?? []
+    }
+
+    /// Reads a session's history file off the main actor (they can be large).
+    public func loadHistory(_ sessionID: UUID) async {
+        guard let session = state.workspace.session(sessionID) else { return }
+        guard session.hasConversation, let claudeID = session.claudeSessionID else {
+            historyLines[sessionID] = []
+            return
         }
-        histories[sessionID] = builder.lines
-        return builder.lines
+        let discovery = self.discovery
+        let directory = session.workingDirectory
+        let lines = await Task.detached(priority: .userInitiated) { () -> [TranscriptLine] in
+            var builder = TranscriptBuilder(workingDirectory: directory)
+            (try? discovery.loadHistory(projectPath: directory, claudeSessionID: claudeID))?.forEach { builder.apply($0) }
+            return builder.lines
+        }.value
+        if historyLines[sessionID] != lines { historyLines[sessionID] = lines }
     }
 
     // MARK: - Projects
@@ -224,7 +243,7 @@ public final class AppModel {
             return try discovery.discoverProjects(fileExists: fileExists)
                 .filter { $0.exists && state.workspace.project(atPath: $0.path) == nil }
         } catch {
-            errorMessage = "Couldn't read Claude Code projects: \(AppModel.describe(error))"
+            report("Couldn't read Claude Code projects: \(AppModel.describe(error))")
             return []
         }
     }
@@ -260,20 +279,40 @@ public final class AppModel {
         save()
     }
 
-    /// Re-reads every project's sessions from disk (e.g. ones run in another terminal).
-    public func refreshAll() {
-        for project in state.workspace.projects { importSessions(for: project.id) }
-        histories.removeAll()
-        save()
+    /// Re-reads every project's sessions from disk (e.g. ones run in another
+    /// terminal). History files are read off the main actor and cached, so
+    /// only files that changed are parsed again.
+    public func refreshAll() async {
+        await refreshProjects(state.workspace.projects.map(\.id))
+    }
+
+    func refreshProjects(_ ids: [UUID]) async {
+        guard !isRefreshingProjects else { return }
+        isRefreshingProjects = true
+        defer { isRefreshingProjects = false }
+        let targets = ids.compactMap { id in state.workspace.project(id).map { (id, $0.path, $0.name) } }
+        let discovery = self.discovery
+        let cache = self.summaryCache
+        let results = await Task.detached(priority: .utility) {
+            targets.map { id, path, name in (id, name, Result { try discovery.discover(projectPath: path, cache: cache) }) }
+        }.value
+        let before = state.workspace
+        for (id, name, result) in results {
+            switch result {
+            case .success(let found): state.workspace.importDiscovered(found, into: id, skipping: running)
+            case .failure(let error): log.append(.error, "Couldn't read Claude Code sessions for \(name)", detail: AppModel.describe(error))
+            }
+        }
+        if state.workspace != before { save() }
     }
 
     private func importSessions(for projectID: UUID) {
         guard let project = state.workspace.project(projectID) else { return }
         do {
-            let found = try discovery.discover(projectPath: project.path)
+            let found = try discovery.discover(projectPath: project.path, cache: summaryCache)
             state.workspace.importDiscovered(found, into: projectID, skipping: running)
         } catch {
-            errorMessage = "Couldn't read Claude Code sessions for \(project.name): \(AppModel.describe(error))"
+            report("Couldn't read Claude Code sessions for \(project.name): \(AppModel.describe(error))")
         }
     }
 
@@ -400,7 +439,7 @@ public final class AppModel {
         }
         recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
-        histories[id] = nil
+        historyLines[id] = nil
         state.workspace.removeSession(id)
         save()
     }
@@ -465,8 +504,10 @@ public final class AppModel {
     /// Re-reads `claude agents --json --all`: links and updates known
     /// sessions, and adds agents started elsewhere for projects in the sidebar.
     public func refreshAgents() async {
-        guard let commands = agentCommands(reportErrors: false) else { return }
-        let result = await runner.run(commands.list())
+        guard !isRefreshingAgents, let commands = agentCommands(reportErrors: false) else { return }
+        isRefreshingAgents = true
+        defer { isRefreshingAgents = false }
+        let result = await run(commands.list(), logOnlyChanges: true)
         let data = Data(result.output.utf8)
         guard result.exitCode == 0, let listed = try? AgentListParser.parse(data) else { return }
         apply(listed)
@@ -497,8 +538,11 @@ public final class AppModel {
         }
         terminalSessions = Dictionary(listed.map { ($0.sessionID, $0) }, uniquingKeysWith: { $1 })
         // A new terminal session in a known project: pick it up from its history.
-        unknownProjects.forEach(importSessions)
-        if changed || !unknownProjects.isEmpty { save() }
+        if !unknownProjects.isEmpty {
+            let ids = Array(unknownProjects)
+            Task { await self.refreshProjects(ids) }
+        }
+        if changed { save() }
     }
 
     func apply(_ listed: [BackgroundAgent]) {
@@ -554,20 +598,20 @@ public final class AppModel {
             applyStatus(sessionID, .completed)
             return
         }
-        let result = await runner.run(commands.dispatch(session: session, prompt: prompt, worktree: worktree))
+        let result = await run(commands.dispatch(session: session, prompt: prompt, worktree: worktree))
         await linkDispatched(sessionID, result: result)
     }
 
     private func resumeInBackground(_ sessionID: UUID) async {
         guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
-        let result = await runner.run(commands.resume(session: session))
+        let result = await run(commands.resume(session: session))
         await linkDispatched(sessionID, result: result)
     }
 
     private func linkDispatched(_ sessionID: UUID, result: CommandResult) async {
         guard state.workspace.session(sessionID) != nil else { return }
         guard result.exitCode == 0, let agentID = AgentListParser.dispatchedID(from: result.output + "\n" + result.errorOutput) else {
-            errorMessage = "Couldn't start the agent: \(result.failureMessage)"
+            report("Couldn't start the agent: \(result.failureMessage)")
             applyStatus(sessionID, .completed)
             save()
             return
@@ -613,7 +657,7 @@ public final class AppModel {
 
     private func agentCommands(reportErrors: Bool) -> AgentCommands? {
         guard let executable = locateClaude(state.settings.claudePath) else {
-            if reportErrors { errorMessage = "Claude Code CLI not found. Install it, or set its location in Settings." }
+            if reportErrors { report("Claude Code CLI not found. Install it, or set its location in Settings.") }
             return nil
         }
         return AgentCommands(claudeExecutable: executable, shell: shell, hookEventsPath: hookEventsURL.path)
@@ -630,12 +674,30 @@ public final class AppModel {
 
     private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch) {
         guard let commands = agentCommands(reportErrors: true) else { return }
-        let runner = self.runner
         enqueue {
-            let result = await runner.run(make(commands))
-            if result.exitCode != 0 { self.errorMessage = "Claude Code: \(result.failureMessage)" }
+            let result = await self.run(make(commands))
+            if result.exitCode != 0 { self.report("Claude Code: \(result.failureMessage)") }
             await self.refreshAgents()
         }
+    }
+
+    /// Runs a CLI command off the main actor and records it in the log.
+    /// Polling commands are only logged when their output changes or they fail.
+    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false) async -> CommandResult {
+        let started = Date()
+        let result = await runner.run(command)
+        let changed = lastAgentsOutput != result.output
+        if logOnlyChanges { lastAgentsOutput = result.output }
+        if !logOnlyChanges || changed || result.exitCode != 0 {
+            let milliseconds = Int(Date().timeIntervalSince(started) * 1000)
+            var detail = "exit \(result.exitCode) · \(milliseconds) ms · in \(command.workingDirectory)"
+            for (label, text) in [("stdout", result.output), ("stderr", result.errorOutput)] {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { detail += "\n\(label):\n" + String(trimmed.prefix(4000)) }
+            }
+            log.append(.command, command.displayCommand, detail: detail)
+        }
+        return result
     }
 
     /// Queues a terminal launch for the session (new or `--resume`). Returns
@@ -644,7 +706,7 @@ public final class AppModel {
     public func start(_ sessionID: UUID, prompt: String? = nil) -> Bool {
         guard !running.contains(sessionID), let session = state.workspace.session(sessionID) else { return false }
         guard let executable = locateClaude(state.settings.claudePath) else {
-            errorMessage = "Claude Code CLI not found. Install it, or set its location in Settings."
+            report("Claude Code CLI not found. Install it, or set its location in Settings.")
             return false
         }
         try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -662,7 +724,10 @@ public final class AppModel {
 
     /// Hands the queued launch to the terminal that will run it (once).
     public func takePendingLaunch(_ sessionID: UUID) -> TerminalLaunch? {
-        pendingLaunches.removeValue(forKey: sessionID)
+        guard let launch = pendingLaunches.removeValue(forKey: sessionID) else { return nil }
+        log.append(.terminal, "Terminal started: \(launch.displayCommand)",
+                   detail: "in \(launch.workingDirectory)\n\(launch.executable) \(launch.arguments.dropLast().joined(separator: " "))")
+        return launch
     }
 
     /// Called by the UI when a session's terminal process exits.
@@ -670,7 +735,8 @@ public final class AppModel {
         running.remove(sessionID)
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
-        histories[sessionID] = nil
+        let name = state.workspace.session(sessionID)?.name ?? sessionID.uuidString
+        log.append(.terminal, exitCode.map { "Terminal exited (code \($0)): \(name)" } ?? "Terminal exited: \(name)")
         if state.workspace.session(sessionID)?.agentID != nil {
             // Only the attach client ended; the agent's own state decides.
             enqueue { await self.refreshAgents() }
@@ -712,7 +778,6 @@ public final class AppModel {
         var changed = false
         for event in events where state.workspace.session(event.appSessionID) != nil {
             state.workspace.updateSession(event.appSessionID) { HookReducer.apply(event, to: &$0, now: now()) }
-            if event.name == .stop { histories[event.appSessionID] = nil }
             changed = true
         }
         if changed { save() }
@@ -732,12 +797,18 @@ public final class AppModel {
 
     // MARK: - Helpers
 
+    /// Shows an error to the user and records it in the log.
+    func report(_ message: String) {
+        errorMessage = message
+        log.append(.error, message)
+    }
+
     @discardableResult
     private func attempt<T>(_ body: () throws -> T) -> T? {
         do {
             return try body()
         } catch {
-            errorMessage = AppModel.describe(error)
+            report(AppModel.describe(error))
             return nil
         }
     }
@@ -746,7 +817,7 @@ public final class AppModel {
         do {
             try store.save(state)
         } catch {
-            errorMessage = "Couldn't save: \(AppModel.describe(error))"
+            report("Couldn't save: \(AppModel.describe(error))")
         }
     }
 

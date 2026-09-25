@@ -13,6 +13,24 @@ public struct TerminalLaunch: Equatable, Sendable {
     /// The arguments passed to `claude` itself (for display and tests).
     public var claudeArguments: [String]
 
+    /// A readable form of the `claude` command for logs: hook settings are
+    /// abbreviated and only arguments that need it are quoted.
+    public var displayCommand: String {
+        var parts = ["claude"]
+        var skipNext = false
+        for (index, argument) in claudeArguments.enumerated() {
+            if skipNext { skipNext = false; continue }
+            if argument == "--settings", index + 1 < claudeArguments.count {
+                parts += ["--settings", "<hooks>"]
+                skipNext = true
+                continue
+            }
+            let plain = argument.allSatisfy { $0.isLetter || $0.isNumber || "-_./:=@%+,".contains($0) }
+            parts.append(plain && !argument.isEmpty ? argument : ShellQuote.quote(argument))
+        }
+        return parts.joined(separator: " ")
+    }
+
     /// `KEY=VALUE` pairs, the form terminal emulators expect.
     public var environmentList: [String] {
         environment.keys.sorted().map { "\($0)=\(environment[$0]!)" }

@@ -216,16 +216,18 @@ public struct AgentCommands: Sendable {
     }
 
     public func stop(agentID: String) -> TerminalLaunch {
-        command(["stop", agentID], in: home)
+        command(["stop", agentID], in: home, login: false)
     }
 
     /// Deletes the agent, and its worktree when that is safe.
     public func remove(agentID: String) -> TerminalLaunch {
-        command(["rm", agentID], in: home)
+        command(["rm", agentID], in: home, login: false)
     }
 
+    /// Polled every few seconds, so it skips the login shell (sourcing shell
+    /// profiles each time is slow); PATH still includes claude's directory.
     public func list() -> TerminalLaunch {
-        command(["agents", "--json", "--all"], in: home)
+        command(["agents", "--json", "--all"], in: home, login: false)
     }
 
     private var home: String { baseEnvironment["HOME"] ?? NSHomeDirectory() }
@@ -238,10 +240,11 @@ public struct AgentCommands: Sendable {
         return args
     }
 
-    private func command(_ claudeArguments: [String], in directory: String) -> TerminalLaunch {
-        TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: directory,
-                             shell: shell, loginShell: loginShell, baseEnvironment: baseEnvironment,
-                             extraEnvironment: [:])
+    private func command(_ claudeArguments: [String], in directory: String, login: Bool? = nil) -> TerminalLaunch {
+        let useLogin = login ?? loginShell
+        return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: directory,
+                                    shell: useLogin ? shell : "/bin/sh", loginShell: useLogin, baseEnvironment: baseEnvironment,
+                                    extraEnvironment: [:])
     }
 }
 

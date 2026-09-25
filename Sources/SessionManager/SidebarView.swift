@@ -176,7 +176,7 @@ private struct ProjectSection: View {
             Button("New Session…") { presentNewSession(.unfiled(projectID: project.id)) }
             Button("New Folder") { model.createFolder(in: project.id) }
             Divider()
-            Button("Refresh Sessions") { model.refreshAll() }
+            Button("Refresh Sessions") { Task { await model.refreshAll() } }
             Button("Import Claude Code Projects…") { commands.showImportProjects = true }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path)

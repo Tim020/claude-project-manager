@@ -417,6 +417,10 @@ struct SessionPane: View {
                     .onAppear { model.resume(session.id) }
             } else {
                 TranscriptView(session: session, lines: model.history(for: session.id), compact: style.isCompact)
+                    // Loaded off the main thread; reloads when the session has new activity.
+                    .task(id: "\(session.id)|\(session.lastActivity.timeIntervalSince1970)|\(session.hasConversation)") {
+                        await model.loadHistory(session.id)
+                    }
                 ResumeBar(session: session, message: idleMessage, compact: style.isCompact)
             }
         }

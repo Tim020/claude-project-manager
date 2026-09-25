@@ -55,6 +55,37 @@ public struct DiscoveredProject: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Remembers parsed session summaries by file, so rescans only re-read
+/// history files that changed (they can be many megabytes).
+public final class SessionSummaryCache: @unchecked Sendable {
+    private struct Entry {
+        var modified: Date
+        var size: Int
+        var summary: DiscoveredSession?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+    private var parseCount = 0
+
+    public init() {}
+
+    /// Number of files actually parsed (for tests).
+    var parses: Int { lock.withLock { parseCount } }
+
+    func summary(for path: String, modified: Date, size: Int, parse: () -> DiscoveredSession?) -> DiscoveredSession? {
+        if let entry = lock.withLock({ entries[path] }), entry.modified == modified, entry.size == size {
+            return entry.summary
+        }
+        let summary = parse()
+        lock.withLock {
+            parseCount += 1
+            entries[path] = Entry(modified: modified, size: size, summary: summary)
+        }
+        return summary
+    }
+}
+
 /// Reads Claude Code's own session store so existing sessions for a project
 /// show up in the app, and loads their history for display.
 public struct SessionDiscovery: Sendable {
@@ -88,7 +119,7 @@ public struct SessionDiscovery: Sendable {
     }
 
     /// All sessions with at least one real prompt, newest first.
-    public func discover(projectPath: String) throws -> [DiscoveredSession] {
+    public func discover(projectPath: String, cache: SessionSummaryCache? = nil) throws -> [DiscoveredSession] {
         let fileManager = FileManager.default
         // The project's own directory plus those of its Claude Code worktrees.
         let root = claudeHome.appendingPathComponent("projects")
@@ -99,16 +130,21 @@ public struct SessionDiscovery: Sendable {
             .filter { $0 == base || $0.hasPrefix(worktreePrefix) }
             .flatMap { name -> [URL] in
                 let directory = root.appendingPathComponent(name)
-                return (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+                return (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? []
             }
             .filter { $0.pathExtension == "jsonl" }
 
         return files.compactMap { file -> DiscoveredSession? in
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
-            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
-            return SessionDiscovery.summarize(lines: text.split(separator: "\n").map(String.init),
-                                              claudeSessionID: file.deletingPathExtension().lastPathComponent,
-                                              fallbackDate: modified, defaultWorkingDirectory: projectPath)
+            let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            let modified = values?.contentModificationDate ?? Date()
+            let parse = { () -> DiscoveredSession? in
+                guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+                return SessionDiscovery.summarize(lines: text.split(separator: "\n").map(String.init),
+                                                  claudeSessionID: file.deletingPathExtension().lastPathComponent,
+                                                  fallbackDate: modified, defaultWorkingDirectory: projectPath)
+            }
+            guard let cache else { return parse() }
+            return cache.summary(for: file.path, modified: modified, size: values?.fileSize ?? -1, parse: parse)
         }
         .sorted { $0.lastActivity > $1.lastActivity }
     }

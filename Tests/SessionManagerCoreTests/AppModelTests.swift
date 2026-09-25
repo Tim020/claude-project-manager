@@ -462,14 +462,16 @@ final class AppModelTests: XCTestCase {
 
     // MARK: Selection & presentation
 
-    func testHistoryIsLoadedForImportedSessions() throws {
-        try MainActor.assumeIsolated {
+    func testHistoryIsLoadedForImportedSessions() async throws {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = model.workspace.sessions(in: .unfiled(projectID: p))[0]
             model.select(s.id)
-            XCTAssertEqual(model.history(for: s.id).map(\.kind), [.prompt, .tool, .assistant])
+            return (model, s.id)
         }
+        await model.loadHistory(id)
+        await MainActor.run { XCTAssertEqual(model.history(for: id).map(\.kind), [.prompt, .tool, .assistant]) }
     }
 
     func testTabsAreSelectedSessionsFolderSiblings() throws {
@@ -508,16 +510,17 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testRefreshSkipsRunningSessions() throws {
-        try MainActor.assumeIsolated {
+    func testRefreshSkipsRunningSessions() async throws {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = model.workspace.sessions(in: .unfiled(projectID: p))[1]
             model.start(s.id)
             try appendHook(s.id, #"{"hook_event_name":"UserPromptSubmit"}"#)
             model.pollHookEvents()
-            model.refreshAll()
-            XCTAssertEqual(model.workspace.session(s.id)?.status, .working)
+            return (model, s.id)
         }
+        await model.refreshAll()
+        await MainActor.run { XCTAssertEqual(model.workspace.session(id)?.status, .working) }
     }
 }

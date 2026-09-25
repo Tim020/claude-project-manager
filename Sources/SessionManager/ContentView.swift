@@ -77,10 +77,10 @@ struct ContentView: View {
             NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.refreshAll()
+            Task { await model.refreshAll() }
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
-            model.refreshAll()
+            Task { await model.refreshAll() }
         }
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
             // Status updates from the Claude Code hooks of running sessions.

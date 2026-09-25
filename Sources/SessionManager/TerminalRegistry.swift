@@ -52,7 +52,6 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         view.nativeBackgroundColor = NSColor(hex: 0x222222)
         view.nativeForegroundColor = NSColor(hex: 0xF1F3F5)
         view.caretColor = NSColor(hex: 0x00BC8C)
-        view.autoresizingMask = [.width, .height]
         return view
     }
 
@@ -121,9 +120,16 @@ struct TerminalPane: NSViewRepresentable {
         if terminal.superview !== container {
             terminal.removeFromSuperview()
             container.subviews.forEach { $0.removeFromSuperview() }
-            terminal.frame = container.bounds.insetBy(dx: 8, dy: 6)
-            terminal.autoresizingMask = [.width, .height]
+            // Pin with constraints: the container is still zero-sized here, and a
+            // frame inset from a zero rect is null, which left the terminal invisible.
+            terminal.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(terminal)
+            NSLayoutConstraint.activate([
+                terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+                terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+                terminal.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+                terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
+            ])
         }
         if isFocused {
             DispatchQueue.main.async { registry.focus(sessionID) }

@@ -38,6 +38,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
 - **Dock badge.** Shows how many sessions are awaiting input.
+- **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/SessionManager.log`.
 - **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
 
 ## Requirements
