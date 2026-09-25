@@ -12,10 +12,13 @@ public struct TerminalLaunch: Equatable, Sendable {
     public var workingDirectory: String
     /// The arguments passed to `claude` itself (for display and tests).
     public var claudeArguments: [String]
+    /// Shown in logs instead of the `claude` command (for other scripts).
+    public var label: String? = nil
 
     /// A readable form of the `claude` command for logs: hook settings are
     /// abbreviated and only arguments that need it are quoted.
     public var displayCommand: String {
+        if let label { return label }
         var parts = ["claude"]
         var skipNext = false
         for (index, argument) in claudeArguments.enumerated() {
@@ -82,6 +85,23 @@ public struct TerminalLaunch: Equatable, Sendable {
 
         return TerminalLaunch(executable: shell, arguments: (loginShell ? ["-l", "-c"] : ["-c"]) + [command],
                               environment: environment, workingDirectory: workingDirectory, claudeArguments: claudeArguments)
+    }
+}
+
+extension TerminalLaunch {
+    /// Claude Code's installer, run in a terminal so its progress shows.
+    public static let installScript = "curl -fsSL https://claude.ai/install.sh | bash"
+
+    /// A shell script in a terminal (a login shell, so PATH matches Terminal).
+    public static func script(_ script: String, workingDirectory: String, shell: String,
+                              baseEnvironment: [String: String] = ProcessInfo.processInfo.environment) -> TerminalLaunch {
+        var environment = baseEnvironment
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["TERM_PROGRAM"] = "Claudio"
+        if environment["LANG"]?.isEmpty ?? true { environment["LANG"] = "en_US.UTF-8" }
+        return TerminalLaunch(executable: shell, arguments: ["-l", "-c", "cd \(ShellQuote.quote(workingDirectory)) && " + script],
+                              environment: environment, workingDirectory: workingDirectory, claudeArguments: [], label: script)
     }
 }
 

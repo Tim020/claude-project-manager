@@ -78,7 +78,11 @@ struct ClaudioApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Session…") {
-                    commands.newSessionTarget = NewSessionTarget(group: model.selectedGroup)
+                    if model.menuFlags.canRunSessions {
+                        commands.newSessionTarget = NewSessionTarget(group: model.selectedGroup)
+                    } else {
+                        commands.showSetup = true
+                    }
                 }
                 .keyboardShortcut("n")
                 .disabled(!model.menuFlags.hasProjects)
@@ -94,6 +98,7 @@ struct ClaudioApp: App {
                     .keyboardShortcut("o")
                 Button("Import Claude Code Projects…") { commands.showImportProjects = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Claude Code Setup…") { commands.showSetup = true }
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") {

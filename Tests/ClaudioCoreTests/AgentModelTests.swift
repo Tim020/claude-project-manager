@@ -8,13 +8,23 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var dispatchOutput = "backgrounded · abcd1234\n  claude attach abcd1234    open in this terminal\n"
     var dispatchExit: Int32 = 0
     var usageOutput = "Total cost: $0.0000\n"
+    var versionOutput = "2.1.283 (Claude Code)\n"
+    var versionExit: Int32 = 0
+    var versionError = ""
+    var authOutput = #"{"loggedIn": true, "authMethod": "claude.ai", "email": "tim@example.com", "subscriptionType": "pro"}"#
+    var agentsExit: Int32 = 0
+    var agentsError = ""
 
     var commands: [[String]] { lock.withLock { _commands } }
 
     func run(_ command: TerminalLaunch) async -> CommandResult {
         lock.withLock { _commands.append(command.claudeArguments) }
         let args = command.claudeArguments
-        if args.first == "agents" { return CommandResult(exitCode: 0, output: agentsJSON, errorOutput: "") }
+        if args.first == "agents" {
+            return CommandResult(exitCode: agentsExit, output: agentsExit == 0 ? agentsJSON : "", errorOutput: agentsError)
+        }
+        if args == ["--version"] { return CommandResult(exitCode: versionExit, output: versionOutput, errorOutput: versionError) }
+        if args == ["auth", "status"] { return CommandResult(exitCode: 0, output: authOutput, errorOutput: "") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") { return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.") }
         return CommandResult(exitCode: 0, output: "", errorOutput: "")

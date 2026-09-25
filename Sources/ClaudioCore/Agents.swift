@@ -246,6 +246,30 @@ public struct AgentCommands: Sendable {
         command(["-p", "/usage", "--no-session-persistence"], in: home, login: false)
     }
 
+    /// `claude --version`: "2.1.283 (Claude Code)".
+    public func version() -> TerminalLaunch {
+        command(["--version"], in: home, login: false)
+    }
+
+    /// `claude auth status`: JSON with `loggedIn`, `authMethod`, `subscriptionType`…
+    public func authStatus() -> TerminalLaunch {
+        command(["auth", "status"], in: home, login: false)
+    }
+
+    /// Interactive: updates the CLI, printing its progress.
+    public func update() -> TerminalLaunch {
+        var launch = command(["update"], in: home)
+        launch.environment["TERM"] = "xterm-256color"
+        return launch
+    }
+
+    /// Interactive: signs in to a Claude account.
+    public func signIn() -> TerminalLaunch {
+        var launch = command(["auth", "login"], in: home)
+        launch.environment["TERM"] = "xterm-256color"
+        return launch
+    }
+
     public func list() -> TerminalLaunch {
         command(["agents", "--json", "--all"], in: home, login: false)
     }

@@ -32,6 +32,8 @@ public struct MenuFlags: Equatable, Sendable {
     public var hasSelection = false
     public var canResumeSelected = false
     public var canStopSelected = false
+    /// Claude Code can run (installed, signed in), or hasn't been checked yet.
+    public var canRunSessions = true
 
     public init() {}
 }
@@ -62,6 +64,16 @@ public final class AppModel {
     public private(set) var state: PersistedState
     public var selectedSessionID: UUID?
     public var filterText = ""
+    /// What's known about the Claude Code CLI: installed, signed in, able to
+    /// run background agents. Checked at launch and when Claudio comes back.
+    public private(set) var environment = ClaudeEnvironment()
+    public private(set) var isCheckingEnvironment = false
+    /// Set when an action needed Claude Code but it can't run; the UI shows
+    /// the setup sheet and clears it.
+    public var setupRequested = false
+    /// How long a check stays fresh before coming back to Claudio re-checks.
+    public static let environmentCheckInterval: TimeInterval = 300
+
     /// Shows only sessions with this status in the sidebar (nil: all).
     public var statusFilter: SessionStatus?
     public var renamingFolderID: UUID?
@@ -305,6 +317,79 @@ public final class AppModel {
         importSessions(for: id)
         save()
         return id
+    }
+
+    /// Checks the CLI: `claude --version`, `claude auth status` and whether
+    /// `claude agents` works. Unless `force`, skips if checked recently.
+    public func checkEnvironment(force: Bool = false) async {
+        if isCheckingEnvironment { return }
+        if !force, let checked = environment.checkedAt, now().timeIntervalSince(checked) < AppModel.environmentCheckInterval { return }
+        isCheckingEnvironment = true
+        defer { isCheckingEnvironment = false }
+
+        var result = ClaudeEnvironment()
+        result.checkedAt = now()
+        guard let executable = locateClaude(state.settings.claudePath), let commands = agentCommands(reportErrors: false) else {
+            result.install = .notFound
+            publish(result)
+            return
+        }
+        let version = await run(commands.version())
+        guard version.exitCode == 0 else {
+            let message = [version.errorOutput, version.output]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty } ?? "exit \(version.exitCode)"
+            result.install = .broken(path: executable, message: String(message.prefix(300)))
+            publish(result)
+            return
+        }
+        result.install = .installed(path: executable, version: ClaudeVersion.parse(version.output))
+
+        // Account details stay out of the log.
+        let auth = await run(commands.authStatus(), hideOutput: true)
+        if let status = ClaudeAuthStatus.parse(auth.output) {
+            result.signIn = status.loggedIn ? .signedIn(status) : .signedOut
+        } else {
+            result.signIn = .unknown
+        }
+
+        let agents = await run(commands.list(), logOnlyChanges: true)
+        if agents.exitCode == 0, (try? AgentListParser.parse(Data(agents.output.utf8))) != nil {
+            result.agents = .supported
+        } else if (agents.errorOutput + agents.output).lowercased().contains("unknown") {
+            result.agents = .unsupported(message: agents.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        publish(result)
+    }
+
+    private func publish(_ result: ClaudeEnvironment) {
+        let problems = result.problems.map(\.title)
+        if problems != environment.problems.map(\.title) || environment.checkedAt == nil {
+            log.append(problems.isEmpty ? .info : .error, problems.isEmpty ? "Claude Code is ready" : "Claude Code needs attention",
+                       detail: problems.isEmpty ? result.version.map { "Version \($0)" } : problems.joined(separator: "\n"))
+        }
+        if result != environment { environment = result }
+    }
+
+    /// The command that fixes a problem, run in a terminal so its output
+    /// and any prompts show. `chooseExecutable` is handled by the UI.
+    public func fixLaunch(for fix: EnvironmentFix) -> TerminalLaunch? {
+        switch fix {
+        case .install:
+            return TerminalLaunch.script(TerminalLaunch.installScript, workingDirectory: home, shell: shell)
+        case .update:
+            return agentCommands(reportErrors: false)?.update()
+        case .signIn:
+            return agentCommands(reportErrors: false)?.signIn()
+        case .chooseExecutable:
+            return nil
+        }
+    }
+
+    /// New sessions run as background agents: on in Settings, and the CLI
+    /// supports them.
+    public var backgroundAgentsEnabled: Bool {
+        state.settings.useBackgroundAgents && environment.backgroundAgentsAvailable
     }
 
     /// Reads one project in each protected location (Documents, Desktop…) so
@@ -646,10 +731,14 @@ public final class AppModel {
     @discardableResult
     public func createSession(_ request: NewSessionRequest) -> UUID? {
         guard let project = state.workspace.project(request.projectID) else { return nil }
+        guard environment.canRunSessions else {
+            setupRequested = true
+            return nil
+        }
         let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
-        let background = state.settings.useBackgroundAgents && !prompt.isEmpty
+        let background = backgroundAgentsEnabled && !prompt.isEmpty
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
@@ -684,6 +773,10 @@ public final class AppModel {
     /// if given, is sent as the first prompt after resuming.
     public func resume(_ sessionID: UUID, message: String? = nil) {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        guard environment.canRunSessions || isAgentAlive(sessionID) else {
+            setupRequested = true
+            return
+        }
         let message = message.flatMap(Workspace.trimmed)
         if isAgentAlive(sessionID) {
             attach(sessionID)
@@ -691,7 +784,7 @@ public final class AppModel {
             // Resuming would fork the conversation; let the user decide.
             pendingCopyMessages[sessionID] = message
             copyConfirmation = sessionID
-        } else if state.settings.useBackgroundAgents && session.hasConversation && session.claudeSessionID != nil {
+        } else if backgroundAgentsEnabled && session.hasConversation && session.claudeSessionID != nil {
             if message != nil { markWorking(sessionID) }
             enqueue { await self.resumeInBackground(sessionID, prompt: message) }
         } else {
@@ -714,7 +807,7 @@ public final class AppModel {
     /// Re-reads `claude agents --json --all`: links and updates known
     /// sessions, and adds agents started elsewhere for projects in the sidebar.
     public func refreshAgents() async {
-        guard !isRefreshingAgents, let commands = agentCommands(reportErrors: false) else { return }
+        guard !isRefreshingAgents, environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
         isRefreshingAgents = true
         defer { isRefreshingAgents = false }
         let result = await run(commands.list(), logOnlyChanges: true)
@@ -928,7 +1021,8 @@ public final class AppModel {
 
     /// Runs a CLI command off the main actor and records it in the log.
     /// Polling commands are only logged when their output changes or they fail.
-    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents") async -> CommandResult {
+    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents",
+                     hideOutput: Bool = false) async -> CommandResult {
         let started = Date()
         let result = await runner.run(command)
         let changed = lastOutputs[changeKey] != result.output
@@ -936,7 +1030,7 @@ public final class AppModel {
         if !logOnlyChanges || changed || result.exitCode != 0 {
             let milliseconds = Int(Date().timeIntervalSince(started) * 1000)
             var detail = "exit \(result.exitCode) · \(milliseconds) ms · in \(command.workingDirectory)"
-            for (label, text) in [("stdout", result.output), ("stderr", result.errorOutput)] {
+            for (label, text) in hideOutput ? [] : [("stdout", result.output), ("stderr", result.errorOutput)] {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { detail += "\n\(label):\n" + String(trimmed.prefix(4000)) }
             }
@@ -1129,6 +1223,7 @@ public final class AppModel {
     public func updateMenuFlags() {
         var flags = MenuFlags()
         flags.hasProjects = !state.workspace.projects.isEmpty
+        flags.canRunSessions = environment.canRunSessions
         if let id = selectedSessionID, state.workspace.session(id) != nil {
             flags.hasSelection = true
             flags.canResumeSelected = !running.contains(id)
@@ -1182,7 +1277,7 @@ public final class AppModel {
     /// Asks Claude Code for plan usage (`claude -p /usage`); no model call, so
     /// it works before any session has run.
     public func refreshUsage() async {
-        guard let commands = agentCommands(reportErrors: false) else { return }
+        guard environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
         let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage")
         if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageCommand(result.output, updatedAt: now()) {
             adopt(snapshot)

@@ -48,9 +48,15 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Plan usage.** The sidebar shows how much of your 5-hour session and weekly limits you've used, with reset times. It's read at launch and every 5 minutes with `claude -p /usage`, which makes no model call. Sessions started in Claudio also update it live through their status line: it records Claude Code's usage and context data, then runs your own status line from `~/.claude/settings.json`, so what you see in the terminal is unchanged.
 - **Notifications.** macOS notifications when a session needs your input or finishes (and, if you turn it on, when an agent stops unexpectedly). They're skipped for the session you're looking at while Claudio is in front; clicking one opens its session. Choose which ones, and whether they play a sound, in Settings. They need the bundled `Claudio.app` (not `swift run`), and macOS asks for permission on first launch.
 - **Settings** (⌘,). A sidebar of pages, each with grouped rows:
-  - **General:** the `claude` executable, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
+  - **General:** the `claude` executable and Claude Code's setup checklist, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
   - **New Sessions:** Direct or Background sessions, plus the default model and permissions.
   - **Notifications**, **Roles** and **About**.
+- **Claude Code setup checks.** At launch (and when you come back to Claudio, at most every 5 minutes), Claudio checks three things:
+  - that Claude Code is installed and runs (`claude --version`)
+  - that you're signed in (`claude auth status`)
+  - that it supports background agents (`claude agents`)
+
+  If something's wrong, a setup sheet lists each check with a fix: **Install** (Claude Code's install script), **Sign In** (`claude auth login`), **Update** (`claude update`) or **Choose…** (point Claudio at the executable). Fixes run in a terminal inside the sheet and everything is checked again when it exits. Other problems show as a banner at the bottom of the window. Without a working, signed-in Claude Code you can still browse sessions and history; starting or resuming a session opens the setup sheet instead. Without background agents, new sessions run directly in their tab. The same checklist is in Settings → General, and File → Claude Code Setup… opens the sheet. Account details from `claude auth status` aren't written to the Activity Log.
 - **Folder access up front.** macOS asks before an app reads Documents, Desktop, Downloads, iCloud Drive or another volume, and there's no way to request that ahead of time. So at launch Claudio reads one project in each of those places, and any prompts appear together at startup instead of in the middle of an action.
 - **Dock badge.** Shows how many sessions are awaiting input.
 - **Activity Log.** Window → Activity Log (⌥⌘L) lists every command the app runs, with its exit code, duration and output, plus terminal launches and exits, and errors. Agent polling is only logged when its output changes. Everything is also appended to `~/Library/Logs/Claudio.log`.

@@ -20,7 +20,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .general: return "Where to find Claude Code, which sessions the sidebar shows, and where Claudio keeps its data."
+        case .general: return "Claude Code's setup, which sessions the sidebar shows, and where Claudio keeps its data."
         case .sessions: return "How new sessions start: as background agents or directly, with which model and permissions."
         case .notifications: return "Choose which session changes tap you on the shoulder."
         case .roles: return "Labels for sessions, offered when you create one and shown on tabs."
@@ -127,9 +127,19 @@ private func settingBinding<T>(_ model: AppModel, _ keyPath: WritableKeyPath<App
 private struct GeneralSettings: View {
     @Environment(AppModel.self) private var model
     @State private var claudePath = ""
+    @State private var runningFix: FixRequest?
+
+    struct FixRequest: Identifiable {
+        let id = UUID()
+        let fix: EnvironmentFix
+    }
+
+    private var lastChecked: String {
+        guard let checked = model.environment.checkedAt else { return "Not checked yet" }
+        return "Checked \(checked.formatted(date: .omitted, time: .shortened))"
+    }
 
     var body: some View {
-        let detected = self.detected
 
         SettingsGroup(title: "Claude Code") {
             SettingsRow(title: "Executable", subtitle: "Leave empty to find it on your PATH, in ~/.claude/local, ~/.local/bin or Homebrew.") {
@@ -141,15 +151,31 @@ private struct GeneralSettings: View {
                     Button("Choose…", action: choose)
                 }
             }
-            SettingsRow(title: detected.found ? "Claude Code found" : "Claude Code not found",
-                        subtitle: detected.text, showsSeparator: false) {
-                Image(systemName: detected.found ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(detected.found ? DS.teal : DS.orange)
+            let checks = EnvironmentCheck.rows(for: model.environment, home: model.home)
+            ForEach(checks) { check in
+                EnvironmentCheckRow(check: check, isChecking: model.isCheckingEnvironment) { fix in
+                    if fix == .chooseExecutable { choose() } else { runningFix = FixRequest(fix: fix) }
+                }
+                .padding(.horizontal, 2)
+                Rectangle().fill(SettingsStyle.separator).frame(height: 1).padding(.horizontal, 16)
             }
+            HStack {
+                Text(lastChecked)
+                    .font(DS.font(11.5))
+                    .foregroundStyle(DS.dim)
+                Spacer()
+                Button("Check Again") { Task { await model.checkEnvironment(force: true) } }
+                    .disabled(model.isCheckingEnvironment)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
         .onAppear { claudePath = model.settings.claudePath ?? "" }
         .onDisappear(perform: savePath)
+        .sheet(item: $runningFix) { request in
+            SetupSheet(initialFix: request.fix)
+                .environment(model)
+        }
 
         SidebarSettingsGroup()
 
@@ -158,14 +184,6 @@ private struct GeneralSettings: View {
             locationRow("Activity log", url: ActivityLog.defaultFileURL)
             locationRow("Claude Code history", url: SessionDiscovery.defaultClaudeHome.appendingPathComponent("projects"), last: true)
         }
-    }
-
-    private var detected: (found: Bool, text: String) {
-        let override = claudePath.trimmingCharacters(in: .whitespaces)
-        if let found = ClaudeExecutableLocator.locate(override: override.isEmpty ? nil : override) {
-            return (true, "Using \(PathDisplay.tilde(found, home: model.home))")
-        }
-        return (false, "Install Claude Code (claude.com/claude-code), or choose the executable.")
     }
 
     private func locationRow(_ title: String, url: URL, last: Bool = false) -> some View {
@@ -180,7 +198,10 @@ private struct GeneralSettings: View {
         let trimmed = claudePath.trimmingCharacters(in: .whitespaces)
         var settings = model.settings
         settings.claudePath = trimmed.isEmpty ? nil : trimmed
-        if settings != model.settings { model.updateSettings(settings) }
+        if settings != model.settings {
+            model.updateSettings(settings)
+            Task { await model.checkEnvironment(force: true) }
+        }
     }
 
     private func choose() {

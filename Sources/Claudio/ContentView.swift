@@ -44,11 +44,23 @@ struct ContentView: View {
                 .layoutPriority(1)
             VerticalRule()
                 .overlay { sidebarResizeHandle }
-            DetailView()
+            VStack(spacing: 0) {
+                DetailView()
+                if commands.dismissedBannerProblems != model.environment.problems.map(\.title) && !commands.showSetup {
+                    EnvironmentBanner(onFix: { commands.showSetup = true },
+                                      onDismiss: { commands.dismissedBannerProblems = model.environment.problems.map(\.title) })
+                }
+            }
         }
         .background(DS.window)
         .ignoresSafeArea(.container, edges: .top)
-        .environment(\.presentNewSession, { group in commands.newSessionTarget = NewSessionTarget(group: group) })
+        .environment(\.presentNewSession, { group in
+            if model.environment.canRunSessions {
+                commands.newSessionTarget = NewSessionTarget(group: group)
+            } else {
+                commands.showSetup = true
+            }
+        })
         .environment(\.addProject, { chooseProjectDirectory(model: model) })
         .sheet(item: $commands.newSessionTarget) { target in
             NewSessionSheet(initialGroup: target.group ?? model.selectedGroup)
@@ -58,15 +70,28 @@ struct ContentView: View {
             ImportProjectsSheet()
                 .environment(model)
         }
+        .sheet(isPresented: $commands.showSetup, onDismiss: offerFirstRunImport) {
+            SetupSheet()
+                .environment(model)
+        }
+        .onChange(of: model.setupRequested) { _, requested in
+            guard requested else { return }
+            model.setupRequested = false
+            commands.showSetup = true
+        }
         .task {
             // Ask for Documents/Desktop/… access now, not in the middle of an action.
             await model.preflightFolderAccess()
         }
         .task {
-            // First launch: offer to import existing Claude Code projects.
-            guard !commands.offeredFirstRunImport, model.workspace.projects.isEmpty else { return }
-            commands.offeredFirstRunImport = true
-            if !model.importableProjects().isEmpty { commands.showImportProjects = true }
+            // Check Claude Code first: if it can't run sessions, say so before
+            // anything else (the import offer follows the setup sheet).
+            await model.checkEnvironment(force: true)
+            if model.environment.problems.contains(where: \.isBlocking) {
+                commands.showSetup = true
+            } else {
+                offerFirstRunImport()
+            }
         }
         .alert(copyTitle, isPresented: copyBinding) {
             Button("Resume a Copy") {
@@ -87,6 +112,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.appIsActive = true
             Task { await model.refreshAll() }
+            Task { await model.checkEnvironment() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             model.appIsActive = false
@@ -114,6 +140,13 @@ struct ContentView: View {
         }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
+    }
+
+    /// First launch: offer to import existing Claude Code projects.
+    private func offerFirstRunImport() {
+        guard !commands.offeredFirstRunImport, model.workspace.projects.isEmpty else { return }
+        commands.offeredFirstRunImport = true
+        if !model.importableProjects().isEmpty { commands.showImportProjects = true }
     }
 
     /// Invisible, slightly wider hit area on the divider for resizing the sidebar.
@@ -178,5 +211,9 @@ final class UICommands {
     var showImportProjects = false
     /// The import sheet is offered automatically once, on a first launch.
     var offeredFirstRunImport = false
+    /// The Claude Code setup sheet (launch check, banner, blocked actions).
+    var showSetup = false
+    /// Problems the banner was dismissed for; it comes back when they change.
+    var dismissedBannerProblems: [String]?
 }
 #endif
