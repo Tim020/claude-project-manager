@@ -130,13 +130,4 @@ private struct ActivityRow: View {
     }
 }
 
-/// Menu item that opens the Activity Log window (⌥⌘L).
-struct OpenActivityLogButton: View {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("Activity Log") { openWindow(id: ActivityLogView.windowID) }
-            .keyboardShortcut("l", modifiers: [.command, .option])
-    }
-}
 #endif

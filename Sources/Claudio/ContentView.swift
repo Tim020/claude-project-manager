@@ -90,6 +90,7 @@ struct ContentView: View {
             // Status updates from the Claude Code hooks of running sessions.
             model.pollHookEvents()
             model.pollUsage()
+            model.updateMenuFlags()
         }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             // Background agents: liveness, state and titles from `claude agents --json`.

@@ -24,6 +24,18 @@ public struct NewSessionRequest: Equatable, Sendable {
     }
 }
 
+/// The little the menu bar needs to know, kept apart from the rest of the
+/// state so background refreshes don't rebuild the menus (an open menu would
+/// flicker and resize).
+public struct MenuFlags: Equatable, Sendable {
+    public var hasProjects = false
+    public var hasSelection = false
+    public var canResumeSelected = false
+    public var canStopSelected = false
+
+    public init() {}
+}
+
 public struct Breadcrumb: Equatable, Sendable {
     public var project: String
     public var folder: String
@@ -58,6 +70,8 @@ public final class AppModel {
     private var exitCodes: [UUID: Int32] = [:]
     /// Read-only transcripts loaded from history files (see `loadHistory`).
     private var historyLines: [UUID: [TranscriptLine]] = [:]
+    /// What the menu bar enables; refreshed with `updateMenuFlags()`.
+    public private(set) var menuFlags = MenuFlags()
     /// Latest plan usage (from `claude /usage` or a session's status line).
     public private(set) var usage: UsageSnapshot?
     /// Context window use per session, from its status line.
@@ -319,14 +333,17 @@ public final class AppModel {
         let results = await Task.detached(priority: .utility) {
             targets.map { id, path, name in (id, name, Result { try discovery.discover(projectPath: path, cache: cache) }) }
         }.value
-        let before = state.workspace
+        var workspace = state.workspace
         for (id, name, result) in results {
             switch result {
-            case .success(let found): state.workspace.importDiscovered(found, into: id, skipping: running)
+            case .success(let found): workspace.importDiscovered(found, into: id, skipping: running)
             case .failure(let error): log.append(.error, "Couldn't read Claude Code sessions for \(name)", detail: AppModel.describe(error))
             }
         }
-        if state.workspace != before { save() }
+        if workspace != state.workspace {
+            state.workspace = workspace
+            save()
+        }
     }
 
     private func importSessions(for projectID: UUID) {
@@ -574,7 +591,8 @@ public final class AppModel {
             }
             changed = true
         }
-        terminalSessions = Dictionary(listed.map { ($0.sessionID, $0) }, uniquingKeysWith: { $1 })
+        let bySession = Dictionary(listed.map { ($0.sessionID, $0) }, uniquingKeysWith: { $1 })
+        if terminalSessions != bySession { terminalSessions = bySession }
         // A new terminal session in a known project: pick it up from its history.
         if !unknownProjects.isEmpty {
             let ids = Array(unknownProjects)
@@ -584,15 +602,16 @@ public final class AppModel {
     }
 
     func apply(_ listed: [BackgroundAgent]) {
-        var changed = false
+        // Work on a copy and only publish real changes: this runs every few
+        // seconds, and every change to observed state redraws views.
+        var workspace = state.workspace
         for agent in listed {
-            let existing = state.workspace.sessions.first { $0.agentID == agent.id }
-                ?? state.workspace.session(claudeSessionID: agent.sessionID)
+            let existing = workspace.sessions.first { $0.agentID == agent.id }
+                ?? workspace.session(claudeSessionID: agent.sessionID)
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
-                state.workspace.updateSession(existing.id) { session in
-                    let before = session
+                workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
                     session.claudeSessionID = agent.sessionID
                     session.hasConversation = true
@@ -602,28 +621,29 @@ public final class AppModel {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
-                    if session != before { changed = true }
                 }
-            } else if let projectID = state.workspace.projectID(forWorkingDirectory: agent.cwd) {
+            } else if let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
                 var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
                                       name: agent.name ?? agent.id, workingDirectory: agent.cwd, status: agent.sessionStatus,
                                       createdAt: agent.startedAt ?? now())
                 session.agentID = agent.id
-                try? state.workspace.addSession(session)
-                changed = true
+                try? workspace.addSession(session)
             }
             appliedAgentStates[agent.id] = stateKey
         }
         let listedIDs = Set(listed.map(\.id))
-        for session in state.workspace.sessions {
+        for session in workspace.sessions {
             if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
                 // Removed outside the app (`claude rm`).
-                state.workspace.updateSession(session.id) { $0.agentID = nil }
-                changed = true
+                workspace.updateSession(session.id) { $0.agentID = nil }
             }
         }
-        agents = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
-        if changed { save() }
+        let byID = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        if agents != byID { agents = byID }
+        if workspace != state.workspace {
+            state.workspace = workspace
+            save()
+        }
     }
 
     /// For tests: a status change as a hook would make.
@@ -832,6 +852,19 @@ public final class AppModel {
             changed = true
         }
         if changed { save() }
+    }
+
+    // MARK: - Menu
+
+    public func updateMenuFlags() {
+        var flags = MenuFlags()
+        flags.hasProjects = !state.workspace.projects.isEmpty
+        if let id = selectedSessionID, state.workspace.session(id) != nil {
+            flags.hasSelection = true
+            flags.canResumeSelected = !running.contains(id)
+            flags.canStopSelected = running.contains(id) || isAgentAlive(id)
+        }
+        if flags != menuFlags { menuFlags = flags }
     }
 
     // MARK: - Usage

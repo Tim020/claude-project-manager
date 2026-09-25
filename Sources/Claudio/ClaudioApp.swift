@@ -72,14 +72,14 @@ struct ClaudioApp: App {
                     commands.newSessionTarget = NewSessionTarget(group: model.selectedGroup)
                 }
                 .keyboardShortcut("n")
-                .disabled(model.workspace.projects.isEmpty)
+                .disabled(!model.menuFlags.hasProjects)
                 Button("New Folder") {
                     if let project = model.selectedSession?.projectID ?? model.workspace.projects.first?.id {
                         model.createFolder(in: project)
                     }
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-                .disabled(model.workspace.projects.isEmpty)
+                .disabled(!model.menuFlags.hasProjects)
                 Divider()
                 Button("Add Project…") { chooseProjectDirectory(model: model) }
                     .keyboardShortcut("o")
@@ -94,10 +94,6 @@ struct ClaudioApp: App {
                 Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
                     .keyboardShortcut("w", modifiers: [.command, .shift])
             }
-            CommandGroup(before: .windowList) {
-                OpenActivityLogButton()
-                Divider()
-            }
             CommandMenu("Session") {
                 Button("Refresh Sessions") { Task { await model.refreshAll() } }
                     .keyboardShortcut("r")
@@ -111,19 +107,21 @@ struct ClaudioApp: App {
                     if let id = model.selectedSessionID { model.resume(id) }
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
-                .disabled(model.selectedSessionID.map { model.isRunning($0) } ?? true)
+                .disabled(!model.menuFlags.canResumeSelected)
                 Button("Stop Session") {
                     if let id = model.selectedSessionID { model.stop(id) }
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
-                .disabled(model.selectedSessionID.map { !model.isRunning($0) && !model.isAgentAlive($0) } ?? true)
+                .disabled(!model.menuFlags.canStopSelected)
             }
         }
 
+        // macOS lists it in the Window menu itself; ⌥⌘L opens it.
         Window("Activity Log", id: ActivityLogView.windowID) {
             ActivityLogView(log: model.log)
         }
         .defaultSize(width: 900, height: 560)
+        .keyboardShortcut("l", modifiers: [.command, .option])
 
         Settings {
             SettingsView()
