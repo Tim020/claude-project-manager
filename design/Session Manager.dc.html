@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@400;600;700;800&display=swap"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css"><style>body{margin:0;background:#1a1a1a;font-family:"Nunito Sans",Avenir,Helvetica,Arial,sans-serif;color:#fff;-webkit-font-smoothing:antialiased}a{color:#00bc8c;text-decoration:none}a:hover{color:#00997a}.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(255,255,255,.08)}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#00bc8c;color:#fff;border-radius:4px}.dv-tname{font-weight:700;font-size:14px}.dv-intro{max-width:980px;color:#adb5bd;font-size:13px;line-height:1.55;margin:0 0 24px}.dv-opts{display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:10px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px}.dv-olabel{display:flex;align-items:baseline;gap:8px;font-size:12px;color:#adb5bd}.dv-next{margin:28px 0 0;font-size:12px;color:#6c757d}</style></helmet>
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Session manager — three navigation models</span></div>
+<p class="dv-intro">Hierarchy in all three: <b style="color:#fff">Project</b> (a working directory) → <b style="color:#fff">Folder</b> (user-named group, e.g. a change + its PR review) → <b style="color:#fff">Session</b>. Status is colour + word, per DigiScript: <span style="color:#00bc8c">Working</span>, <span style="color:#f39c12">Awaiting Input</span>, <span style="color:#adb5bd">Completed</span>. Styled with the DigiScript (Darkly) system inside native macOS window chrome. Sessions in <a class="dv-oid" href="#1a">1a</a> are clickable.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Source list — full tree in the sidebar, folder siblings as tabs</div>
+<div style="width:1200px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex">
+  <div style="width:290px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+    <div style="height:52px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none">
+      <span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span>
+      <span style="flex:1"></span>
+      <i class="mdi mdi-folder-plus-outline" style="font-size:18px;color:#adb5bd" title="New Folder"></i>
+      <i class="mdi mdi-plus" style="font-size:18px;color:#adb5bd" title="New Session"></i>
+    </div>
+    <div style="padding:0 12px 10px">
+      <div style="display:flex;align-items:center;gap:6px;background:#222;border:1px solid #444;border-radius:4px;padding:5px 8px;color:#6c757d;font-size:13px"><i class="mdi mdi-magnify"></i>Filter sessions</div>
+    </div>
+    <div style="flex:1;overflow:auto;padding:0 8px 12px">
+      <sc-for list="{{ projects }}" as="p" hint-placeholder-count="3">
+        <div style="margin-top:10px">
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#adb5bd">
+            <i class="mdi mdi-chevron-down" style="font-size:14px"></i><span style="flex:1">{{ p.name }}</span><span style="font-weight:600;letter-spacing:0;text-transform:none;color:#6c757d">{{ p.path }}</span>
+          </div>
+          <sc-for list="{{ p.folders }}" as="f" hint-placeholder-count="2">
+            <div style="margin-top:2px">
+              <div style="display:flex;align-items:center;gap:7px;padding:5px 8px 5px 14px;font-size:13.5px;font-weight:700;color:#fff;border-radius:4px">
+                <i class="mdi {{ f.icon }}" style="font-size:16px;color:{{ f.iconColor }}"></i><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:{{ f.fontStyle }}">{{ f.name }}</span><span style="font-size:11px;color:#6c757d;font-weight:600">{{ f.count }}</span>
+              </div>
+              <sc-for list="{{ f.sessions }}" as="s" hint-placeholder-count="2">
+                <div onClick="{{ s.onSelect }}" style="display:flex;align-items:center;gap:8px;padding:5px 8px 5px 38px;border-radius:4px;cursor:default;background:{{ s.bg }};font-size:13.5px">
+                  <span style="width:8px;height:8px;border-radius:50%;flex:none;background:{{ s.color }}"></span>
+                  <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:{{ s.nameColor }}">{{ s.name }}</span>
+                  <span style="font-size:11px;color:#adb5bd">{{ s.age }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+      <div style="margin:6px 0 0 14px;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:4px;background:#222;border:1px solid #3498db;font-size:13.5px">
+        <i class="mdi mdi-folder-outline" style="font-size:16px;color:#3498db"></i><span style="color:#fff">Mic planner perf</span><span style="width:1px;height:15px;background:#fff"></span>
+      </div>
+    </div>
+    <div style="border-top:1px solid #444;padding:10px 16px;display:flex;gap:14px;font-size:12px;color:#adb5bd;flex:none">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#00bc8c"></span>2 Working</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#f39c12"></span>1 Awaiting Input</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>7 Completed</span>
+    </div>
+  </div>
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid #444;background:#2b2b2b">
+      <span style="font-size:13px;color:#adb5bd">{{ sel.project }}</span><i class="mdi mdi-chevron-right" style="color:#6c757d"></i><span style="font-size:13px;color:#adb5bd">{{ sel.folder }}</span><i class="mdi mdi-chevron-right" style="color:#6c757d"></i><b style="font-size:14px">{{ sel.name }}</b>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px;color:#fff;background:{{ sel.pill }}">{{ sel.statusLabel }}</span>
+      <i class="mdi mdi-source-pull" style="font-size:18px;color:#adb5bd"></i><i class="mdi mdi-dots-horizontal" style="font-size:18px;color:#adb5bd"></i>
+    </div>
+    <div style="display:flex;gap:2px;padding:0 20px;border-bottom:1px solid #444;flex:none">
+      <sc-for list="{{ sel.tabs }}" as="t" hint-placeholder-count="2">
+        <div onClick="{{ t.onSelect }}" style="display:flex;align-items:center;gap:7px;padding:10px 14px;font-size:13.5px;cursor:default;color:{{ t.fg }};box-shadow:{{ t.underline }}">
+          <span style="width:7px;height:7px;border-radius:50%;background:{{ t.color }}"></span>{{ t.name }}<span style="font-size:11px;color:#6c757d">{{ t.role }}</span>
+        </div>
+      </sc-for>
+      <div style="display:flex;align-items:center;padding:10px 10px;color:#6c757d"><i class="mdi mdi-plus"></i></div>
+    </div>
+    <div style="flex:1;overflow:auto;padding:20px 24px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13px;line-height:1.6;display:flex;flex-direction:column;gap:12px;text-align:left">
+      <sc-for list="{{ sel.lines }}" as="l" hint-placeholder-count="5">
+        <div style="display:flex;gap:10px">
+          <span style="flex:none;width:14px;color:{{ l.markColor }}">{{ l.mark }}</span>
+          <span style="color:{{ l.color }};white-space:pre-wrap">{{ l.text }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="padding:14px 20px 18px;border-top:1px solid #444;flex:none">
+      <div style="background:#303030;border:1px solid #444;border-radius:4px;padding:10px 12px;display:flex;align-items:center;gap:10px">
+        <span style="flex:1;color:#6c757d;font-size:14px">Message {{ sel.name }}…</span>
+        <span style="font-size:12px;color:#adb5bd">Opus 5.5</span>
+        <span style="background:#00bc8c;color:#fff;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:700">Send</span>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Project rail + folder column — a folder opens as a split view (change beside its review)</div>
+<div style="width:1200px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex">
+  <div style="width:68px;flex:none;background:#1b1b1b;border-right:1px solid #444;display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:14px">
+    <div style="display:flex;gap:6px;margin-bottom:14px"><span style="width:10px;height:10px;border-radius:50%;background:#ff5f57"></span><span style="width:10px;height:10px;border-radius:50%;background:#febc2e"></span><span style="width:10px;height:10px;border-radius:50%;background:#28c840"></span></div>
+    <div style="position:relative;width:40px;height:40px;border-radius:4px;background:#375a7f;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;box-shadow:0 0 0 2px #222,0 0 0 4px #3498db">DS<span style="position:absolute;right:-5px;top:-5px;width:12px;height:12px;border-radius:50%;background:#00bc8c;border:2px solid #1b1b1b"></span></div>
+    <div style="position:relative;width:40px;height:40px;border-radius:4px;background:#444;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:#adb5bd">DW<span style="position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;border-radius:8px;background:#f39c12;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;border:2px solid #1b1b1b">1</span></div>
+    <div style="position:relative;width:40px;height:40px;border-radius:4px;background:#444;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:#adb5bd">DE<span style="position:absolute;right:-5px;top:-5px;width:12px;height:12px;border-radius:50%;background:#00bc8c;border:2px solid #1b1b1b"></span></div>
+    <div style="width:40px;height:40px;border-radius:4px;border:1px dashed #6c757d;display:flex;align-items:center;justify-content:center;color:#6c757d"><i class="mdi mdi-plus" style="font-size:20px"></i></div>
+  </div>
+  <div style="width:260px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+    <div style="padding:16px 16px 12px;border-bottom:1px solid #444">
+      <div style="font-size:18px">DigiScript</div>
+      <div style="font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#adb5bd">~/Documents/Code/DigiScript</div>
+      <div style="margin-top:8px;font-size:12px;color:#adb5bd">0 awaiting input · 1 working · 6 completed</div>
+    </div>
+    <div style="flex:1;overflow:auto;padding:8px">
+      <sc-for list="{{ dsFolders }}" as="f" hint-placeholder-count="4">
+        <div style="padding:10px;border-radius:4px;margin-bottom:4px;background:{{ f.bg }}">
+          <div style="display:flex;align-items:center;gap:7px;font-weight:700;font-size:13.5px"><i class="mdi {{ f.icon }}" style="font-size:16px;color:{{ f.iconColor }}"></i><span style="flex:1">{{ f.name }}</span><span style="font-size:11px;color:#adb5bd;font-weight:600">{{ f.age }}</span></div>
+          <div style="display:flex;flex-direction:column;gap:3px;margin:6px 0 0 23px">
+            <sc-for list="{{ f.sessions }}" as="s" hint-placeholder-count="2">
+              <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#adb5bd"><span style="width:7px;height:7px;border-radius:50%;background:{{ s.color }}"></span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.name }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="border-top:1px solid #444;padding:10px 12px;display:flex;gap:8px">
+      <span style="flex:1;text-align:center;border:1px solid #3498db;color:#3498db;border-radius:4px;padding:5px;font-size:13px">New Folder</span>
+      <span style="flex:1;text-align:center;background:#00bc8c;border-radius:4px;padding:5px;font-size:13px;font-weight:700">New Session</span>
+    </div>
+  </div>
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:52px;flex:none;display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:0.1rem solid #3498db;background:#2b2b2b">
+      <i class="mdi mdi-folder" style="font-size:18px;color:#3498db"></i>
+      <span style="font-size:15px;font-weight:700">Storage fix — PR #1427</span>
+      <i class="mdi mdi-pencil" style="font-size:14px;color:#6c757d"></i>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;border-radius:12px;padding:2px 10px;background:#444;color:#adb5bd">#1427</span>
+      <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><span style="padding:4px 10px;background:#444"><i class="mdi mdi-view-split-vertical"></i> Split</span><span style="padding:4px 10px;color:#adb5bd"><i class="mdi mdi-tab"></i> Tabs</span></div>
+    </div>
+    <div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:0">
+      <sc-for list="{{ splitPanes }}" as="pn" hint-placeholder-count="2">
+        <div style="display:flex;flex-direction:column;min-height:0;border-right:1px solid #444">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:#303030;border-bottom:1px solid #444">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ pn.role }}</span>
+            <b style="font-size:13.5px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ pn.name }}</b>
+            <span style="font-size:11.5px;font-weight:700;padding:1px 9px;border-radius:12px;background:{{ pn.pill }}">{{ pn.statusLabel }}</span>
+          </div>
+          <div style="flex:1;overflow:hidden;padding:14px 16px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;line-height:1.6;display:flex;flex-direction:column;gap:10px">
+            <sc-for list="{{ pn.lines }}" as="l" hint-placeholder-count="4">
+              <div style="display:flex;gap:8px"><span style="flex:none;width:12px;color:{{ l.markColor }}">{{ l.mark }}</span><span style="color:{{ l.color }};white-space:pre-wrap">{{ l.text }}</span></div>
+            </sc-for>
+          </div>
+          <div style="padding:10px 12px;border-top:1px solid #444">
+            <div style="background:#303030;border:1px solid #444;border-radius:4px;padding:8px 10px;font-size:13px;color:#6c757d">Message {{ pn.name }}…</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Folder board — lighter sidebar, project overview with folders as columns; drag sessions between them</div>
+<div style="width:1200px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;position:relative">
+  <div style="width:230px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+    <div style="height:52px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span></div>
+    <div style="padding:0 8px;display:flex;flex-direction:column;gap:1px">
+      <div style="padding:4px 8px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#6c757d">PROJECTS</div>
+      <sc-for list="{{ projectNav }}" as="p" hint-placeholder-count="3">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;font-size:13.5px;font-weight:700;background:{{ p.bg }}"><i class="mdi mdi-source-branch" style="color:#adb5bd"></i><span style="flex:1">{{ p.name }}</span><span style="font-size:11px;font-weight:700;padding:0 6px;border-radius:12px;background:{{ p.badgeBg }}">{{ p.badge }}</span></div>
+          <sc-for list="{{ p.folders }}" as="f" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:7px;padding:4px 8px 4px 30px;font-size:13px;color:#adb5bd"><i class="mdi {{ f.icon }}" style="font-size:14px"></i><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.name }}</span><span style="font-size:11px;color:#6c757d">{{ f.count }}</span></div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="flex:none;padding:14px 24px;display:flex;align-items:flex-end;gap:16px;border-bottom:0.1rem solid #3498db">
+      <div style="flex:1">
+        <div style="font-size:24px;line-height:1.2">DigiScript</div>
+        <div style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#adb5bd">~/Documents/Code/DigiScript · Opus 5.5</div>
+      </div>
+      <div style="display:flex;gap:6px;font-size:12px">
+        <span style="padding:3px 10px;border-radius:12px;background:#007a5e;font-weight:700">1 Working</span>
+        <span style="padding:3px 10px;border-radius:12px;background:#444;color:#adb5bd">0 Awaiting Input</span>
+        <span style="padding:3px 10px;border-radius:12px;background:#444;color:#adb5bd">6 Completed</span>
+      </div>
+      <span style="background:#00bc8c;border-radius:4px;padding:5px 14px;font-size:13px;font-weight:700">New Session</span>
+    </div>
+    <div style="flex:1;display:flex;gap:10px;padding:18px 20px;overflow:hidden;align-items:flex-start">
+      <sc-for list="{{ boardCols }}" as="c" hint-placeholder-count="4">
+        <div style="flex:1 1 0;min-width:0;background:#2b2b2b;border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px;box-shadow:{{ c.ring }}">
+          <div style="display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:700;padding:2px 2px 4px"><i class="mdi {{ c.icon }}" style="color:{{ c.iconColor }}"></i><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ c.name }}</span><i class="mdi mdi-dots-horizontal" style="color:#6c757d"></i></div>
+          <sc-for list="{{ c.sessions }}" as="s" hint-placeholder-count="2">
+            <div style="background:#303030;border:1px solid #444;border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:6px;opacity:{{ s.opacity }}">
+              <div style="display:flex;align-items:center;gap:6px"><span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#adb5bd;flex:1">{{ s.role }}</span><span style="font-size:11px;color:#6c757d">{{ s.age }}</span></div>
+              <div style="font-size:13.5px;font-weight:700;line-height:1.3">{{ s.name }}</div>
+              <div style="font-size:12px;color:#adb5bd;line-height:1.4">{{ s.summary }}</div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;margin-top:2px"><span style="width:7px;height:7px;border-radius:50%;background:{{ s.color }}"></span><span style="color:{{ s.color }};flex:1">{{ s.statusLabel }}</span><span style="color:#adb5bd">{{ s.prs }}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+      <div style="width:140px;flex:none;border:1px dashed #6c757d;border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px">
+        <div style="background:#222;border:1px solid #3498db;border-radius:4px;padding:6px 8px;font-size:13px;display:flex;align-items:center;gap:6px"><i class="mdi mdi-folder-outline" style="color:#3498db"></i><span style="color:#6c757d">Folder name</span></div>
+        <div style="font-size:12px;color:#6c757d">Drop a session here to start a new folder.</div>
+      </div>
+    </div>
+  </div>
+  <div style="position:absolute;left:470px;top:140px;width:200px;background:#303030;border:1px solid #444;border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:4px;font-size:13px">
+    <div style="padding:5px 10px;border-radius:3px;background:#3498db">Rename Folder…</div>
+    <div style="padding:5px 10px">New Session in Folder</div>
+    <div style="padding:5px 10px">Move to Project</div>
+    <div style="height:1px;background:#444;margin:4px 0"></div>
+    <div style="padding:5px 10px">Archive Completed</div>
+    <div style="padding:5px 10px;color:#e74c3c">Delete Folder</div>
+  </div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "<a class="dv-oid" href="#1a">1a</a> sidebar with the split view from <a class="dv-oid" href="#1b">1b</a>" · "show the New Session sheet" · "add a menu-bar extra for awaiting-input alerts"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const ST = {
+  working: { c: '#00bc8c', pill: '#007a5e', label: 'Working' },
+  input: { c: '#f39c12', pill: '#d68910', label: 'Awaiting Input' },
+  done: { c: '#6c757d', pill: '#444', label: 'Completed' },
+};
+const DATA = [
+  { id: 'ds', name: 'DigiScript', path: '~/…/DigiScript', folders: [
+    { name: 'Storage fix — PR #1427', age: '15h', sessions: [
+      { id: 'a1', name: 'investigate issue correlation', role: 'CODE', st: 'working', age: '15h', prs: '2 PRs', summary: '2 agents in flight: storage fix (PR #1427) + Jump to Page regression' },
+      { id: 'a2', name: 'pr review inline 1427', role: 'REVIEW', st: 'done', age: '10m', prs: '', summary: 'Round 2 review of PR #1427 posted as "changes needed"' } ] },
+    { name: 'Script editing — PR #1421', age: '1h', sessions: [
+      { id: 'b1', name: 'collaborative script editing', role: 'CODE', st: 'done', age: '1h', prs: '4 PRs', summary: 'PR #1421 review round 1 fully addressed — 1 critical lifecycle fix' },
+      { id: 'b2', name: 'pr review inline 1421', role: 'REVIEW', st: 'done', age: '7m', prs: '', summary: 'Round 2 review posted, verdict ready to merge' } ] },
+    { name: 'Package managers — PR #1422', age: '1m', sessions: [
+      { id: 'c1', name: 'evaluate package managers', role: 'CODE', st: 'done', age: '1m', prs: '2 PRs', summary: 'Handled review round 2 on PR #1422: raised engines.node' },
+      { id: 'c2', name: 'review pr 1422', role: 'REVIEW', st: 'done', age: '11m', prs: '', summary: 'Round 2 review of PR #1422 posted, ready to merge' } ] },
+    { name: 'Unfiled', unfiled: true, age: '3m', sessions: [
+      { id: 'd1', name: 'pdf script handling', role: 'RESEARCH', st: 'done', age: '3m', prs: '', summary: 'Options paper for PDF/Word script import (#1273) written' } ] } ] },
+  { id: 'dw', name: 'dreamteam-web', path: '~/Code/dreamteam-web', folders: [
+    { name: 'Docs site refresh', age: '4m', sessions: [
+      { id: 'e1', name: 'migrate docs to vitepress', role: 'CODE', st: 'input', age: '4m', prs: '1 PR', summary: 'Needs a decision on redirect strategy' },
+      { id: 'e2', name: 'review docs nav', role: 'REVIEW', st: 'done', age: '2h', prs: '', summary: 'Nav review posted' } ] } ] },
+  { id: 'de', name: 'digiscript-electron', path: '~/Code/digiscript-electron', folders: [
+    { name: 'Unfiled', unfiled: true, age: '22m', sessions: [
+      { id: 'f1', name: 'notarise mac build', role: 'CODE', st: 'working', age: '22m', prs: '', summary: 'Running notarytool against signed build' } ] } ] },
+];
+const folderIcon = f => f.unfiled ? 'mdi-tray' : 'mdi-folder-outline';
+function lines(s) {
+  const u = '#fff', m = '#adb5bd', t = '#00bc8c';
+  if (s.role === 'REVIEW') return [
+    { mark: '>', markColor: t, color: u, text: 'Review PR ' + (s.name.match(/\d+/) || [''])[0] + ' inline, round 2' },
+    { mark: '⏺', markColor: m, color: m, text: 'gh pr diff · 14 files changed, +412 −96' },
+    { mark: '⏺', markColor: m, color: m, text: 'Read server/digi_server/models/storage.py' },
+    { mark: '*', markColor: t, color: u, text: s.summary },
+    { mark: '', markColor: m, color: m, text: '3 inline comments · 1 blocking (migration not reversible)' } ];
+  return [
+    { mark: '>', markColor: t, color: u, text: 'Pick up ' + s.name },
+    { mark: '⏺', markColor: m, color: m, text: 'Task(storage fix) · running · 38 tool uses' },
+    { mark: '⏺', markColor: m, color: m, text: 'Task(Jump to Page regression) · running · 12 tool uses' },
+    { mark: '⏺', markColor: m, color: m, text: 'Edit client-v3/src/views/show/ScriptViewer.vue  +18 −4' },
+    { mark: '*', markColor: t, color: u, text: s.summary },
+    { mark: '', markColor: '#6c757d', color: '#6c757d', text: '✻ Thinking… (15h · esc to interrupt)' } ];
+}
+class Component extends DCLogic {
+  state = { sel: 'a1' };
+  renderVals() {
+    const sel = this.state.sel;
+    const pick = id => () => this.setState({ sel: id });
+    let cur, curF, curP;
+    const projects = DATA.map(p => ({ name: p.name, path: p.path, folders: p.folders.map(f => ({
+      name: f.name, count: String(f.sessions.length), icon: folderIcon(f), iconColor: f.unfiled ? '#6c757d' : '#3498db', fontStyle: f.unfiled ? 'italic' : 'normal',
+      sessions: f.sessions.map(s => { if (s.id === sel) { cur = s; curF = f; curP = p; }
+        return { name: s.name, age: s.age, color: ST[s.st].c, bg: s.id === sel ? 'rgba(52,152,219,.35)' : 'transparent', nameColor: s.st === 'done' && s.id !== sel ? '#adb5bd' : '#fff', onSelect: pick(s.id) }; }) })) }));
+    const selObj = { name: cur.name, folder: curF.name, project: curP.name, statusLabel: ST[cur.st].label, pill: ST[cur.st].pill, lines: lines(cur),
+      tabs: curF.sessions.map(s => ({ name: s.name, role: s.role, color: ST[s.st].c, fg: s.id === sel ? '#fff' : '#adb5bd', underline: s.id === sel ? 'inset 0 -2px 0 #00bc8c' : 'none', onSelect: pick(s.id) })) };
+    const ds = DATA[0];
+    const dsFolders = ds.folders.map((f, i) => ({ name: f.name, age: f.age, icon: folderIcon(f), iconColor: f.unfiled ? '#6c757d' : '#3498db', bg: i === 0 ? 'rgba(52,152,219,.3)' : 'transparent',
+      sessions: f.sessions.map(s => ({ name: s.name, color: ST[s.st].c })) }));
+    const splitPanes = ds.folders[0].sessions.map(s => ({ name: s.name, role: s.role, statusLabel: ST[s.st].label, pill: ST[s.st].pill, lines: lines(s) }));
+    const projectNav = DATA.map((p, i) => {
+      const w = p.folders.flatMap(f => f.sessions).filter(s => s.st !== 'done');
+      const inp = w.some(s => s.st === 'input');
+      return { name: p.name, bg: i === 0 ? 'rgba(52,152,219,.35)' : 'transparent', badge: w.length ? String(w.length) : '', badgeBg: w.length ? (inp ? '#f39c12' : '#007a5e') : 'transparent',
+        folders: i === 0 ? p.folders.map(f => ({ name: f.name, icon: folderIcon(f), count: String(f.sessions.length) })) : [] };
+    });
+    const boardCols = ds.folders.map((f, i) => ({ name: f.name, icon: folderIcon(f), iconColor: f.unfiled ? '#6c757d' : '#3498db', ring: i === 1 ? '0 0 0 1px #3498db' : 'none',
+      sessions: f.sessions.map(s => ({ name: s.name, role: s.role, age: s.age, summary: s.summary, prs: s.prs, color: ST[s.st].c, statusLabel: ST[s.st].label, opacity: s.st === 'done' ? '0.85' : '1' })) }));
+    return { projects, sel: selObj, dsFolders, splitPanes, projectNav, boardCols };
+  }
+}
+</script>
+</body>
+</html>
