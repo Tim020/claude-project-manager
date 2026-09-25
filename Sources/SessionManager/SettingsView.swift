@@ -20,6 +20,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("New sessions") {
+                Toggle("Run as background agents (claude --bg)", isOn: binding(\.useBackgroundAgents))
+                Text("Agents keep running when you close their tab or quit, and can use their own git worktree. They also appear in `claude agents`.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Picker("Model", selection: binding(\.defaultModel)) {
                     ForEach(ModelChoices.all, id: \.label) { choice in
                         Text(choice.label).tag(choice.id)

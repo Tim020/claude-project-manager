@@ -78,6 +78,11 @@ struct ContentView: View {
             // Status updates from the Claude Code hooks of running sessions.
             model.pollHookEvents()
         }
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            // Background agents: liveness, state and titles from `claude agents --json`.
+            Task { await model.refreshAgents() }
+        }
+        .task { await model.refreshAgents() }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
     }

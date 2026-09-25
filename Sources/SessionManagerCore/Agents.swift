@@ -1,0 +1,273 @@
+import Foundation
+
+/// One entry of `claude agents --json --all` with `kind: "background"`.
+public struct BackgroundAgent: Equatable, Sendable {
+    /// Short id used by `claude attach/stop/rm` (the session id's first 8 chars).
+    public var id: String
+    public var sessionID: String
+    /// The agent's working directory: the repo, or its `.claude/worktrees/<name>`.
+    public var cwd: String
+    /// Claude Code's title for the session (may change as it works).
+    public var name: String?
+    /// Present while the agent's process is alive.
+    public var pid: Int?
+    /// Process status: busy / idle / waiting.
+    public var status: String?
+    /// Task state: working / blocked / done / ….
+    public var state: String?
+    public var waitingFor: String?
+    public var startedAt: Date?
+
+    public init(id: String, sessionID: String, cwd: String, name: String?, pid: Int?, status: String?, state: String?,
+                waitingFor: String?, startedAt: Date?) {
+        self.id = id
+        self.sessionID = sessionID
+        self.cwd = cwd
+        self.name = name
+        self.pid = pid
+        self.status = status
+        self.state = state
+        self.waitingFor = waitingFor
+        self.startedAt = startedAt
+    }
+
+    public var isAlive: Bool { pid != nil }
+
+    public var sessionStatus: SessionStatus {
+        if state == "blocked" || status == "waiting" { return .awaitingInput }
+        if state == "working" { return .working }
+        if state == nil && status == "busy" { return .working }
+        return .completed
+    }
+}
+
+public enum AgentListParser {
+    public struct InvalidOutput: Error, LocalizedError {
+        public var errorDescription: String? { "Unexpected output from `claude agents --json`." }
+    }
+
+    public static func parse(_ data: Data) throws -> [BackgroundAgent] {
+        guard let value = try? JSONDecoder().decode(JSONValue.self, from: data), let items = value.arrayValue else {
+            throw InvalidOutput()
+        }
+        return items.compactMap { item in
+            guard item["kind"]?.stringValue == "background",
+                  let id = item["id"]?.stringValue,
+                  let sessionID = item["sessionId"]?.stringValue
+            else { return nil }
+            return BackgroundAgent(
+                id: id,
+                sessionID: sessionID,
+                cwd: item["cwd"]?.stringValue ?? "",
+                name: item["name"]?.stringValue,
+                pid: item["pid"]?.doubleValue.map { Int($0) },
+                status: item["status"]?.stringValue,
+                state: item["state"]?.stringValue,
+                waitingFor: item["waitingFor"]?.stringValue,
+                startedAt: item["startedAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 / 1000) })
+        }
+    }
+
+    private static let ansi = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;]*[A-Za-z]")
+    private static let backgrounded = try! NSRegularExpression(pattern: #"backgrounded\s*·\s*([0-9a-f]{6,})"#)
+
+    /// The agent id from `claude --bg` output ("backgrounded · 38530432").
+    public static func dispatchedID(from output: String) -> String? {
+        let plain = ansi.stringByReplacingMatches(in: output, range: NSRange(output.startIndex..., in: output), withTemplate: "")
+        guard let match = backgrounded.firstMatch(in: plain, range: NSRange(plain.startIndex..., in: plain)),
+              let range = Range(match.range(at: 1), in: plain)
+        else { return nil }
+        return String(plain[range])
+    }
+}
+
+/// Claude Code worktrees live at `<repo>/.claude/worktrees/<name>`.
+public enum Worktree {
+    static let marker = "/.claude/worktrees/"
+    static let maxNameLength = 40
+
+    public static func name(for sessionName: String) -> String {
+        var slug = ""
+        var pendingDash = false
+        for character in sessionName.lowercased() {
+            if character.isASCII && (character.isLetter || character.isNumber) {
+                if pendingDash && !slug.isEmpty { slug.append("-") }
+                slug.append(character)
+                pendingDash = false
+            } else {
+                pendingDash = true
+            }
+        }
+        if slug.count > maxNameLength {
+            slug = String(slug.prefix(maxNameLength))
+            while slug.hasSuffix("-") { slug.removeLast() }
+        }
+        return slug.isEmpty ? "session" : slug
+    }
+
+    public static func uniqueName(for base: String, existing: Set<String>) -> String {
+        guard existing.contains(base) else { return base }
+        var n = 2
+        while existing.contains("\(base)-\(n)") { n += 1 }
+        return "\(base)-\(n)"
+    }
+
+    /// The repository a worktree path belongs to, or nil for a normal directory.
+    public static func repositoryRoot(of path: String) -> String? {
+        guard let range = path.range(of: marker) else { return nil }
+        return String(path[..<range.lowerBound])
+    }
+
+    public static func name(ofPath path: String) -> String? {
+        guard let range = path.range(of: marker) else { return nil }
+        return path[range.upperBound...].split(separator: "/").first.map(String.init)
+    }
+
+    /// Existing worktree names for a repository.
+    public static func existingNames(in repository: String) -> Set<String> {
+        let directory = (repository as NSString).appendingPathComponent(".claude/worktrees")
+        return Set((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
+    }
+
+    public static func isGitRepository(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent(".git"))
+    }
+}
+
+/// Builds the `claude` background-agent commands, run through the login shell.
+public struct AgentCommands: Sendable {
+    public var claudeExecutable: String
+    public var shell: String
+    public var hookEventsPath: String
+    public var baseEnvironment: [String: String]
+    public var loginShell: Bool
+
+    public init(claudeExecutable: String, shell: String, hookEventsPath: String,
+                baseEnvironment: [String: String] = ProcessInfo.processInfo.environment, loginShell: Bool = true) {
+        self.claudeExecutable = claudeExecutable
+        self.shell = shell
+        self.hookEventsPath = hookEventsPath
+        self.baseEnvironment = baseEnvironment
+        self.loginShell = loginShell
+    }
+
+    /// `claude "<prompt>" --bg [--worktree name] …`: prints "backgrounded · <id>".
+    public func dispatch(session: Session, prompt: String, worktree: String?) -> TerminalLaunch {
+        var args = [prompt, "--bg"]
+        if let worktree { args += ["--worktree", worktree] }
+        args += sessionOptions(session)
+        return command(args, in: session.workingDirectory)
+    }
+
+    /// Continues a stopped session in the background under the same id.
+    public func resume(session: Session) -> TerminalLaunch {
+        let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
+        return command(["--bg", "--resume", claudeID] + sessionOptions(session), in: session.workingDirectory)
+    }
+
+    /// Opens a background agent in a terminal; closing the terminal detaches.
+    public func attach(agentID: String, workingDirectory: String) -> TerminalLaunch {
+        command(["attach", agentID], in: workingDirectory)
+    }
+
+    public func stop(agentID: String) -> TerminalLaunch {
+        command(["stop", agentID], in: home)
+    }
+
+    /// Deletes the agent, and its worktree when that is safe.
+    public func remove(agentID: String) -> TerminalLaunch {
+        command(["rm", agentID], in: home)
+    }
+
+    public func list() -> TerminalLaunch {
+        command(["agents", "--json", "--all"], in: home)
+    }
+
+    private var home: String { baseEnvironment["HOME"] ?? NSHomeDirectory() }
+
+    private func sessionOptions(_ session: Session) -> [String] {
+        var args: [String] = []
+        if let model = session.model, !model.isEmpty { args += ["--model", model] }
+        if session.permissionMode != .standard { args += ["--permission-mode", session.permissionMode.rawValue] }
+        args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath)]
+        return args
+    }
+
+    private func command(_ claudeArguments: [String], in directory: String) -> TerminalLaunch {
+        TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: directory,
+                             shell: shell, loginShell: loginShell, baseEnvironment: baseEnvironment,
+                             extraEnvironment: [:])
+    }
+}
+
+public struct CommandResult: Equatable, Sendable {
+    public var exitCode: Int32
+    public var output: String
+    public var errorOutput: String
+
+    public init(exitCode: Int32, output: String, errorOutput: String) {
+        self.exitCode = exitCode
+        self.output = output
+        self.errorOutput = errorOutput
+    }
+
+    /// Best short explanation of a failure.
+    public var failureMessage: String {
+        let text = [errorOutput, output].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
+        return text.map { String($0.prefix(400)) } ?? "exit code \(exitCode)"
+    }
+}
+
+/// Runs short-lived commands (`claude --bg`, `agents --json`, `stop`, `rm`).
+public protocol CommandRunning: Sendable {
+    func run(_ command: TerminalLaunch) async -> CommandResult
+}
+
+public struct ProcessCommandRunner: CommandRunning {
+    public var timeout: TimeInterval
+
+    public init(timeout: TimeInterval = 60) {
+        self.timeout = timeout
+    }
+
+    public func run(_ command: TerminalLaunch) async -> CommandResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: runSync(command))
+            }
+        }
+    }
+
+    private func runSync(_ command: TerminalLaunch) -> CommandResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.arguments = command.arguments
+        process.environment = command.environment
+        let stdout = Pipe(), stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return CommandResult(exitCode: -1, output: "", errorOutput: error.localizedDescription)
+        }
+        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+
+        var errorData = Data()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+        group.wait()
+        process.waitUntilExit()
+        timer.cancel()
+        return CommandResult(exitCode: process.terminationStatus,
+                             output: String(decoding: outputData, as: UTF8.self),
+                             errorOutput: String(decoding: errorData, as: UTF8.self))
+    }
+}

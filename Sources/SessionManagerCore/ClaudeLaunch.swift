@@ -36,8 +36,22 @@ public struct TerminalLaunch: Equatable, Sendable {
         if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
         if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
         claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath)]
+        return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: session.workingDirectory,
+                     shell: shell, loginShell: true, baseEnvironment: baseEnvironment,
+                     extraEnvironment: ["SESSION_MANAGER_SESSION_ID": session.id.uuidString])
+    }
 
-        let command = "cd \(ShellQuote.quote(session.workingDirectory)) && exec "
+    /// `<shell> -l -c "cd <dir> && exec claude <args>"` with a terminal-friendly environment.
+    public static func shell(
+        claudeExecutable: String,
+        claudeArguments: [String],
+        workingDirectory: String,
+        shell: String,
+        loginShell: Bool,
+        baseEnvironment: [String: String],
+        extraEnvironment: [String: String]
+    ) -> TerminalLaunch {
+        let command = "cd \(ShellQuote.quote(workingDirectory)) && exec "
             + ([claudeExecutable] + claudeArguments).map(ShellQuote.quote).joined(separator: " ")
 
         var environment = ClaudeExecutableLocator.childEnvironment(base: baseEnvironment, executable: claudeExecutable)
@@ -45,10 +59,10 @@ public struct TerminalLaunch: Equatable, Sendable {
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "SessionManager"
         if environment["LANG"]?.isEmpty ?? true { environment["LANG"] = "en_US.UTF-8" }
-        environment["SESSION_MANAGER_SESSION_ID"] = session.id.uuidString
+        environment.merge(extraEnvironment) { $1 }
 
-        return TerminalLaunch(executable: shell, arguments: ["-l", "-c", command], environment: environment,
-                              workingDirectory: session.workingDirectory, claudeArguments: claudeArguments)
+        return TerminalLaunch(executable: shell, arguments: (loginShell ? ["-l", "-c"] : ["-c"]) + [command],
+                              environment: environment, workingDirectory: workingDirectory, claudeArguments: claudeArguments)
     }
 }
 

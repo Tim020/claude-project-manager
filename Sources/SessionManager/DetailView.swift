@@ -73,6 +73,7 @@ private struct DetailHeader: View {
     let breadcrumb: Breadcrumb
     @State private var renaming = false
     @State private var newName = ""
+    @State private var confirmDelete = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -89,6 +90,9 @@ private struct DetailHeader: View {
                 .font(DS.font(14, .bold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
+            if let worktree = Worktree.name(ofPath: session.workingDirectory) {
+                WorktreeChip(name: worktree)
+            }
             Spacer(minLength: 10)
             StatusPill(status: session.status)
             if model.canSplit {
@@ -96,7 +100,7 @@ private struct DetailHeader: View {
             }
             pullRequestButton
             Menu {
-                SessionMenu(session: session, renaming: $renaming, newName: $newName)
+                SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 16))
@@ -116,6 +120,7 @@ private struct DetailHeader: View {
             Button("Rename") { model.renameSession(session.id, to: newName) }
             Button("Cancel", role: .cancel) {}
         }
+        .deleteSessionConfirmation(session: session, isPresented: $confirmDelete)
     }
 
     private var chevron: some View {
@@ -148,6 +153,25 @@ private struct DetailHeader: View {
             .fixedSize()
             .help(PullRequestDetector.countLabel(session.pullRequestURLs.count))
         }
+    }
+}
+
+/// Small badge naming the session's git worktree.
+struct WorktreeChip: View {
+    let name: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch").font(.system(size: 10))
+            Text(name).lineLimit(1)
+        }
+        .font(DS.font(11.5, .semibold))
+        .foregroundStyle(DS.muted)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .background(Capsule().fill(DS.border))
+        .help("Runs in the git worktree .claude/worktrees/\(name)")
+        .fixedSize()
     }
 }
 
@@ -384,17 +408,29 @@ struct SessionPane: View {
                 if !running {
                     ResumeBar(session: session, message: exitMessage(exitCode), compact: style.isCompact)
                 }
+            } else if model.isAgentAlive(session.id) && exitCode == nil {
+                // A live background agent: attach to it as soon as it's shown.
+                Text("Attaching to agent…")
+                    .font(DS.font(13))
+                    .foregroundStyle(DS.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onAppear { model.resume(session.id) }
             } else {
                 TranscriptView(session: session, lines: model.history(for: session.id), compact: style.isCompact)
-                ResumeBar(session: session, message: session.hasConversation ? "This session isn't running." : "This session hasn't started yet.",
-                          compact: style.isCompact)
+                ResumeBar(session: session, message: idleMessage, compact: style.isCompact)
             }
         }
     }
 
     private func exitMessage(_ code: Int32?) -> String {
+        if model.isAgentAlive(session.id) { return "Detached — the agent is still running." }
         guard let code, code != 0 else { return "Session ended." }
         return "Session ended (exit code \(code))."
+    }
+
+    private var idleMessage: String {
+        if model.isAgentAlive(session.id) { return "The agent is running in the background." }
+        return session.hasConversation ? "This session isn't running." : "This session hasn't started yet."
     }
 }
 
@@ -420,9 +456,9 @@ private struct ResumeBar: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            Button(session.hasConversation ? "Resume" : "Start") {
+            Button(model.isAgentAlive(session.id) ? "Attach" : session.hasConversation ? "Resume" : "Start") {
                 model.select(session.id)
-                model.start(session.id)
+                model.resume(session.id)
             }
             .buttonStyle(PrimaryButtonStyle())
             .fixedSize()

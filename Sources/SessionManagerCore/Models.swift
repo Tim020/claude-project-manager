@@ -65,10 +65,15 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var projectID: UUID
     /// The Claude Code session UUID (the `.jsonl` file name under `~/.claude/projects`).
     public var claudeSessionID: String?
+    /// Short id of the Claude Code background agent running this session
+    /// (`claude attach/stop/rm <id>`), when it was started with `--bg`.
+    public var agentID: String?
     /// Whether Claude Code has a transcript for this session, i.e. it must be
     /// launched with `--resume` rather than `--session-id`.
     public var hasConversation: Bool
     public var name: String
+    /// The user chose this name, so Claude Code's own title doesn't replace it.
+    public var hasCustomName: Bool
     public var role: SessionRole
     public var status: SessionStatus
     /// One-line description of where the session is at (card / tooltip text).
@@ -84,7 +89,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var isArchived: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, projectID, claudeSessionID, hasConversation, name, role, status, summary, needsAction
+        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, role, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequestURLs, createdAt, lastActivity, isArchived
     }
 
@@ -115,6 +120,8 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         self.status = status
         self.summary = summary
         self.needsAction = nil
+        self.agentID = nil
+        self.hasCustomName = false
         self.model = model
         self.permissionMode = permissionMode
         self.pullRequestURLs = pullRequestURLs

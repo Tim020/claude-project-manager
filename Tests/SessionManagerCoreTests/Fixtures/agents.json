@@ -1,0 +1,63 @@
+[
+  {
+    "id": "83526b6d",
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "background",
+    "startedAt": 1790008712258,
+    "sessionId": "83526b6d-2eed-464a-b7ae-5f52c45500d0",
+    "name": "pdf script handling",
+    "state": "done"
+  },
+  {
+    "pid": 10771,
+    "id": "fb72709a",
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "background",
+    "startedAt": 1790275729280,
+    "sessionId": "fb72709a-291a-41a1-ab00-ed7fe2d9115b",
+    "name": "websocket close state",
+    "status": "busy",
+    "state": "working"
+  },
+  {
+    "pid": 60323,
+    "id": "922b2630",
+    "cwd": "/Users/tim/Documents/Code/DigiScript/.claude/worktrees/collab-v3-phase1",
+    "kind": "background",
+    "startedAt": 1790325412400,
+    "sessionId": "922b2630-bcc9-4e24-961b-f8ab26f91379",
+    "name": "collaborative script editing",
+    "status": "idle",
+    "state": "done"
+  },
+  {
+    "pid": 777,
+    "id": "0badc0de",
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "background",
+    "startedAt": 1790340000000,
+    "sessionId": "0badc0de-0000-0000-0000-000000000000",
+    "name": "needs approval",
+    "status": "waiting",
+    "waitingFor": "permission",
+    "state": "blocked"
+  },
+  {
+    "id": "38530432",
+    "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+    "kind": "background",
+    "startedAt": 1790340389493,
+    "sessionId": "38530432-f5b9-4aa3-ab01-a33a568bd108",
+    "name": "reply with: hi",
+    "state": "working"
+  },
+  {
+    "pid": 100,
+    "cwd": "/Users/tim/Documents/Code/DigiScript",
+    "kind": "interactive",
+    "startedAt": 1790335878219,
+    "sessionId": "aa6d468e-ff80-5732-b6a0-bbfecbb27943",
+    "name": "repo-44",
+    "status": "busy"
+  }
+]

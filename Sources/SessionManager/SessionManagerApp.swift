@@ -91,7 +91,7 @@ struct SessionManagerApp: App {
                     .keyboardShortcut("2", modifiers: [.command, .option])
                 Divider()
                 Button("Resume Session") {
-                    if let id = model.selectedSessionID { model.start(id) }
+                    if let id = model.selectedSessionID { model.resume(id) }
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 .disabled(model.selectedSessionID.map { model.isRunning($0) } ?? true)
@@ -99,7 +99,7 @@ struct SessionManagerApp: App {
                     if let id = model.selectedSessionID { model.stop(id) }
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
-                .disabled(model.selectedSessionID.map { !model.isRunning($0) } ?? true)
+                .disabled(model.selectedSessionID.map { !model.isRunning($0) && !model.isAgentAlive($0) } ?? true)
             }
         }
 

@@ -27,6 +27,7 @@ struct NewSessionSheet: View {
     @State private var modelID: String?
     @State private var permissionMode: PermissionMode = .standard
     @State private var prompt = ""
+    @State private var useWorktree = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -82,6 +83,14 @@ struct NewSessionSheet: View {
                     }
                     .labelsHidden()
                 }
+                if backgroundMode {
+                    GridRow {
+                        label("Worktree")
+                        Toggle("Run in its own git worktree", isOn: $useWorktree)
+                            .disabled(!isGitProject)
+                            .help(isGitProject ? "Creates .claude/worktrees/<name> so sessions don't conflict" : "This project isn't a git repository")
+                    }
+                }
                 GridRow {
                     label("Permissions")
                     Picker("", selection: $permissionMode) {
@@ -99,7 +108,9 @@ struct NewSessionSheet: View {
                     .padding(6)
                     .frame(minHeight: 120)
                     .fieldChrome()
-                Text("Opens Claude Code in a terminal in the project directory. Optional: leave empty to start with a blank prompt.")
+                Text(backgroundMode
+                     ? "Starts a Claude Code background agent and attaches to it. Leave the prompt empty to open a plain terminal session instead."
+                     : "Opens Claude Code in a terminal in the project directory. Optional: leave empty to start with a blank prompt.")
                     .font(DS.font(11.5))
                     .foregroundStyle(DS.dim)
             }
@@ -119,6 +130,14 @@ struct NewSessionSheet: View {
         .background(DS.sidebar)
         .preferredColorScheme(.dark)
         .onAppear(perform: applyDefaults)
+    }
+
+    private var backgroundMode: Bool {
+        model.settings.useBackgroundAgents && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isGitProject: Bool {
+        projectID.flatMap { model.workspace.project($0) }.map { Worktree.isGitRepository($0.path) } ?? false
     }
 
     private var folders: [Folder] {
@@ -148,8 +167,10 @@ struct NewSessionSheet: View {
 
     private func create() {
         guard let projectID else { return }
-        model.createSession(NewSessionRequest(projectID: projectID, folderID: folderID, name: name, role: role,
-                                              prompt: prompt, model: modelID, permissionMode: permissionMode))
+        var request = NewSessionRequest(projectID: projectID, folderID: folderID, name: name, role: role,
+                                        prompt: prompt, model: modelID, permissionMode: permissionMode)
+        request.useWorktree = useWorktree
+        model.createSession(request)
         dismiss()
     }
 }

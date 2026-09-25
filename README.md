@@ -21,11 +21,13 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Drag sessions onto a folder to move them. Drop one on a project header to unfile it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** The other sessions in the selected session's folder show as tabs, or as side-by-side panes. Toggle between them in the header, or with ⌥⌘1 / ⌥⌘2.
-- **The full Claude Code experience.** Each session is the interactive `claude` running in an embedded terminal (SwiftTerm), so slash-command autocomplete, `@` file mentions, permission prompts, plan mode and pickers all work exactly as they do in your own terminal.
-  - Sessions start through your login shell in the project directory, so your `PATH` and node setup match your terminal.
-  - Terminals keep running while you switch tabs, folders or projects.
-  - A session that isn't running shows its read-only history with a **Resume** button, which starts `claude --resume`.
-- **Live status from Claude Code hooks.** The app passes `--settings` hooks to the sessions it launches:
+- **Claude Code background agents.** New sessions start as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
+  - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
+  - Closing a tab only detaches; the agent keeps running and its sidebar status keeps updating. Quitting the app leaves agents running, and they reattach when you reopen them.
+  - Agents you start elsewhere (`claude --bg`, the `claude agents` view) show up in their project automatically. Worktree sessions are grouped under their repository.
+  - Stop runs `claude stop`, and Delete runs `claude rm`, which also removes the worktree when that's safe. A stopped session resumes in the background with `claude --bg --resume`.
+  - Commands run through your login shell, so your `PATH` and node setup match your terminal. You can turn background agents off in Settings; tabs then run `claude` directly.
+- **Live status.** `claude agents --json --all` is polled every 3 seconds for liveness, state and titles. Claude Code hooks, passed with `--settings` to the sessions the app launches, give instant updates:
   - Prompts and tool use mark a session **Working**.
   - A permission request, or a reply that ends in a question, marks it **Awaiting Input**.
   - A finished turn marks it **Completed**, and Claude's last message becomes the summary.
@@ -61,6 +63,7 @@ The project is built test-first. All logic lives in the platform-independent `Se
 - hook event parsing and status reduction, using fixtures recorded from real `claude` runs
 - JSONL history parsing and transcript building
 - terminal launch commands, including shell quoting and hook commands run in a real shell
+- `claude agents --json` parsing (recorded output), background agent commands, worktree naming, and the agent lifecycle in `AppModel`
 - session discovery from `.jsonl` history
 - launch arguments and executable lookup
 - persistence

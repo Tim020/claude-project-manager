@@ -89,10 +89,18 @@ public struct SessionDiscovery: Sendable {
 
     /// All sessions with at least one real prompt, newest first.
     public func discover(projectPath: String) throws -> [DiscoveredSession] {
-        let directory = projectDirectory(for: projectPath)
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: directory.path) else { return [] }
-        let files = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])
+        // The project's own directory plus those of its Claude Code worktrees.
+        let root = claudeHome.appendingPathComponent("projects")
+        let base = SessionDiscovery.directoryName(forProjectPath: projectPath)
+        let worktreePrefix = SessionDiscovery.directoryName(forProjectPath: projectPath + Worktree.marker)
+        guard let directories = try? fileManager.contentsOfDirectory(atPath: root.path) else { return [] }
+        let files = directories
+            .filter { $0 == base || $0.hasPrefix(worktreePrefix) }
+            .flatMap { name -> [URL] in
+                let directory = root.appendingPathComponent(name)
+                return (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+            }
             .filter { $0.pathExtension == "jsonl" }
 
         return files.compactMap { file -> DiscoveredSession? in
@@ -124,8 +132,10 @@ public struct SessionDiscovery: Sendable {
                 .map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
                 .sorted { $0.1 > $1.1 }
             guard let newest = sessions.first?.1,
-                  let path = sessions.lazy.compactMap({ SessionDiscovery.recordedWorkingDirectory(in: $0.0) }).first
+                  let recorded = sessions.lazy.compactMap({ SessionDiscovery.recordedWorkingDirectory(in: $0.0) }).first
             else { continue }
+            // Worktree sessions belong to their repository's project.
+            let path = Worktree.repositoryRoot(of: recorded) ?? recorded
 
             if var existing = projects[path] {
                 existing.sessionCount += sessions.count

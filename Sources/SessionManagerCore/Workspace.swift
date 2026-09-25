@@ -68,6 +68,13 @@ public struct Workspace: Codable, Equatable, Sendable {
         return projects.first { $0.path == normalized }
     }
 
+    /// The project a session's working directory belongs to, counting Claude
+    /// Code worktrees (`<repo>/.claude/worktrees/<name>`) as their repository.
+    public func projectID(forWorkingDirectory directory: String) -> UUID? {
+        let normalized = Workspace.normalize(path: directory)
+        return (project(atPath: normalized) ?? Worktree.repositoryRoot(of: normalized).flatMap { project(atPath: $0) })?.id
+    }
+
     public func folder(_ id: UUID) -> Folder? {
         for project in projects {
             if let folder = project.folders.first(where: { $0.id == id }) { return folder }
@@ -247,7 +254,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     public mutating func renameSession(_ id: UUID, to name: String) throws {
         guard let newName = Workspace.trimmed(name) else { throw WorkspaceError.emptyName }
         guard session(id) != nil else { throw WorkspaceError.sessionNotFound }
-        updateSession(id) { $0.name = newName }
+        updateSession(id) { $0.name = newName; $0.hasCustomName = true }
     }
 
     public mutating func updateSession(_ id: UUID, _ body: (inout Session) -> Void) {

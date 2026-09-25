@@ -10,6 +10,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
+    /// Give a background agent its own git worktree (when the project is a git repo).
+    public var useWorktree = true
 
     public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
@@ -36,9 +38,12 @@ public protocol TerminalControlling: AnyObject {
 
 /// App state and every user action. The SwiftUI layer is a thin view over this.
 ///
-/// Each running session is an interactive `claude` in a terminal. The model
-/// hands out a `TerminalLaunch` for the UI to start, learns about progress
-/// from Claude Code hook events, and is told when the terminal exits.
+/// Sessions normally run as Claude Code background agents (`claude --bg`,
+/// optionally in their own worktree); a tab is a terminal running
+/// `claude attach <id>`, so closing it only detaches. With background agents
+/// off, a tab runs an interactive `claude` directly. The model hands out a
+/// `TerminalLaunch` for the UI to start, learns about progress from
+/// `claude agents --json` and hook events, and is told when a terminal exits.
 @MainActor
 @Observable
 public final class AppModel {
@@ -54,13 +59,22 @@ public final class AppModel {
     @ObservationIgnored private var histories: [UUID: [TranscriptLine]] = [:]
     /// Most recently selected first; decides which tabs get split panes.
     private var recentSessionIDs: [UUID] = []
+    /// Latest `claude agents` listing, by agent id.
+    private var agents: [String: BackgroundAgent] = [:]
+    /// Agent state last applied per agent, so polling doesn't clobber newer
+    /// hook updates with an unchanged state.
+    @ObservationIgnored private var appliedAgentStates: [String: String] = [:]
+    /// The most recent background CLI operation (awaited by tests).
+    @ObservationIgnored public private(set) var lastTask: Task<Void, Never>?
 
     @ObservationIgnored public weak var terminals: TerminalControlling?
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored private let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
     @ObservationIgnored private var hookTailer: HookEventTailer
+    @ObservationIgnored private let runner: CommandRunning
     @ObservationIgnored private let locateClaude: (String?) -> String?
+    @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored private let shell: String
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored public let home: String
@@ -69,7 +83,9 @@ public final class AppModel {
         store: StateStore,
         discovery: SessionDiscovery,
         hookEventsURL: URL,
+        runner: CommandRunning = ProcessCommandRunner(),
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
+        isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
         shell: String = ClaudeExecutableLocator.defaultShell(),
         now: @escaping () -> Date = Date.init,
         home: String = NSHomeDirectory()
@@ -78,7 +94,9 @@ public final class AppModel {
         self.discovery = discovery
         self.hookEventsURL = hookEventsURL
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
+        self.runner = runner
         self.locateClaude = locateClaude
+        self.isGitRepository = isGitRepository
         self.shell = shell
         self.now = now
         self.home = home
@@ -148,8 +166,16 @@ public final class AppModel {
 
     public var awaitingInputCount: Int { statusCounts.awaitingInput }
 
+    /// Whether the session has a live terminal in the app.
     public func isRunning(_ sessionID: UUID) -> Bool {
         running.contains(sessionID)
+    }
+
+    /// Whether the session's background agent process is alive (it may be
+    /// running without a terminal attached).
+    public func isAgentAlive(_ sessionID: UUID) -> Bool {
+        guard let agentID = state.workspace.session(sessionID)?.agentID else { return false }
+        return agents[agentID]?.isAlive ?? false
     }
 
     /// Exit code of the session's last terminal, if it has exited since it was started.
@@ -212,7 +238,7 @@ public final class AppModel {
 
     public func removeProject(_ id: UUID) {
         let ids = state.workspace.sessions.filter { $0.projectID == id }.map(\.id)
-        ids.forEach(stop)
+        ids.forEach(detach)
         if let selected = selectedSessionID, ids.contains(selected) { selectedSessionID = nil }
         state.workspace.removeProject(id)
         save()
@@ -294,6 +320,10 @@ public final class AppModel {
         guard let sessionID, state.workspace.session(sessionID) != nil else { return }
         recentSessionIDs.removeAll { $0 == sessionID }
         recentSessionIDs.insert(sessionID, at: 0)
+        if !running.contains(sessionID) && isAgentAlive(sessionID) {
+            // Reopening a live agent reattaches rather than showing the old terminal.
+            exitCodes[sessionID] = nil
+        }
         if !state.workspace.isOpen(sessionID) {
             state.workspace.openTab(sessionID)
             save()
@@ -311,7 +341,11 @@ public final class AppModel {
         }
         state.workspace.closeTab(sessionID)
         recentSessionIDs.removeAll { $0 == sessionID }
-        if shouldStop { stop(sessionID) }
+        if shouldStop {
+            stop(sessionID)
+        } else if state.workspace.session(sessionID)?.agentID != nil {
+            detach(sessionID)
+        }
         save()
     }
 
@@ -349,7 +383,10 @@ public final class AppModel {
             let remaining = siblings.filter { $0.id != id }
             selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
         }
-        stop(id)
+        detach(id)
+        if let agentID = state.workspace.session(id)?.agentID {
+            runAgentCommand { $0.remove(agentID: agentID) }
+        }
         recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         histories[id] = nil
@@ -364,19 +401,169 @@ public final class AppModel {
         let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
-        let session = Session(projectID: project.id,
-                              claudeSessionID: UUID().uuidString.lowercased(),
+        let background = state.settings.useBackgroundAgents && !prompt.isEmpty
+        var session = Session(projectID: project.id,
+                              claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
                               role: request.role,
                               workingDirectory: project.path,
                               model: request.model ?? state.settings.defaultModel,
                               permissionMode: request.permissionMode,
                               createdAt: now())
+        session.hasCustomName = Workspace.trimmed(request.name) != nil
+        if background { session.status = .working }
         guard attempt({ try state.workspace.addSession(session, toFolder: request.folderID) }) != nil else { return nil }
         select(session.id)
         save()
-        start(session.id, prompt: prompt)
+        if background {
+            let worktree = request.useWorktree && isGitRepository(project.path)
+                ? Worktree.uniqueName(for: Worktree.name(for: session.name), existing: Worktree.existingNames(in: project.path))
+                : nil
+            let id = session.id
+            enqueue { await self.dispatch(id, prompt: prompt, worktree: worktree) }
+        } else {
+            start(session.id, prompt: prompt)
+        }
         return session.id
+    }
+
+    // MARK: - Background agents
+
+    /// Opens a session: reattaches a live agent, resumes a stopped one in the
+    /// background, or (without an agent) starts `claude` directly.
+    public func resume(_ sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        if isAgentAlive(sessionID) {
+            attach(sessionID)
+        } else if state.settings.useBackgroundAgents && session.hasConversation && session.claudeSessionID != nil {
+            enqueue { await self.resumeInBackground(sessionID) }
+        } else {
+            start(sessionID)
+        }
+    }
+
+    /// Re-reads `claude agents --json --all`: links and updates known
+    /// sessions, and adds agents started elsewhere for projects in the sidebar.
+    public func refreshAgents() async {
+        guard let commands = agentCommands(reportErrors: false) else { return }
+        let result = await runner.run(commands.list())
+        guard result.exitCode == 0, let listed = try? AgentListParser.parse(Data(result.output.utf8)) else { return }
+        apply(listed)
+    }
+
+    func apply(_ listed: [BackgroundAgent]) {
+        var changed = false
+        for agent in listed {
+            let existing = state.workspace.sessions.first { $0.agentID == agent.id }
+                ?? state.workspace.session(claudeSessionID: agent.sessionID)
+            let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
+            if let existing {
+                let stateChanged = appliedAgentStates[agent.id] != stateKey
+                state.workspace.updateSession(existing.id) { session in
+                    let before = session
+                    session.agentID = agent.id
+                    session.claudeSessionID = agent.sessionID
+                    session.hasConversation = true
+                    if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
+                    if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
+                    if stateChanged {
+                        session.status = agent.sessionStatus
+                        session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
+                    }
+                    if session != before { changed = true }
+                }
+            } else if let projectID = state.workspace.projectID(forWorkingDirectory: agent.cwd) {
+                var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
+                                      name: agent.name ?? agent.id, workingDirectory: agent.cwd, status: agent.sessionStatus,
+                                      createdAt: agent.startedAt ?? now())
+                session.agentID = agent.id
+                try? state.workspace.addSession(session)
+                changed = true
+            }
+            appliedAgentStates[agent.id] = stateKey
+        }
+        let listedIDs = Set(listed.map(\.id))
+        for session in state.workspace.sessions {
+            if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
+                // Removed outside the app (`claude rm`).
+                state.workspace.updateSession(session.id) { $0.agentID = nil }
+                changed = true
+            }
+        }
+        agents = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        if changed { save() }
+    }
+
+    /// For tests: a status change as a hook would make.
+    func applyStatus(_ sessionID: UUID, _ status: SessionStatus) {
+        state.workspace.updateSession(sessionID) { $0.status = status }
+    }
+
+    private func dispatch(_ sessionID: UUID, prompt: String, worktree: String?) async {
+        guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else {
+            applyStatus(sessionID, .completed)
+            return
+        }
+        let result = await runner.run(commands.dispatch(session: session, prompt: prompt, worktree: worktree))
+        await linkDispatched(sessionID, result: result)
+    }
+
+    private func resumeInBackground(_ sessionID: UUID) async {
+        guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
+        let result = await runner.run(commands.resume(session: session))
+        await linkDispatched(sessionID, result: result)
+    }
+
+    private func linkDispatched(_ sessionID: UUID, result: CommandResult) async {
+        guard state.workspace.session(sessionID) != nil else { return }
+        guard result.exitCode == 0, let agentID = AgentListParser.dispatchedID(from: result.output + "\n" + result.errorOutput) else {
+            errorMessage = "Couldn't start the agent: \(result.failureMessage)"
+            applyStatus(sessionID, .completed)
+            save()
+            return
+        }
+        state.workspace.updateSession(sessionID) { session in
+            session.agentID = agentID
+            session.hasConversation = true
+        }
+        save()
+        attach(sessionID)
+        await refreshAgents()
+    }
+
+    private func attach(_ sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID), let agentID = session.agentID,
+              let commands = agentCommands(reportErrors: true) else { return }
+        pendingLaunches[sessionID] = commands.attach(agentID: agentID, workingDirectory: session.workingDirectory)
+        running.insert(sessionID)
+        exitCodes[sessionID] = nil
+    }
+
+    private func agentCommands(reportErrors: Bool) -> AgentCommands? {
+        guard let executable = locateClaude(state.settings.claudePath) else {
+            if reportErrors { errorMessage = "Claude Code CLI not found. Install it, or set its location in Settings." }
+            return nil
+        }
+        return AgentCommands(claudeExecutable: executable, shell: shell, hookEventsPath: hookEventsURL.path)
+    }
+
+    /// Runs CLI work in order, one operation after another.
+    private func enqueue(_ work: @escaping @MainActor () async -> Void) {
+        let previous = lastTask
+        lastTask = Task { @MainActor in
+            await previous?.value
+            await work()
+        }
+    }
+
+    private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch) {
+        guard let commands = agentCommands(reportErrors: true) else { return }
+        let runner = self.runner
+        enqueue {
+            let result = await runner.run(make(commands))
+            if result.exitCode != 0 { self.errorMessage = "Claude Code: \(result.failureMessage)" }
+            await self.refreshAgents()
+        }
     }
 
     /// Queues a terminal launch for the session (new or `--resume`). Returns
@@ -412,20 +599,37 @@ public final class AppModel {
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
         histories[sessionID] = nil
+        if state.workspace.session(sessionID)?.agentID != nil {
+            // Only the attach client ended; the agent's own state decides.
+            enqueue { await self.refreshAgents() }
+            return
+        }
         state.workspace.updateSession(sessionID) { session in
             if session.status == .working { session.status = .completed }
         }
         save()
     }
 
+    /// Stops the session: its background agent (`claude stop`) or its process.
     public func stop(_ sessionID: UUID) {
+        detach(sessionID)
+        if let agentID = state.workspace.session(sessionID)?.agentID {
+            runAgentCommand { $0.stop(agentID: agentID) }
+        }
+    }
+
+    /// Closes the session's terminal. For a background agent this only
+    /// detaches; the agent keeps running.
+    private func detach(_ sessionID: UUID) {
         let wasRunning = running.remove(sessionID) != nil
         pendingLaunches[sessionID] = nil
         if wasRunning { terminals?.terminate(sessionID) }
     }
 
+    /// App quit: detach from background agents (they keep running) and stop
+    /// directly-run sessions.
     public func shutdown() {
-        Array(running).forEach(stop)
+        Array(running).forEach(detach)
         save()
     }
 

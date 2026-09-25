@@ -330,6 +330,7 @@ private struct SessionRow: View {
     @State private var hovering = false
     @State private var renaming = false
     @State private var newName = ""
+    @State private var confirmDelete = false
 
     private var isSelected: Bool { model.selectedSessionID == session.id }
 
@@ -342,6 +343,12 @@ private struct SessionRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            if Worktree.name(ofPath: session.workingDirectory) != nil {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.dim)
+                    .help("Runs in its own git worktree")
+            }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
                 .font(DS.font(11))
                 .foregroundStyle(DS.muted)
@@ -362,12 +369,13 @@ private struct SessionRow: View {
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
         }
-        .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName) }
+        .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
         .alert("Rename Session", isPresented: $renaming) {
             TextField("Name", text: $newName)
             Button("Rename") { model.renameSession(session.id, to: newName) }
             Button("Cancel", role: .cancel) {}
         }
+        .deleteSessionConfirmation(session: session, isPresented: $confirmDelete)
     }
 }
 
@@ -377,6 +385,7 @@ struct SessionMenu: View {
     let session: Session
     @Binding var renaming: Bool
     @Binding var newName: String
+    @Binding var confirmDelete: Bool
 
     var body: some View {
         Button("Rename…") {
@@ -403,15 +412,41 @@ struct SessionMenu: View {
             }
         }
         Divider()
-        if model.isRunning(session.id) {
+        if model.isRunning(session.id) || model.isAgentAlive(session.id) {
             Button("Stop Session") { model.stop(session.id) }
         } else {
             Button(session.hasConversation ? "Resume Session" : "Start Session") {
                 model.select(session.id)
-                model.start(session.id)
+                model.resume(session.id)
             }
         }
-        Button("Delete Session", role: .destructive) { model.deleteSession(session.id) }
+        Button("Delete Session…", role: .destructive) { confirmDelete = true }
+    }
+}
+extension View {
+    /// Confirms deleting a session; for a background agent this also runs
+    /// `claude rm`, which removes its worktree when that's safe.
+    func deleteSessionConfirmation(session: Session, isPresented: Binding<Bool>) -> some View {
+        modifier(DeleteSessionConfirmation(session: session, isPresented: isPresented))
+    }
+}
+
+private struct DeleteSessionConfirmation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Delete “\(session.name)”?", isPresented: $isPresented, titleVisibility: .visible) {
+            Button("Delete Session", role: .destructive) { model.deleteSession(session.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if session.agentID != nil {
+                Text("The background agent is removed with `claude rm`, along with its worktree when that's safe.")
+            } else {
+                Text("The session is removed from Session Manager. Its Claude Code history stays on disk.")
+            }
+        }
     }
 }
 #endif

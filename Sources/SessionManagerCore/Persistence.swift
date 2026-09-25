@@ -14,12 +14,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultModel: String?
     public var defaultPermissionMode: PermissionMode
     public var layout: LayoutMode
+    /// Run new sessions as Claude Code background agents (`claude --bg`),
+    /// attached in a terminal, instead of plain interactive processes.
+    public var useBackgroundAgents: Bool
 
-    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .standard, layout: LayoutMode = .tabs) {
+    public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .standard,
+                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
         self.layout = layout
+        self.useBackgroundAgents = useBackgroundAgents
     }
 
     public init(from decoder: Decoder) throws {
@@ -28,7 +33,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             claudePath: try c.decodeIfPresent(String.self, forKey: .claudePath),
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
             defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .standard,
-            layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs)
+            layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs,
+            useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true)
     }
 }
 
@@ -130,5 +136,7 @@ extension Session {
             lastActivity: try c.decodeIfPresent(Date.self, forKey: .lastActivity) ?? createdAt,
             isArchived: try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false)
         self.needsAction = try c.decodeIfPresent(String.self, forKey: .needsAction)
+        self.agentID = try c.decodeIfPresent(String.self, forKey: .agentID)
+        self.hasCustomName = try c.decodeIfPresent(Bool.self, forKey: .hasCustomName) ?? false
     }
 }

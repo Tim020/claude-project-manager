@@ -39,6 +39,10 @@ final class AppModelTests: XCTestCase {
             home: "/Users/tim")
         terminals = FakeTerminals()
         model.terminals = terminals
+        // These tests cover direct terminal sessions; AgentModelTests cover `--bg`.
+        var settings = model.settings
+        settings.useBackgroundAgents = false
+        model.updateSettings(settings)
         return model
     }
 
