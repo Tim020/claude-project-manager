@@ -16,23 +16,37 @@ jobs:
     runs-on: ubuntu-latest
     container: swift:6.1-noble
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Test
-        run: swift test --parallel
+        shell: bash
+        run: |
+          set -o pipefail
+          swift test --parallel 2>&1 | tee test.log
+      - name: Annotate failures
+        if: failure()
+        shell: bash
+        run: ./scripts/annotate-failures.sh test.log
 
   macos:
     name: Build & test (macOS)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app || true
       - name: Toolchain
         run: swift --version
       - name: Test
-        run: swift test --parallel
+        run: |
+          set -o pipefail
+          swift test --parallel 2>&1 | tee test.log
       - name: Build app bundle
-        run: ./scripts/build-app.sh
+        run: |
+          set -o pipefail
+          ./scripts/build-app.sh 2>&1 | tee build.log
+      - name: Annotate failures
+        if: failure()
+        run: ./scripts/annotate-failures.sh test.log build.log
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
