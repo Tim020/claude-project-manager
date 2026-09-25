@@ -47,10 +47,10 @@ final class EnvironmentParsingTests: XCTestCase {
         XCTAssertFalse(env.canRunSessions)
         XCTAssertEqual(env.blockedReason, "Claude Code isn't installed")
 
-        env.install = .installed(path: "/c", version: ClaudeVersion(2, 0, 10))
+        env.install = .installed(path: "/c", version: ClaudeVersion(2, 0, 30))
         env.signIn = .signedOut
         env.agents = .unsupported(message: "unknown command")
-        XCTAssertEqual(env.problems, [.outdated(ClaudeVersion(2, 0, 10)), .signedOut, .agentsUnsupported])
+        XCTAssertEqual(env.problems, [.outdated(ClaudeVersion(2, 0, 30)), .signedOut, .agentsUnsupported])
         XCTAssertFalse(env.canRunSessions)
         XCTAssertFalse(env.backgroundAgentsAvailable)
         XCTAssertEqual(env.problems.map(\.fix), [.update, .signIn, .update])
@@ -94,7 +94,7 @@ final class EnvironmentCheckTests: XCTestCase {
         await model.checkEnvironment()
         await MainActor.run {
             XCTAssertFalse(model.log.entries.contains { ($0.detail ?? "").contains("tim@example.com") })
-            XCTAssertTrue(model.log.entries.contains { $0.title == "claude auth status" })
+            XCTAssertTrue(model.log.entries.contains { $0.title == "claude auth status --json" })
         }
     }
 
@@ -124,7 +124,18 @@ final class EnvironmentCheckTests: XCTestCase {
     }
 
     func testSignedOut() async throws {
-        runner.authOutput = #"{"loggedIn": false, "authMethod": "none"}"#
+        // Recorded from 2.1.283 with an empty config: JSON, and exit code 1.
+        runner.authOutput = """
+        {
+          "loggedIn": false,
+          "authMethod": "none",
+          "apiProvider": "firstParty",
+          "analyticsDisabled": false,
+          "projectsDirectory": "/root/.claude/projects",
+          "configDirectory": "/root/.claude"
+        }
+        """
+        runner.authExit = 1
         let model = try await MainActor.run { try makeModel() }
         await model.checkEnvironment()
         await MainActor.run {
@@ -135,19 +146,41 @@ final class EnvironmentCheckTests: XCTestCase {
     }
 
     func testOldCLIWithoutAgentsFallsBackToDirectSessions() async throws {
-        runner.versionOutput = "2.0.10 (Claude Code)"
-        runner.authOutput = "error: unknown command 'auth'"
+        // Recorded from 2.0.30: both commands reject --json.
+        runner.versionOutput = "2.0.30 (Claude Code)"
+        runner.authOutput = ""
+        runner.authExit = 1
         runner.agentsExit = 1
-        runner.agentsError = "error: unknown command 'agents'"
+        runner.agentsError = "error: unknown option '--json'\n"
         let model = try await MainActor.run { try makeModel() }
         await model.checkEnvironment()
         await MainActor.run {
             XCTAssertEqual(model.environment.signIn, .unknown)
-            XCTAssertEqual(model.environment.problems, [.outdated(ClaudeVersion(2, 0, 10)), .agentsUnsupported])
+            XCTAssertEqual(model.environment.problems, [.outdated(ClaudeVersion(2, 0, 30)), .agentsUnsupported])
             XCTAssertTrue(model.environment.canRunSessions)
             XCTAssertTrue(model.settings.useBackgroundAgents, "the setting itself is untouched")
             XCTAssertFalse(model.backgroundAgentsEnabled)
         }
+    }
+
+    func testAVersionWithBackgroundAgentsButNoAgentsListIsTreatedAsUnsupported() async throws {
+        // Recorded from 2.1.168: --bg and attach exist, but not `agents --all`.
+        runner.versionOutput = "2.1.168 (Claude Code)"
+        runner.agentsExit = 1
+        runner.agentsError = "error: unknown option '--all'\n"
+        let model = try await MainActor.run { try makeModel() }
+        await model.checkEnvironment()
+        await MainActor.run {
+            XCTAssertEqual(model.environment.problems, [.outdated(ClaudeVersion(2, 1, 168)), .agentsUnsupported])
+            XCTAssertFalse(model.backgroundAgentsEnabled)
+        }
+    }
+
+    func testTheMinimumVersionIsFine() async throws {
+        runner.versionOutput = "2.1.169 (Claude Code)"
+        let model = try await MainActor.run { try makeModel() }
+        await model.checkEnvironment()
+        await MainActor.run { XCTAssertEqual(model.environment.problems, []) }
     }
 
     func testChecksAreThrottledUnlessForced() async throws {

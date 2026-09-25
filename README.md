@@ -66,7 +66,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 - macOS 14 (Sonoma) or later
 - Xcode 16 / Swift 5.10+ toolchain
-- Claude Code CLI installed and logged in. The app looks for it on `PATH`, in `~/.claude/local`, `~/.local/bin` and Homebrew, or you can set the path in **Settings**.
+- Claude Code CLI 2.1.169 or later (the first version with `claude agents --json --all`), installed and logged in. Older versions still run sessions, directly in their tab. Claudio checks this at launch. The app looks for it on `PATH`, in `~/.claude/local`, `~/.local/bin` and Homebrew, or you can set the path in **Settings**.
 
 ## Build and run
 

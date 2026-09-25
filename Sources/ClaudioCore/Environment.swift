@@ -80,9 +80,10 @@ public struct ClaudeEnvironment: Equatable, Sendable {
         case unsupported(message: String)
     }
 
-    /// Versions Claudio has been built and tested against. Older ones may
-    /// lack background agents or the JSON output Claudio reads.
-    public static let minimumVersion = ClaudeVersion(2, 1, 282)
+    /// The first version with `claude agents --json --all`, which Claudio polls
+    /// for live status (2.1.168 has `--bg` and `attach` but rejects `--all`;
+    /// 2.0 and 1.x reject `--json`). Checked against each release on npm.
+    public static let minimumVersion = ClaudeVersion(2, 1, 169)
 
     public var install: Install = .unchecked
     public var signIn: SignIn = .unchecked

@@ -12,6 +12,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var versionExit: Int32 = 0
     var versionError = ""
     var authOutput = #"{"loggedIn": true, "authMethod": "claude.ai", "email": "tim@example.com", "subscriptionType": "pro"}"#
+    var authExit: Int32 = 0
     var agentsExit: Int32 = 0
     var agentsError = ""
 
@@ -24,7 +25,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: agentsExit, output: agentsExit == 0 ? agentsJSON : "", errorOutput: agentsError)
         }
         if args == ["--version"] { return CommandResult(exitCode: versionExit, output: versionOutput, errorOutput: versionError) }
-        if args == ["auth", "status"] { return CommandResult(exitCode: 0, output: authOutput, errorOutput: "") }
+        if args == ["auth", "status", "--json"] { return CommandResult(exitCode: authExit, output: authOutput, errorOutput: "") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") { return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.") }
         return CommandResult(exitCode: 0, output: "", errorOutput: "")

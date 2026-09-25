@@ -251,9 +251,11 @@ public struct AgentCommands: Sendable {
         command(["--version"], in: home, login: false)
     }
 
-    /// `claude auth status`: JSON with `loggedIn`, `authMethod`, `subscriptionType`…
+    /// `claude auth status --json`: `loggedIn`, `authMethod`, `subscriptionType`…
+    /// (JSON is the default; asked for explicitly in case that changes). Exits
+    /// 1 when signed out, still printing the JSON.
     public func authStatus() -> TerminalLaunch {
-        command(["auth", "status"], in: home, login: false)
+        command(["auth", "status", "--json"], in: home, login: false)
     }
 
     /// Interactive: updates the CLI, printing its progress.
