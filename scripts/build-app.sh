@@ -23,10 +23,10 @@ if [ -d "$BIN_DIR/SessionManager_SessionManager.bundle" ]; then
   cp -R "$BIN_DIR/SessionManager_SessionManager.bundle" "$APP/Contents/Resources/"
 fi
 
-# App icon: light (3b) and dark (3a) variants from Resources/Assets.xcassets.
-# actool compiles both into Assets.car (macOS 26+ switches with Dark Mode) and
-# emits AppIcon.icns; if it rejects the dark entries, fall back to an .icns of
-# the light icon built with iconutil.
+# App icon from Resources/Assets.xcassets (light design 3b). actool compiles it
+# into Assets.car + AppIcon.icns; iconutil is the fallback. A classic
+# .appiconset can't hold a dark variant — that needs an Icon Composer .icon
+# (sources in design/app-icon/).
 ICONSET_SRC="Resources/Assets.xcassets/AppIcon.appiconset"
 note() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::notice::$1"; else echo "$1"; fi; }
 if xcrun actool Resources/Assets.xcassets --compile "$APP/Contents/Resources" \
@@ -34,10 +34,9 @@ if xcrun actool Resources/Assets.xcassets --compile "$APP/Contents/Resources" \
      --output-partial-info-plist build/AppIcon-partial.plist \
      --output-format human-readable-text --errors --warnings >build/actool.log 2>&1 \
    && [ -f "$APP/Contents/Resources/Assets.car" ]; then
-  dark=$(xcrun assetutil --info "$APP/Contents/Resources/Assets.car" 2>/dev/null | grep -c '"Appearance" : "NSAppearanceNameDarkAqua"' || true)
-  note "App icon: compiled asset catalog (${dark} dark-appearance renditions)"
+  note "App icon: compiled asset catalog"
 else
-  note "App icon: actool unavailable or failed, using light-only iconutil fallback ($(tr '\n' ' ' < build/actool.log | cut -c1-300))"
+  note "App icon: actool unavailable or failed, using iconutil fallback ($(tr '\n' ' ' < build/actool.log | cut -c1-300))"
   ICONSET="build/AppIcon.iconset"
   rm -rf "$ICONSET" && mkdir -p "$ICONSET"
   for f in "$ICONSET_SRC"/icon_[0-9]*.png; do

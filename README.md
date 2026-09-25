@@ -34,7 +34,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Resuming an imported session uses `claude --resume`.
 - **PR links.** GitHub PR URLs that a session mentions are collected and can be opened from the header.
 - **Dock badge.** Shows how many sessions are awaiting input.
-- **App icon.** Light (3b) and dark (3a) variants from `Resources/Assets.xcassets`. macOS 26+ switches between them with the system appearance; earlier versions show the light icon. `scripts/build-app.sh` compiles the catalog with `actool` and falls back to a light-only `.icns` if that fails. The masters are in `design/app-icon/`.
+- **App icon.** The light design (3b) from `Resources/Assets.xcassets`, compiled by `scripts/build-app.sh`. A classic `.appiconset` can't carry a dark variant, so the dark design (3a) is kept in `design/app-icon/` (SVG masters plus PNGs in `dark/`), ready for an Icon Composer `.icon` file.
 
 ## Requirements
 
@@ -76,7 +76,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS
 ```
 Sources/SessionManagerCore/   models, workspace ops, hooks, history, launch commands, AppModel
 Sources/SessionManager/       SwiftUI app (macOS only): SwiftTerm terminals, theme, bundled Nunito Sans (OFL)
-Resources/Assets.xcassets/    app icon (light + dark)
+Resources/Assets.xcassets/    app icon
 Tests/SessionManagerCoreTests/ XCTest suite and fixtures
 design/                       Claude Design handoff (prototype HTML, chat transcript)
 ```
