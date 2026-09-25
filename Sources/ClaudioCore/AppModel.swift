@@ -258,6 +258,12 @@ public final class AppModel {
 
     /// Whether the session's background agent process is alive (it may be
     /// running without a terminal attached).
+    /// Sessions whose status comes from a live process (a terminal here or a
+    /// running background agent), which history files mustn't override.
+    private var liveSessionIDs: Set<UUID> {
+        running.union(state.workspace.sessions.filter { isAgentAlive($0.id) }.map(\.id))
+    }
+
     public func isAgentAlive(_ sessionID: UUID) -> Bool {
         guard let agentID = state.workspace.session(sessionID)?.agentID else { return false }
         return agents[agentID]?.isAlive ?? false
@@ -388,7 +394,7 @@ public final class AppModel {
         for (id, name, result) in results {
             switch result {
             case .success(let found):
-                workspace.importDiscovered(found, into: id, skipping: running)
+                workspace.importDiscovered(found, into: id, skipping: liveSessionIDs)
                 AppModel.recordEstimates(found, in: workspace, into: &estimates)
             case .failure(let error): log.append(.error, "Couldn't read Claude Code sessions for \(name)", detail: AppModel.describe(error))
             }
@@ -415,7 +421,7 @@ public final class AppModel {
         guard let project = state.workspace.project(projectID) else { return }
         do {
             let found = try discovery.discover(projectPath: project.path, cache: summaryCache)
-            state.workspace.importDiscovered(found, into: projectID, skipping: running)
+            state.workspace.importDiscovered(found, into: projectID, skipping: liveSessionIDs)
             AppModel.recordEstimates(found, in: state.workspace, into: &estimatedContexts)
         } catch {
             report("Couldn't read Claude Code sessions for \(project.name): \(AppModel.describe(error))")
@@ -1016,11 +1022,40 @@ public final class AppModel {
         let events = hookTailer.readNew()
         guard !events.isEmpty else { return }
         var changed = false
-        for event in events where state.workspace.session(event.appSessionID) != nil {
-            state.workspace.updateSession(event.appSessionID) { HookReducer.apply(event, to: &$0, now: now()) }
+        for event in events {
+            guard let target = hookTarget(for: event) else { continue }
+            state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
             changed = true
         }
         if changed { save() }
+    }
+
+    /// The session a hook event belongs to. Events carry the app id of the
+    /// session whose settings launched the process, but a copy of that
+    /// conversation (started by the CLI) inherits those settings, so the
+    /// event's own conversation id decides:
+    /// - a session with that conversation id;
+    /// - otherwise the launching session, if it has no conversation yet or
+    ///   `/clear` just started a new one;
+    /// - otherwise the background agent whose short id prefixes it (a copy);
+    /// - otherwise nobody, rather than repointing the launching session.
+    private func hookTarget(for event: HookEvent) -> UUID? {
+        let workspace = state.workspace
+        guard let claudeID = event.claudeSessionID, !claudeID.isEmpty else {
+            return workspace.session(event.appSessionID)?.id
+        }
+        if let session = workspace.session(claudeSessionID: claudeID) { return session.id }
+        if let owner = workspace.session(event.appSessionID),
+           owner.claudeSessionID == nil || (event.name == .sessionStart && event.source == "clear") {
+            return owner.id
+        }
+        let shortID = String(claudeID.prefix(8))
+        return workspace.sessions.first { $0.agentID == shortID }?.id
+    }
+
+    /// For tests: adds a session directly.
+    func applyTestSession(_ session: Session) {
+        try? state.workspace.addSession(session)
     }
 
     // MARK: - Notifications

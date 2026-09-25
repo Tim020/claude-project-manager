@@ -263,7 +263,8 @@ final class AppModelTests: XCTestCase {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
             let id = try XCTUnwrap(model.createSession(request(project: p)))
-            try appendHook(id, #"{"hook_event_name":"UserPromptSubmit","session_id":"x"}"#)
+            let claudeID = model.workspace.session(id)?.claudeSessionID ?? id.uuidString.lowercased()
+            try appendHook(id, #"{"hook_event_name":"UserPromptSubmit","session_id":"\#(claudeID)"}"#)
             model.pollHookEvents()
             XCTAssertEqual(model.workspace.session(id)?.status, .working)
 
