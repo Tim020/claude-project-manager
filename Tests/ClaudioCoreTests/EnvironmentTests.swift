@@ -73,7 +73,7 @@ final class EnvironmentCheckTests: XCTestCase {
         store.state = state
         return AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                         hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
-                        locateClaude: { [unowned self] _ in self.located }, shell: "/bin/zsh",
+                        locateClaude: { [unowned self] _ in self.located }, locateGitHubCLI: { nil }, shell: "/bin/zsh",
                         now: { [unowned self] in self.clock }, home: "/Users/tim")
     }
 
@@ -224,7 +224,7 @@ final class EnvironmentGatingTests: XCTestCase {
             store.state = state
             let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                                  hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
-                                 locateClaude: { _ in nil }, shell: "/bin/zsh", home: "/Users/tim")
+                                 locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/zsh", home: "/Users/tim")
             return (model, p, s.id)
         }
         await model.checkEnvironment()

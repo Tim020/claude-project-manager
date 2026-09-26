@@ -48,7 +48,7 @@ final class AgentModelTests: XCTestCase {
             discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
             hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("hooks.log"),
             runner: runner,
-            locateClaude: { _ in "/usr/local/bin/claude" },
+            locateClaude: { _ in "/usr/local/bin/claude" }, locateGitHubCLI: { nil },
             isGitRepository: { [unowned self] in self.gitRepos.contains($0) },
             shell: "/bin/zsh",
             now: { Date(timeIntervalSince1970: 1_790_340_000) },

@@ -18,7 +18,7 @@ final class AppModelChangesTests: XCTestCase {
         store.state = state
         let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: home),
                              hookEventsURL: home.appendingPathComponent("hooks.log"), runner: runner,
-                             locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+                             locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
         return (model, session.id)
     }
 
@@ -142,7 +142,7 @@ final class VisibleSessionTests: XCTestCase {
             store.state = state
             let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                                  hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
-                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+                                 locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
             XCTAssertEqual(model.visibleSessionIDs, [])
             model.select(a.id)
             model.select(b.id)

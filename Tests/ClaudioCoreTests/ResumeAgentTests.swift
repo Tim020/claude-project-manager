@@ -41,7 +41,7 @@ final class ResumeAgentTests: XCTestCase {
         store.state = state
         let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                              hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("hooks.log"), runner: runner,
-                             locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/zsh",
+                             locateClaude: { _ in "/usr/local/bin/claude" }, locateGitHubCLI: { nil }, shell: "/bin/zsh",
                              now: { Date(timeIntervalSince1970: 1_790_352_600) }, home: "/Users/tim")
         terminals = FakeTerminals()
         model.terminals = terminals
