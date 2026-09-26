@@ -124,7 +124,10 @@ public enum HookSettings {
         #"line=$(tr -d '\n'); printf '%s\t%s\n' '"# + appSessionID.uuidString + #"' "$line" >> "# + ShellQuote.quote(eventsPath)
     }
 
-    public static func json(appSessionID: UUID, eventsPath: String, statusLine: StatusLineCapture? = nil) -> String {
+    /// `isolation` sets a background agent's `worktree.bgIsolation`; nil
+    /// leaves the user's own setting.
+    public static func json(appSessionID: UUID, eventsPath: String, statusLine: StatusLineCapture? = nil,
+                            isolation: BackgroundIsolation? = nil) -> String {
         let hook: JSONValue = .object(["type": .string("command"), "command": .string(command(appSessionID: appSessionID, eventsPath: eventsPath))])
         var hooks: [String: JSONValue] = [:]
         for event in events {
@@ -134,6 +137,7 @@ public enum HookSettings {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         var settings: [String: JSONValue] = ["hooks": .object(hooks)]
         if let statusLine { settings["statusLine"] = statusLine.settingsValue(for: appSessionID) }
+        if let isolation { settings["worktree"] = .object(["bgIsolation": .string(isolation.rawValue)]) }
         let data = (try? encoder.encode(JSONValue.object(settings))) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }

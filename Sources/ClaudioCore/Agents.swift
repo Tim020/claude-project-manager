@@ -129,36 +129,22 @@ public enum AgentListParser {
     }
 }
 
+/// Where a background agent may edit: Claude Code's `worktree.bgIsolation`.
+///
+/// Claudio doesn't pass `--worktree`. An agent started inside a worktree it
+/// didn't enter itself asks before committing, so instead it's left to call
+/// EnterWorktree before its first edit, and then commits (and pushes) its work.
+public enum BackgroundIsolation: String, Sendable {
+    /// Edits in the main checkout are blocked until the agent enters a worktree.
+    case worktree
+    /// The agent edits the working copy directly. (Not `none`, which reads as
+    /// nil where an optional is expected.)
+    case inPlace = "none"
+}
+
 /// Claude Code worktrees live at `<repo>/.claude/worktrees/<name>`.
 public enum Worktree {
     static let marker = "/.claude/worktrees/"
-    static let maxNameLength = 40
-
-    public static func name(for sessionName: String) -> String {
-        var slug = ""
-        var pendingDash = false
-        for character in sessionName.lowercased() {
-            if character.isASCII && (character.isLetter || character.isNumber) {
-                if pendingDash && !slug.isEmpty { slug.append("-") }
-                slug.append(character)
-                pendingDash = false
-            } else {
-                pendingDash = true
-            }
-        }
-        if slug.count > maxNameLength {
-            slug = String(slug.prefix(maxNameLength))
-            while slug.hasSuffix("-") { slug.removeLast() }
-        }
-        return slug.isEmpty ? "session" : slug
-    }
-
-    public static func uniqueName(for base: String, existing: Set<String>) -> String {
-        guard existing.contains(base) else { return base }
-        var n = 2
-        while existing.contains("\(base)-\(n)") { n += 1 }
-        return "\(base)-\(n)"
-    }
 
     /// The repository a worktree path belongs to, or nil for a normal directory.
     public static func repositoryRoot(of path: String) -> String? {
@@ -169,12 +155,6 @@ public enum Worktree {
     public static func name(ofPath path: String) -> String? {
         guard let range = path.range(of: marker) else { return nil }
         return path[range.upperBound...].split(separator: "/").first.map(String.init)
-    }
-
-    /// Existing worktree names for a repository.
-    public static func existingNames(in repository: String) -> Set<String> {
-        let directory = (repository as NSString).appendingPathComponent(".claude/worktrees")
-        return Set((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [])
     }
 
     public static func isGitRepository(_ path: String) -> Bool {
@@ -202,12 +182,10 @@ public struct AgentCommands: Sendable {
         self.loginShell = loginShell
     }
 
-    /// `claude "<prompt>" --bg [--worktree name] …`: prints "backgrounded · <id>".
-    public func dispatch(session: Session, prompt: String, worktree: String?) -> TerminalLaunch {
-        var args = [prompt, "--bg"]
-        if let worktree { args += ["--worktree", worktree] }
-        args += sessionOptions(session)
-        return command(args, in: session.workingDirectory)
+    /// `claude "<prompt>" --bg …`: prints "backgrounded · <id>". The agent
+    /// keeps `isolation` (passed in `--settings`) when it's resumed.
+    public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?) -> TerminalLaunch {
+        command([prompt, "--bg"] + sessionOptions(session, isolation: isolation), in: session.workingDirectory)
     }
 
     /// Continues a stopped session in the background under the same id,
@@ -278,11 +256,12 @@ public struct AgentCommands: Sendable {
 
     private var home: String { baseEnvironment["HOME"] ?? NSHomeDirectory() }
 
-    private func sessionOptions(_ session: Session) -> [String] {
+    private func sessionOptions(_ session: Session, isolation: BackgroundIsolation? = nil) -> [String] {
         var args: [String] = []
         if let model = session.model, !model.isEmpty { args += ["--model", model] }
         if session.permissionMode != .standard { args += ["--permission-mode", session.permissionMode.rawValue] }
-        args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
+        args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine,
+                                                 isolation: isolation)]
         return args
     }
 

@@ -78,7 +78,9 @@ final class AgentModelTests: XCTestCase {
         await model.lastTask?.value
         try await MainActor.run {
             let dispatch = try XCTUnwrap(runner.commands.first { $0.contains("--bg") })
-            XCTAssertEqual(Array(dispatch.prefix(4)), ["Fix it", "--bg", "--worktree", "storage-fix"])
+            XCTAssertEqual(Array(dispatch.prefix(2)), ["Fix it", "--bg"])
+            XCTAssertFalse(dispatch.contains("--worktree"), "the agent enters its own worktree, so it can commit there")
+            XCTAssertEqual(isolation(in: dispatch), "worktree")
             XCTAssertEqual(model.workspace.session(id)?.agentID, "abcd1234")
             XCTAssertTrue(model.workspace.session(id)!.hasConversation)
             XCTAssertTrue(model.isRunning(id), "attached")
@@ -86,7 +88,7 @@ final class AgentModelTests: XCTestCase {
         }
     }
 
-    func testNoWorktreeOutsideGitRepositoriesOrWhenUnchecked() async throws {
+    func testNoIsolationSettingOutsideGitRepositories() async throws {
         gitRepos = []
         let model = try await MainActor.run { () -> AppModel in
             let model = try makeModel()
@@ -95,7 +97,25 @@ final class AgentModelTests: XCTestCase {
             return model
         }
         await model.lastTask?.value
-        XCTAssertFalse(runner.commands.first { $0.contains("--bg") }!.contains("--worktree"))
+        XCTAssertNil(isolation(in: try XCTUnwrap(runner.commands.first { $0.contains("--bg") })))
+    }
+
+    func testUncheckingWorktreeLetsTheAgentEditTheCheckout() async throws {
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            model.createSession(request(p, worktree: false))
+            return model
+        }
+        await model.lastTask?.value
+        XCTAssertEqual(isolation(in: try XCTUnwrap(runner.commands.first { $0.contains("--bg") })), "none")
+    }
+
+    /// `worktree.bgIsolation` in a command's `--settings` JSON.
+    private func isolation(in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: "--settings"), index + 1 < arguments.count,
+              let settings = try? JSONDecoder().decode(JSONValue.self, from: Data(arguments[index + 1].utf8)) else { return nil }
+        return settings["worktree"]?["bgIsolation"]?.stringValue
     }
 
     func testDispatchFailureReportsError() async throws {
@@ -227,6 +247,73 @@ final class AgentModelTests: XCTestCase {
             XCTAssertEqual(Array(runner.commands.last { $0.contains("--bg") }!.prefix(3)), ["--bg", "--resume", "83526b6d-2eed"])
             XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "83526b6d"])
         }
+    }
+
+    /// A conversation found in the history has no permission mode of its own:
+    /// run in the background, it gets the background default, not Ask.
+    func testBackgroundResumeOfAHistoryConversationUsesTheBackgroundDefault() async throws {
+        let (model, id) = try await resumeInBackground(mode: .standard, backgroundDefault: .plan)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "plan")
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.session(id)?.permissionMode, .plan, "saved, so the session shows what it runs with")
+            XCTAssertTrue(model.log.entries.contains { $0.title.contains("with Plan Only permissions") })
+        }
+    }
+
+    func testBackgroundResumeKeepsAChosenMode() async throws {
+        _ = try await resumeInBackground(mode: .acceptEdits, backgroundDefault: .plan)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "acceptEdits")
+    }
+
+    func testBackgroundResumeWithAnAskDefaultPassesNoMode() async throws {
+        _ = try await resumeInBackground(mode: .standard, backgroundDefault: .standard)
+        XCTAssertNil(try permissionMode(in: runner.commands.last { $0.contains("--resume") }))
+    }
+
+    /// Bypass Permissions has to be chosen for the session itself.
+    func testBackgroundResumeNeverFallsBackBeyondAuto() async throws {
+        _ = try await resumeInBackground(mode: .standard, backgroundDefault: .bypassPermissions)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "auto")
+    }
+
+    /// The New Session sheet and `createSession` agree: without agent support
+    /// a prompt still opens a terminal session.
+    func testRunsInBackgroundNeedsAgentSupport() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            XCTAssertFalse(model.runsInBackground(prompt: "  "))
+            XCTAssertEqual(model.runsInBackground(prompt: "Fix it"), model.backgroundAgentsEnabled)
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            XCTAssertFalse(model.runsInBackground(prompt: "Fix it"))
+        }
+    }
+
+    /// Resumes a history conversation (no agent yet) in the background.
+    private func resumeInBackground(mode: PermissionMode, backgroundDefault: PermissionMode) async throws -> (AppModel, UUID) {
+        runner.dispatchOutput = "backgrounded · 83526b6d\n"
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            var settings = model.settings
+            settings.defaultPermissionMode = .acceptEdits
+            settings.defaultBackgroundPermissionMode = backgroundDefault
+            model.updateSettings(settings)
+            let session = Session(projectID: p, claudeSessionID: "83526b6d-2eed", hasConversation: true, name: "found",
+                                  workingDirectory: repo, status: .awaitingInput, permissionMode: mode)
+            model.applyTestSession(session)
+            model.resume(session.id)
+            return (model, session.id)
+        }
+        await model.lastTask?.value
+        return (model, id)
+    }
+
+    /// The `--permission-mode` value in a command, if any.
+    private func permissionMode(in arguments: [String]?) throws -> String? {
+        let arguments = try XCTUnwrap(arguments)
+        return arguments.firstIndex(of: "--permission-mode").map { arguments[$0 + 1] }
     }
 
     func testStopAndDeleteUseTheCLI() async throws {

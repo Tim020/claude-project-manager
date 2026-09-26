@@ -99,7 +99,10 @@ private struct DetailHeader: View {
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
             RoleChip(session: session)
-            if let worktree = Worktree.name(ofPath: session.workingDirectory) {
+            // An agent that entered a worktree itself is still listed in the
+            // repository, so also go by where Files Changed found its edits.
+            if let worktree = Worktree.name(ofPath: session.workingDirectory)
+                ?? model.changesDirectory(for: session.id).flatMap(Worktree.name(ofPath:)) {
                 WorktreeChip(name: worktree)
             }
             Spacer(minLength: 10)

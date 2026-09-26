@@ -263,9 +263,13 @@ private struct ProjectSection: View {
         .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
         .contentShape(Rectangle())
         .onTapGesture { model.toggleCollapsed(project.id) }
+        .draggable(SidebarDragItem.project(project.id).payload) {
+            DragPreview(systemName: "shippingbox", title: project.name)
+        }
+        // A session dropped here becomes Unfiled, a folder goes last, and a
+        // project goes just above this one.
         .dropDestination(for: String.self) { items, _ in
-            // Dropping on the project header files the session as Unfiled.
-            moveSessions(items, to: .unfiled(projectID: project.id))
+            model.drop(items, on: .project(project.id))
         } isTargeted: { isDropTarget = $0 }
         .contextMenu {
             Button("New Session…") { presentNewSession(.unfiled(projectID: project.id)) }
@@ -280,11 +284,20 @@ private struct ProjectSection: View {
             Button("Remove Project", role: .destructive) { model.removeProject(project.id) }
         }
     }
+}
 
-    private func moveSessions(_ items: [String], to group: SessionGroup) -> Bool {
-        let ids = items.compactMap(UUID.init(uuidString:))
-        ids.forEach { model.moveSession($0, to: group) }
-        return !ids.isEmpty
+/// What follows the pointer while dragging a project or folder.
+private struct DragPreview: View {
+    let systemName: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemName).foregroundStyle(DS.blue)
+            Text(title).font(DS.font(13)).foregroundStyle(DS.text)
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
     }
 }
 
@@ -340,6 +353,11 @@ private struct FolderSection: View {
         VStack(alignment: .leading, spacing: 0) {
             if let folderID, model.renamingFolderID == folderID {
                 FolderRenameField(folderID: folderID, initialName: folder.name)
+            } else if let folderID {
+                // Unfiled stays put: it always comes after the folders.
+                row.draggable(SidebarDragItem.folder(folderID).payload) {
+                    DragPreview(systemName: "folder", title: folder.name)
+                }
             } else {
                 row
             }
@@ -378,10 +396,9 @@ private struct FolderSection: View {
             if let folderID { model.beginRenaming(folderID: folderID) }
         }
         .onTapGesture { model.toggleCollapsed(folder.group) }
+        // A session dropped here goes into the folder; a folder goes just above it.
         .dropDestination(for: String.self) { items, _ in
-            let ids = items.compactMap(UUID.init(uuidString:))
-            ids.forEach { model.moveSession($0, to: folder.group) }
-            return !ids.isEmpty
+            model.drop(items, on: .group(folder.group))
         } isTargeted: { isDropTarget = $0 }
         .contextMenu { FolderMenu(group: folder.group, projectID: projectID) }
     }
@@ -442,6 +459,9 @@ private struct FolderRenameField: View {
         .padding(.vertical, 5)
         .padding(.horizontal, 8)
         .fieldChrome(background: DS.window, border: DS.blue)
+        // Clicking a row or empty sidebar space doesn't take the focus, so
+        // watch for clicks outside the field too.
+        .background(ClickOutsideMonitor(action: commit))
         .padding(.leading, SidebarIndent.folder)
         .padding(.top, 4)
         .onAppear {
@@ -449,8 +469,42 @@ private struct FolderRenameField: View {
             focused = true
         }
         .onChange(of: focused) { _, isFocused in
-            if !isFocused && model.renamingFolderID == folderID {
-                model.commitRename(folderID: folderID, name: name)
+            if !isFocused { commit() }
+        }
+    }
+
+    private func commit() {
+        if model.renamingFolderID == folderID { model.commitRename(folderID: folderID, name: name) }
+    }
+}
+
+/// Calls `action` when the mouse goes down anywhere in the window outside
+/// this view's bounds. The view itself is transparent to clicks.
+private struct ClickOutsideMonitor: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.action = action
+    }
+
+    final class MonitorView: NSView {
+        var action: (() -> Void)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                if let self, event.window === self.window, !self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
+                    self.action?()
+                }
+                return event
             }
         }
     }
@@ -512,9 +566,7 @@ private struct SessionRow: View {
         }
         // Drop another session here to put it just above this one.
         .dropDestination(for: String.self) { items, _ in
-            let ids = items.compactMap(UUID.init(uuidString:)).filter { $0 != session.id }
-            ids.forEach { model.moveSession($0, before: session.id) }
-            return !ids.isEmpty
+            model.drop(items, on: .session(session.id))
         } isTargeted: { isDropTarget = $0 }
         .overlay(alignment: .top) {
             if isDropTarget {

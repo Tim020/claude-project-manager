@@ -33,8 +33,8 @@ final class CommandDisplayTests: XCTestCase {
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/h.log",
                                      baseEnvironment: ["HOME": "/Users/tim"])
         let session = Session(projectID: UUID(), name: "s", workingDirectory: "/code/app")
-        let display = commands.dispatch(session: session, prompt: "Fix it", worktree: "fix-it").displayCommand
-        XCTAssertEqual(display, "claude 'Fix it' --bg --worktree fix-it --settings <hooks>")
+        let display = commands.dispatch(session: session, prompt: "Fix it", isolation: .worktree).displayCommand
+        XCTAssertEqual(display, "claude 'Fix it' --bg --settings <hooks>")
         XCTAssertEqual(commands.list().displayCommand, "claude agents --json --all")
     }
 

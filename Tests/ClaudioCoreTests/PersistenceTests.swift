@@ -40,6 +40,19 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(state.settings.layout, .tabs)
     }
 
+    /// Settings saved before background agents had their own default keep the
+    /// terminal default the user chose, and agents get Auto.
+    func testBackgroundPermissionsDefaultToAutoApartFromTheTerminalDefault() throws {
+        let json = #"{"version":2,"workspace":{"projects":[],"sessions":[]},"settings":{"defaultPermissionMode":"acceptEdits"}}"#
+        let settings = try JSONFileStore.decoder.decode(PersistedState.self, from: Data(json.utf8)).settings
+        XCTAssertEqual(settings.defaultPermissionMode(background: false), .acceptEdits)
+        XCTAssertEqual(settings.defaultPermissionMode(background: true), .auto)
+        var changed = settings
+        changed.defaultBackgroundPermissionMode = .plan
+        let data = try JSONEncoder().encode(changed)
+        XCTAssertEqual(try JSONDecoder().decode(AppSettings.self, from: data).defaultBackgroundPermissionMode, .plan)
+    }
+
     func testSessionDecodesOlderFilesWithoutOptionalFields() throws {
         let json = #"{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","projectID":"6F9619FF-8B86-D011-B42D-00CF4FC964FE","name":"x","workingDirectory":"/","createdAt":"2026-09-25T10:00:00Z","lastActivity":"2026-09-25T10:00:00Z"}"#
         let session = try JSONFileStore.decoder.decode(Session.self, from: Data(json.utf8))
