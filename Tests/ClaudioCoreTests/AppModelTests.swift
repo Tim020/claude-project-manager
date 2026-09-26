@@ -331,6 +331,26 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    func testDeletedSessionIsNotImportedAgainFromItsHistory() async throws {
+        let (model, claudeID) = try await MainActor.run { () -> (AppModel, String) in
+            let model = try makeModel()
+            let p = model.addProject(path: projectPath)
+            let s = try XCTUnwrap(model.workspace.sessions(in: .unfiled(projectID: p)).first)
+            model.deleteSession(s.id)
+            return (model, try XCTUnwrap(s.claudeSessionID))
+        }
+        await model.refreshAll()
+        try await MainActor.run {
+            XCTAssertNil(model.workspace.session(claudeSessionID: claudeID))
+            // Still gone after a relaunch.
+            let data = try JSONEncoder().encode(store.state)
+            let restored = try JSONDecoder().decode(PersistedState.self, from: data)
+            XCTAssertTrue(restored.workspace.isDeleted(claudeSessionID: claudeID))
+            let relaunched = try makeModel()
+            XCTAssertNil(relaunched.workspace.session(claudeSessionID: claudeID))
+        }
+    }
+
     func testStopAndShutdownTerminate() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()

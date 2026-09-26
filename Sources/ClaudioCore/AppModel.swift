@@ -804,7 +804,7 @@ public final class AppModel {
         recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         historyLines[id] = nil
-        state.workspace.removeSession(id)
+        state.workspace.deleteSession(id)
         save()
     }
 
@@ -959,7 +959,8 @@ public final class AppModel {
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
                 }
-            } else if let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
+            } else if !workspace.isDeleted(claudeSessionID: agent.sessionID, agentID: agent.id),
+                      let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
                 var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
                                       name: agent.name ?? agent.id, workingDirectory: agent.cwd, status: agent.sessionStatus,
                                       createdAt: agent.startedAt ?? now())

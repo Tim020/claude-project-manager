@@ -242,6 +242,23 @@ final class AgentModelTests: XCTestCase {
         XCTAssertTrue(runner.commands.contains(["rm", "abcd1234"]))
     }
 
+    func testDeletedAgentIsNotImportedAgainWhileStillListed() async throws {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            return (model, try XCTUnwrap(model.createSession(request(p))))
+        }
+        await model.lastTask?.value
+        runner.agentsJSON = #"[{"id":"abcd1234","sessionId":"abcd1234-0000","kind":"background","cwd":"\#(repo)","name":"n","pid":5,"status":"idle","state":"done"}]"#
+        await model.refreshAgents()
+        await MainActor.run { model.deleteSession(id) }
+        // `claude rm` hasn't finished yet: the agent is still listed.
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertTrue(model.workspace.sessions.isEmpty)
+        }
+    }
+
     func testShutdownDetachesWithoutStoppingAgents() async throws {
         let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
             let model = try makeModel()

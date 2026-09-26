@@ -14,17 +14,26 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// tab never stops or removes the session.
     public private(set) var openTabIDs: [UUID]
 
+    /// Conversation ids and agent ids of deleted sessions. Their history
+    /// files (and, until `claude rm` finishes, their agents) are still there,
+    /// so discovery and the agent list would otherwise bring them back.
+    public private(set) var deletedClaudeSessionIDs: Set<String>
+    public private(set) var deletedAgentIDs: Set<String>
+
     public var openSessionIDs: Set<UUID> { Set(openTabIDs) }
 
     enum CodingKeys: String, CodingKey {
         case projects, sessions
         case openTabIDs = "openSessionIDs"
+        case deletedClaudeSessionIDs, deletedAgentIDs
     }
 
     public init(projects: [Project] = [], sessions: [Session] = [], openTabIDs: [UUID] = []) {
         self.projects = projects
         self.sessions = sessions
         self.openTabIDs = openTabIDs
+        deletedClaudeSessionIDs = []
+        deletedAgentIDs = []
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +41,8 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
         openTabIDs = try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []
+        deletedClaudeSessionIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedClaudeSessionIDs) ?? []
+        deletedAgentIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedAgentIDs) ?? []
     }
 
     // MARK: - Tabs
@@ -328,6 +339,21 @@ public struct Workspace: Codable, Equatable, Sendable {
         ids.removeAll { $0 == sessionID }
         ids.insert(sessionID, at: ids.firstIndex(of: targetID) ?? ids.count)
         projects[p].folders[f].sessionIDs = ids
+    }
+
+    /// Removes a session for good: it isn't imported again from its history
+    /// file or from the agent list.
+    public mutating func deleteSession(_ id: UUID) {
+        if let session = session(id) {
+            if let claudeID = session.claudeSessionID { deletedClaudeSessionIDs.insert(claudeID) }
+            if let agentID = session.agentID { deletedAgentIDs.insert(agentID) }
+        }
+        removeSession(id)
+    }
+
+    /// Whether a conversation or agent belongs to a deleted session.
+    public func isDeleted(claudeSessionID: String?, agentID: String? = nil) -> Bool {
+        claudeSessionID.map(deletedClaudeSessionIDs.contains) == true || agentID.map(deletedAgentIDs.contains) == true
     }
 
     public mutating func removeSession(_ id: UUID) {
