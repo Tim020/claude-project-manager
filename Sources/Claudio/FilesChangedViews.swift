@@ -243,24 +243,6 @@ struct PaneModeSwitch: View {
     }
 }
 
-/// Opens or reveals a changed file.
-enum FileActions {
-    static func open(_ path: String?) {
-        guard let path, FileManager.default.fileExists(atPath: path) else { NSSound.beep(); return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
-    static func reveal(_ path: String?) {
-        guard let path else { return }
-        let url = URL(fileURLWithPath: path)
-        if FileManager.default.fileExists(atPath: path) {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else {
-            NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
-        }
-    }
-}
-
 /// Per-file "+a −d", or "folder" for an untracked folder.
 private struct FileCounts: View {
     let file: FileChange
@@ -459,9 +441,6 @@ private struct FileMenu: View {
     var body: some View {
         let path = model.absolutePath(for: session.id, path: file.path, scope: model.changesScope)
         Button("Open Full Diff") { model.openFullDiff(file.path, for: session.id) }
-        Button("Open in Editor") { FileActions.open(path) }
-            .disabled(file.status == .deleted)
-        Button("Reveal in Finder") { FileActions.reveal(path) }
         Divider()
         Button("Copy Path") {
             NSPasteboard.general.clearContents()
@@ -478,7 +457,6 @@ private struct DiffPreview: View {
     @State private var diff: FileDiff?
 
     var body: some View {
-        let path = model.absolutePath(for: session.id, path: file.path, scope: model.changesScope)
         VStack(alignment: .leading, spacing: 0) {
             if let old = file.oldPath {
                 Text("from \(old)")
@@ -521,11 +499,6 @@ private struct DiffPreview: View {
             HStack(spacing: 14) {
                 Button("Open Full Diff") { model.openFullDiff(file.path, for: session.id) }
                     .foregroundStyle(DS.teal)
-                Button("Open in Editor") { FileActions.open(path) }
-                    .foregroundStyle(DS.muted)
-                    .disabled(file.status == .deleted)
-                Button("Reveal in Finder") { FileActions.reveal(path) }
-                    .foregroundStyle(DS.muted)
             }
             .buttonStyle(.plain)
             .font(DS.font(11.5))
@@ -676,7 +649,6 @@ private struct FullDiff: View {
     @State private var diff: FileDiff?
 
     var body: some View {
-        let path = model.absolutePath(for: session.id, path: file.path, scope: model.changesScope)
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text(file.status.word)
@@ -693,18 +665,6 @@ private struct FullDiff: View {
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
                 FileCounts(file: file, size: 12)
-                Button { FileActions.open(path) } label: {
-                    Text("Open in Editor")
-                        .font(DS.font(12))
-                        .foregroundStyle(DS.blue)
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 10)
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.blue, lineWidth: 1))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(file.status == .deleted)
-                .help(file.status == .deleted ? "The file was deleted" : "Open \(file.name) in its default app")
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 18)
