@@ -749,6 +749,14 @@ public final class AppModel {
         }
     }
 
+    /// Remembers the branch a session was last compared against (saved only
+    /// when it changes).
+    func recordBaseName(_ name: String, for sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID), session.lastBaseName != name else { return }
+        state.workspace.updateSession(sessionID) { $0.lastBaseName = name }
+        save()
+    }
+
     /// Sets the branch "vs" compares against for a project's sessions without
     /// a pull request (nil: the repository's default branch).
     public func setComparisonBranch(_ branch: String?, for projectID: UUID) {

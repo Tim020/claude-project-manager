@@ -70,9 +70,16 @@ extension AppModel {
         changes(for: sessionID, scope: changesScope)
     }
 
-    /// "main", "dev"… for the "vs" button: a branch just chosen shows at once.
+    /// "main", "dev"… for the "vs" button, never a guess: a branch just
+    /// chosen, else the loaded one, else the one remembered from last time,
+    /// else the project's choice, else "…" until it's known.
     public func baseName(for sessionID: UUID) -> String {
-        pendingBaseNames[sessionID] ?? (try? sessionChanges[sessionID]?.git?.get().baseName) ?? "main"
+        if let pending = pendingBaseNames[sessionID] { return pending }
+        if let loaded = try? sessionChanges[sessionID]?.git?.get().baseName { return loaded }
+        let session = state.workspace.session(sessionID)
+        if let remembered = session?.lastBaseName { return remembered }
+        if let project = session.flatMap({ state.workspace.project($0.projectID) }), let chosen = project.comparisonBranch { return chosen }
+        return "…"
     }
 
     /// Nothing loaded yet, or a newly chosen branch is still being compared:
@@ -191,12 +198,21 @@ extension AppModel {
         }
         let gitResult = await GitChanges.load(directory: directory, runner: changesRunner, git: gitExecutable, preferred: preferred)
 
+        if case .success(let result) = gitResult { recordBaseName(result.baseName, for: sessionID) }
         var updated = sessionChanges[sessionID] ?? SessionChangeState()
         if updated.git != gitResult { updated.gitDiffs = [:] }
         updated.session = sessionResult
         updated.git = gitResult
         updated.updatedAt = now()
         if updated != sessionChanges[sessionID] { sessionChanges[sessionID] = updated }
+    }
+
+    /// Loads open tabs that haven't been loaded yet, one at a time, so
+    /// switching to them shows their changes (and "vs" branch) straight away.
+    public func preloadChanges() async {
+        for session in tabs where sessionChanges[session.id] == nil {
+            await refreshChanges(for: session.id)
+        }
     }
 
     /// Refreshes the given sessions (the visible ones) if a hook reported a

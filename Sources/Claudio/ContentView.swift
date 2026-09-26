@@ -92,6 +92,8 @@ struct ContentView: View {
             } else {
                 offerFirstRunImport()
             }
+            // Files Changed for every open tab, so switching tabs is instant.
+            await model.preloadChanges()
         }
         .alert(copyTitle, isPresented: copyBinding) {
             Button("Resume a Copy") {

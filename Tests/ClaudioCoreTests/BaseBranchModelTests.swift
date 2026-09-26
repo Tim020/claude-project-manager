@@ -205,3 +205,96 @@ final class BaseBranchLoadingTests: XCTestCase {
         }
     }
 }
+
+final class RememberedBaseTests: XCTestCase {
+    let git = GitChanges.defaultGit
+
+    private func makeRepo() throws -> URL {
+        let repo = try makeTemporaryDirectory().appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        func run(_ args: [String]) throws {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: git)
+            p.arguments = ["-C", repo.path, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"] + args
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try p.run(); p.waitUntilExit()
+        }
+        try run(["init", "-q"])
+        try "a\n".write(to: repo.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try run(["add", "."]); try run(["commit", "-qm", "base"]); try run(["branch", "dev"]); try run(["checkout", "-qb", "work"])
+        return repo
+    }
+
+    @MainActor private func makeModel(store: MemoryStore, runner: CommandRunning) throws -> AppModel {
+        AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner, git: git,
+                 locateClaude: { _ in nil }, locateGitHubCLI: { "/opt/homebrew/bin/gh" }, shell: "/bin/sh", home: "/")
+    }
+
+    func testTheLastBaseIsRememberedAcrossLaunches() async throws {
+        guard FileManager.default.isExecutableFile(atPath: git) else { throw XCTSkip("git not installed") }
+        let repo = try makeRepo()
+        var state = PersistedState()
+        let p = state.workspace.addProject(path: repo.path)
+        let session = Session(projectID: p, name: "s", workingDirectory: repo.path)
+        try state.workspace.addSession(session)
+        let store = MemoryStore()
+        store.state = state
+
+        let first = try await MainActor.run { try makeModel(store: store, runner: RoutingRunner()) }  // PR into dev
+        await MainActor.run { XCTAssertEqual(first.baseName(for: session.id), "…", "unknown: no guessing main") }
+        await first.refreshChanges(for: session.id)
+        await MainActor.run {
+            XCTAssertEqual(first.baseName(for: session.id), "dev")
+            XCTAssertEqual(store.state.workspace.session(session.id)?.lastBaseName, "dev", "saved")
+        }
+
+        // Next launch: right straight away, before anything loads.
+        let second = try await MainActor.run { try makeModel(store: store, runner: RoutingRunner()) }
+        await MainActor.run {
+            XCTAssertNil(second.sessionChanges[session.id])
+            XCTAssertEqual(second.baseName(for: session.id), "dev")
+        }
+    }
+
+    func testTheProjectChoiceIsShownBeforeLoading() throws {
+        try MainActor.assumeIsolated {
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: "/code")
+            var project = try XCTUnwrap(state.workspace.project(p))
+            project.comparisonBranch = "develop"
+            state.workspace.replaceProject(project)
+            let session = Session(projectID: p, name: "s", workingDirectory: "/code")
+            try state.workspace.addSession(session)
+            let store = MemoryStore()
+            store.state = state
+            let model = try makeModel(store: store, runner: FakeRunner())
+            XCTAssertEqual(model.baseName(for: session.id), "develop")
+        }
+    }
+
+    func testOpenTabsArePreloaded() async throws {
+        let runner = FakeRunner()
+        let (model, ids) = try await MainActor.run { () -> (AppModel, [UUID]) in
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: "/code")
+            var ids: [UUID] = []
+            for name in ["a", "b", "c"] {
+                let s = Session(projectID: p, name: name, workingDirectory: "/code/\(name)")
+                try state.workspace.addSession(s)
+                state.workspace.openTab(s.id)
+                ids.append(s.id)
+            }
+            let store = MemoryStore()
+            store.state = state
+            return (try makeModel(store: store, runner: runner), ids)
+        }
+        await model.preloadChanges()
+        await MainActor.run { XCTAssertTrue(ids.allSatisfy { model.sessionChanges[$0] != nil }) }
+    }
+
+    func testDecodesWithoutALastBase() throws {
+        let json = #"{"id":"\#(UUID())","projectID":"\#(UUID())","name":"s","workingDirectory":"/code","createdAt":0}"#
+        XCTAssertNil(try JSONDecoder().decode(Session.self, from: Data(json.utf8)).lastBaseName)
+    }
+}

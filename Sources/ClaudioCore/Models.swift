@@ -103,6 +103,9 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     /// The last title Claude Code had for this session (its `custom-title`,
     /// set by `/rename` or by Claudio), to spot renames made in the terminal.
     public var claudeTitle: String?
+    /// The branch Files Changed last compared this session against ("dev"),
+    /// so "vs" is right before the next comparison finishes.
+    public var lastBaseName: String?
     public var role: SessionRole
     public var status: SessionStatus
     /// One-line description of where the session is at (card / tooltip text).
@@ -118,7 +121,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var isArchived: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, role, status, summary, needsAction
+        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequestURLs, createdAt, lastActivity, isArchived
     }
 
