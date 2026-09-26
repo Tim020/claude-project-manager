@@ -25,6 +25,46 @@ public struct UsageWindow: Equatable, Sendable {
         if hours < 24 { return "resets in \(hours)h \(minutes % 60)m" }
         return "resets in \(hours / 24)d \(hours % 24)h"
     }
+
+    func isExpired(at now: Date) -> Bool { resetsAt.map { $0 <= now } ?? false }
+
+    /// The window as it stands at `now`: once it has reset, nothing is used
+    /// until a session reports the new window.
+    public func current(at now: Date) -> UsageWindow {
+        isExpired(at: now) ? UsageWindow(usedPercentage: 0, resetsAt: nil) : self
+    }
+
+    /// Sources round a window's reset time differently: the status line gives
+    /// whole seconds, `/usage`'s report "03:49:59.519". The next window can't
+    /// reset until 5 hours after this one, so a few minutes' slack is safe.
+    static let resetTolerance: TimeInterval = 10 * 60
+
+    static func isSameWindow(_ a: Date, _ b: Date) -> Bool { abs(a.timeIntervalSince(b)) < resetTolerance }
+
+    /// Combines two readings of the same limit. Every session's status line
+    /// reports the usage from its own last request, so an idle session keeps
+    /// repeating an old figure, even one from a window that has since reset.
+    static func merged(_ current: UsageWindow?, _ incoming: UsageWindow?, now: Date) -> UsageWindow? {
+        let current = current.flatMap { $0.isExpired(at: now) ? nil : $0 }
+        guard let incoming, !incoming.isExpired(at: now) else { return current }
+        guard let current else { return incoming }
+        switch (current.resetsAt, incoming.resetsAt) {
+        case (_, nil):
+            // `claude /usage` is read when it runs, so it's never stale. It has
+            // no timestamp, so keep the known one for comparing later readings.
+            var merged = incoming
+            merged.resetsAt = current.resetsAt
+            return merged
+        case (nil, _?):
+            // The windows can't be compared, so trust the one with a timestamp.
+            return incoming
+        case let (old?, new?) where !isSameWindow(old, new):
+            return new > old ? incoming : current
+        default:
+            // Same window: usage only grows, so the lower reading is the stale one.
+            return incoming.usedPercentage >= current.usedPercentage ? incoming : current
+        }
+    }
 }
 
 /// Usage credits ("extra usage"): pay-as-you-go spend that Claude Code draws
@@ -129,6 +169,37 @@ public struct UsageSnapshot: Equatable, Sendable {
         let snapshot = UsageSnapshot(fiveHour: window("five_hour"), sevenDay: window("seven_day"),
                                      subscriptionType: value["subscription_type"]?.stringValue, updatedAt: updatedAt)
         return snapshot.fiveHour == nil && snapshot.sevenDay == nil ? nil : snapshot
+    }
+
+    /// The snapshot as it stands at `now` (see `UsageWindow.current(at:)`).
+    public func current(at now: Date) -> UsageSnapshot {
+        var snapshot = self
+        snapshot.fiveHour = fiveHour?.current(at: now)
+        snapshot.sevenDay = sevenDay?.current(at: now)
+        return snapshot
+    }
+
+    /// Where a reading came from. Only `claude /usage` knows about credits.
+    public enum Source: Sendable {
+        case statusLine
+        case usageCommand
+    }
+
+    /// Adds a newer reading window by window (see `UsageWindow.merged`). A
+    /// window the reading leaves out keeps its current value. Status line
+    /// input has no credits, so it keeps the last `/usage` figures; a `/usage`
+    /// report without them clears them.
+    public func merged(with incoming: UsageSnapshot, from source: Source, now: Date) -> UsageSnapshot {
+        var merged = UsageSnapshot(fiveHour: UsageWindow.merged(fiveHour, incoming.fiveHour, now: now),
+                                   sevenDay: UsageWindow.merged(sevenDay, incoming.sevenDay, now: now),
+                                   subscriptionType: incoming.subscriptionType ?? subscriptionType,
+                                   updatedAt: Swift.max(updatedAt, incoming.updatedAt),
+                                   credits: credits, reportsUsingCredits: reportsUsingCredits)
+        if source == .usageCommand {
+            merged.credits = incoming.credits
+            merged.reportsUsingCredits = incoming.reportsUsingCredits
+        }
+        return merged
     }
 }
 

@@ -664,6 +664,8 @@ private struct UsageSection: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
+            // Windows that have reset since the last reading show as unused.
+            let usage = usage?.current(at: context.date)
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text("PLAN USAGE")

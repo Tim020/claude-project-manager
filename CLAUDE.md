@@ -42,6 +42,8 @@ swift run Claudio                             # run from the package (no notific
 
 The status line (`StatusLineCapture`) records `rate_limits` and `context_window` per session. Plan usage is also read at launch with `claude -p /usage --output-format stream-json --verbose`, which makes no model call. Its assistant event carries a `usage_report` with `limits[]` (exact `resets_at`) and `extra_usage` (usage credits, in minor units); the plain text has neither. The status line has no credits or overage flag, so "using credits" is worked out from a window at 100% plus credits enabled (`UsageSnapshot.isUsingCredits`). In `-p` mode the text's "using your overages" header isn't reliable, because it hasn't asked the API.
 
+Readings are merged, not replaced (`UsageSnapshot.merged(with:from:now:)`). Every session re-reports the `rate_limits` from its own last request every 60 s, so idle sessions repeat stale figures: within one window the highest reading wins, and a window past its `resets_at` is dropped. The status line gives `resets_at` in whole seconds and the `/usage` report fractional ones ("03:49:59.519" vs 03:50:00), so reset times within `UsageWindow.resetTolerance` count as the same window. Only `/usage` readings set credits.
+
 **Observation churn.** Polling runs constantly, so mutate a copy and assign only when it differs; don't write to observed state on every tick. The menu bar reads only `menuFlags`, to stop menus redrawing.
 
 ## Claude Code CLI behaviour Claudio depends on

@@ -1488,7 +1488,7 @@ public final class AppModel {
            modified != usageModified {
             usageModified = modified
             if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
-                adopt(snapshot, fromStatusLine: true)
+                adopt(snapshot, from: .statusLine)
             }
         }
         guard let statusDirectory,
@@ -1500,9 +1500,12 @@ public final class AppModel {
                   statusModified[file.lastPathComponent] != modified
             else { continue }
             statusModified[file.lastPathComponent] = modified
-            if let data = try? Data(contentsOf: file), let context = ContextUsage.parse(data), contexts[id] != context {
+            guard let data = try? Data(contentsOf: file) else { continue }
+            if let context = ContextUsage.parse(data), contexts[id] != context {
                 contexts[id] = context
             }
+            // The shared usage file can be overwritten twice between polls.
+            if let snapshot = UsageSnapshot.parse(data, updatedAt: modified) { adopt(snapshot, from: .statusLine) }
         }
     }
 
@@ -1515,18 +1518,17 @@ public final class AppModel {
         let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage",
                                loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? "" })
         if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
-            adopt(snapshot)
+            adopt(snapshot, from: .usageCommand)
         }
     }
 
-    /// `fromStatusLine`: status line input has no credits, so the last
-    /// `/usage` figures are kept. A `/usage` report without them replaces them.
-    private func adopt(_ snapshot: UsageSnapshot, fromStatusLine: Bool = false) {
-        guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
-        var merged = snapshot
-        if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
-        if fromStatusLine { merged.credits = usage?.credits }
-        usage = merged
+    /// Merges a reading into `usage` window by window. Sessions report the
+    /// usage from their own last request, so the latest file written isn't
+    /// necessarily the latest figure.
+    private func adopt(_ snapshot: UsageSnapshot, from source: UsageSnapshot.Source) {
+        let empty = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: snapshot.updatedAt)
+        let merged = (usage ?? empty).merged(with: snapshot, from: source, now: now())
+        if merged != usage { usage = merged }
     }
 
     // MARK: - Settings
