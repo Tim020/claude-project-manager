@@ -33,8 +33,9 @@ public final class EditLogCache: @unchecked Sendable {
     public init() {}
 
     /// The first baseline per file across all the given history files (the
-    /// session's first, then its subagents'). The latest edit and working
-    /// directory come from the session's own history when it has them.
+    /// session's first, then its subagents'), and every file's latest edit.
+    /// The working directory comes from the session's own history when it
+    /// has one.
     public func summary(files: [URL]) -> SessionEditLog.Summary {
         var seen = Set<String>()
         var merged = SessionEditLog.Summary()
@@ -43,7 +44,7 @@ public final class EditLogCache: @unchecked Sendable {
             for baseline in summary.baselines where seen.insert(baseline.path).inserted {
                 merged.baselines.append(baseline)
             }
-            merged.lastEditPath = merged.lastEditPath ?? summary.lastEditPath
+            merged.edits += summary.edits
             merged.lastWorkingDirectory = merged.lastWorkingDirectory ?? summary.lastWorkingDirectory
         }
         return merged
@@ -206,7 +207,7 @@ extension AppModel {
             let summary = cache.summary(files: files)
             let directory = ChangesDirectory.resolve(recorded: recorded, projectDirectory: projectDirectory,
                                                      lastWorkingDirectory: summary.lastWorkingDirectory,
-                                                     lastEditPath: summary.lastEditPath,
+                                                     recentEdits: SessionEditLog.Summary.pathsNewestFirst(summary.edits),
                                                      exists: { FileManager.default.fileExists(atPath: $0) })
             let result = SessionChanges.compute(baselines: summary.baselines, workingDirectory: directory,
                                                 projectDirectory: projectDirectory, read: SessionChanges.readFile)

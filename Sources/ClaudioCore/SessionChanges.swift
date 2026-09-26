@@ -15,19 +15,42 @@ public enum SessionEditLog {
         }
     }
 
+    /// A file's latest edit, with the record's ISO 8601 timestamp.
+    public struct Edit: Equatable, Sendable {
+        public var path: String
+        public var timestamp: String?
+
+        public init(path: String, timestamp: String? = nil) {
+            self.path = path
+            self.timestamp = timestamp
+        }
+    }
+
     /// What a history file says about the session's edits.
     public struct Summary: Equatable, Sendable {
         public var baselines: [Baseline] = []
-        /// The file the session edited most recently.
-        public var lastEditPath: String?
+        /// Each edited file's latest edit, oldest first.
+        public var edits: [Edit] = []
         /// The last working directory recorded (every message carries `cwd`;
         /// it follows `cd` and entering a worktree).
         public var lastWorkingDirectory: String?
 
-        public init(baselines: [Baseline] = [], lastEditPath: String? = nil, lastWorkingDirectory: String? = nil) {
+        public init(baselines: [Baseline] = [], edits: [Edit] = [], lastWorkingDirectory: String? = nil) {
             self.baselines = baselines
-            self.lastEditPath = lastEditPath
+            self.edits = edits
             self.lastWorkingDirectory = lastWorkingDirectory
+        }
+
+        /// The file edited most recently.
+        public var lastEditPath: String? { edits.last?.path }
+
+        /// Edited paths, most recent first, across several histories (a
+        /// session's and its subagents'), ordered by timestamp. Edits without
+        /// one count as oldest; ties keep their order.
+        public static func pathsNewestFirst(_ edits: [Edit]) -> [String] {
+            edits.enumerated()
+                .sorted { ($0.element.timestamp ?? "", $0.offset) > ($1.element.timestamp ?? "", $1.offset) }
+                .map(\.element.path)
         }
     }
 
@@ -41,7 +64,8 @@ public enum SessionEditLog {
             else { continue }
             if let cwd = record["cwd"]?.stringValue, !cwd.isEmpty { summary.lastWorkingDirectory = cwd }
             guard isEdit, let tool = record["toolUseResult"], let path = tool["filePath"]?.stringValue, isEditResult(tool) else { continue }
-            summary.lastEditPath = path
+            summary.edits.removeAll { $0.path == path }
+            summary.edits.append(Edit(path: path, timestamp: record["timestamp"]?.stringValue))
             guard seen.insert(path).inserted else { continue }
             let original = tool["type"]?.stringValue == "create" ? nil : tool["originalFile"]?.stringValue
             summary.baselines.append(Baseline(path: path, original: original))
@@ -154,16 +178,21 @@ public enum SessionChanges {
 /// the folder it started in: Claude may enter a worktree mid-session, or work
 /// in one through a subagent.
 public enum ChangesDirectory {
-    /// The worktree of the most recent edit (if it still exists), else the
-    /// last recorded working directory if it's in the project, else the folder
-    /// the session started in.
-    public static func resolve(recorded: String, projectDirectory: String?, lastWorkingDirectory: String?, lastEditPath: String?,
+    /// Goes by the most recent edit inside the project (`recentEdits` is
+    /// newest first; edits in /tmp, `~/.claude` and so on are skipped): its
+    /// worktree if it's in one that still exists. Otherwise the last recorded
+    /// working directory if it's in the project, else the folder the session
+    /// started in.
+    public static func resolve(recorded: String, projectDirectory: String?, lastWorkingDirectory: String?, recentEdits: [String],
                                exists: (String) -> Bool) -> String {
         let recordedPath = SessionChanges.standardized(recorded)
         let project = SessionChanges.standardized(projectDirectory ?? recorded)
-        if let edit = lastEditPath.map(SessionChanges.standardized), let worktree = worktreeRoot(containing: edit),
-           SessionChanges.isWithin(worktree, project), exists(worktree) {
-            return worktree
+        let inProject = recentEdits.lazy.map(SessionChanges.standardized).filter {
+            SessionChanges.isWithin($0, project) || SessionChanges.isWithin($0, recordedPath)
+        }
+        for edit in inProject {
+            guard let worktree = worktreeRoot(containing: edit) else { break }
+            if SessionChanges.isWithin(worktree, project), exists(worktree) { return worktree }
         }
         if let cwd = lastWorkingDirectory.map(SessionChanges.standardized),
            SessionChanges.isWithin(cwd, project) || SessionChanges.isWithin(cwd, recordedPath), exists(cwd) {

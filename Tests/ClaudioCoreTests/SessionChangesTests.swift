@@ -129,25 +129,69 @@ final class ChangesDirectoryTests: XCTestCase {
     func testTheWorktreeOfTheLatestEditWins() {
         let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo,
                                            lastWorkingDirectory: repo,
-                                           lastEditPath: "\(repo)/.claude/worktrees/fix-ws-reconnect/server/utils/web/a.py",
+                                           recentEdits: ["\(repo)/.claude/worktrees/fix-ws-reconnect/server/utils/web/a.py"],
                                            exists: { _ in true })
         XCTAssertEqual(dir, "\(repo)/.claude/worktrees/fix-ws-reconnect")
     }
 
     func testThenTheLastWorkingDirectoryInsideTheProject() {
         let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo,
-                                           lastWorkingDirectory: "\(repo)/server", lastEditPath: "\(repo)/server/app.py",
+                                           lastWorkingDirectory: "\(repo)/server", recentEdits: ["\(repo)/server/app.py"],
                                            exists: { _ in true })
         XCTAssertEqual(dir, "\(repo)/server")
     }
 
     func testIgnoresPlacesOutsideTheProjectOrGone() {
         XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: "/tmp",
-                                                lastEditPath: "/tmp/scratch.py", exists: { _ in true }), repo, "cd /tmp")
+                                                recentEdits: ["/tmp/scratch.py"], exists: { _ in true }), repo, "cd /tmp")
         XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: nil,
-                                                lastEditPath: "\(repo)/.claude/worktrees/removed/a.py",
+                                                recentEdits: ["\(repo)/.claude/worktrees/removed/a.py"],
                                                 exists: { !$0.contains("removed") }), repo, "worktree since removed")
         XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: nil, lastWorkingDirectory: nil,
-                                                lastEditPath: nil, exists: { _ in true }), repo)
+                                                recentEdits: [], exists: { _ in true }), repo)
+    }
+
+    /// The main session's last edit was a plan under ~/.claude; its subagent
+    /// has since edited a worktree. The ~/.claude edit doesn't count.
+    func testEditsOutsideTheProjectAreSkipped() {
+        let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: repo,
+                                           recentEdits: ["/Users/tim/.claude/plans/plan.md", "/tmp/x.txt",
+                                                         "\(repo)/.claude/worktrees/fix-ws/server/a.py"],
+                                           exists: { _ in true })
+        XCTAssertEqual(dir, "\(repo)/.claude/worktrees/fix-ws")
+    }
+
+    func testANewerEditInTheMainCheckoutWins() {
+        let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: repo,
+                                           recentEdits: ["\(repo)/server/app.py", "\(repo)/.claude/worktrees/fix-ws/a.py"],
+                                           exists: { _ in true })
+        XCTAssertEqual(dir, repo)
+    }
+
+    func testSkipsRemovedWorktreesForAnOlderOne() {
+        let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: nil,
+                                           recentEdits: ["\(repo)/.claude/worktrees/gone/a.py", "\(repo)/.claude/worktrees/kept/b.py"],
+                                           exists: { !$0.contains("gone") })
+        XCTAssertEqual(dir, "\(repo)/.claude/worktrees/kept")
+    }
+
+    func testEditsAreOrderedByTimestampAcrossHistories() {
+        let main = [SessionEditLog.Edit(path: "\(repo)/server/app.py", timestamp: "2026-09-25T10:00:00.000Z"),
+                    SessionEditLog.Edit(path: "/Users/tim/.claude/plans/p.md", timestamp: "2026-09-25T12:00:00.000Z")]
+        let subagent = [SessionEditLog.Edit(path: "\(repo)/.claude/worktrees/fix/a.py", timestamp: "2026-09-25T11:00:00.000Z"),
+                        SessionEditLog.Edit(path: "\(repo)/untimed.py")]
+        XCTAssertEqual(SessionEditLog.Summary.pathsNewestFirst(main + subagent),
+                       ["/Users/tim/.claude/plans/p.md", "\(repo)/.claude/worktrees/fix/a.py", "\(repo)/server/app.py", "\(repo)/untimed.py"])
+    }
+
+    func testLogSummaryRecordsEachFilesLatestEditTime() {
+        let edit = { (path: String, time: String) in
+            #"{"type":"user","timestamp":"\#(time)","toolUseResult":{"type":"update","filePath":"\#(path)","content":"x","originalFile":"y","structuredPatch":[]}}"#
+        }
+        let summary = SessionEditLog.summary(lines: [edit("/a", "2026-09-25T10:00:00Z"), edit("/b", "2026-09-25T11:00:00Z"),
+                                                     edit("/a", "2026-09-25T12:00:00Z")])
+        XCTAssertEqual(summary.edits, [SessionEditLog.Edit(path: "/b", timestamp: "2026-09-25T11:00:00Z"),
+                                       SessionEditLog.Edit(path: "/a", timestamp: "2026-09-25T12:00:00Z")])
+        XCTAssertEqual(summary.lastEditPath, "/a")
     }
 }
