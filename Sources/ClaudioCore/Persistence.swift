@@ -25,6 +25,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The sidebar only shows sessions active within this many days (plus
     /// ones working, awaiting input or open in a tab). 0 shows every session.
     public var activityWindowDays = AppSettings.defaultActivityWindowDays
+    /// The Files Changed inspector beside the terminal is open.
+    public var showFilesInspector = false
     public static let defaultActivityWindowDays = 14
 
     /// Quick choices for the window, in days (0 is any time).
@@ -81,6 +83,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
+        showFilesInspector = try c.decodeIfPresent(Bool.self, forKey: .showFilesInspector) ?? false
         activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)
     }
 }

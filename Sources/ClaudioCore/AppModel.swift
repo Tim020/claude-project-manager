@@ -74,6 +74,19 @@ public final class AppModel {
     /// How long a check stays fresh before coming back to Claudio re-checks.
     public static let environmentCheckInterval: TimeInterval = 300
 
+    /// Files each session changed, in both scopes (see AppModel+Changes).
+    public internal(set) var sessionChanges: [UUID: SessionChangeState] = [:]
+    /// "This Session" or "vs main", shared by the inspector and Changes view.
+    public var changesScope: ChangesScope = .session
+    public internal(set) var paneModes: [UUID: PaneMode] = [:]
+    var selectedChanges: [UUID: String] = [:]
+    var expandedChanges: [UUID: String] = [:]
+    @ObservationIgnored var changesDirty = Set<UUID>()
+    @ObservationIgnored var refreshingChanges = Set<UUID>()
+    @ObservationIgnored let editLogCache = EditLogCache()
+    @ObservationIgnored let gitExecutable: String
+    var changesRunner: CommandRunning { runner }
+
     /// A short notice shown over a session's terminal (e.g. why a key was
     /// ignored), cleared by `clearTerminalHint`.
     public private(set) var terminalHints: [UUID: String] = [:]
@@ -128,7 +141,7 @@ public final class AppModel {
     @ObservationIgnored public var appIsActive = false
     @ObservationIgnored private var notificationBaseline: [UUID: NotificationBaseline]?
     @ObservationIgnored private let store: StateStore
-    @ObservationIgnored private let discovery: SessionDiscovery
+    @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
     @ObservationIgnored private let usageURL: URL?
     @ObservationIgnored private var usageModified: Date?
@@ -139,7 +152,7 @@ public final class AppModel {
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored private let shell: String
-    @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored let now: () -> Date
     @ObservationIgnored public let home: String
 
     public init(
@@ -149,6 +162,7 @@ public final class AppModel {
         usageURL: URL? = nil,
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
+        git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
         shell: String = ClaudeExecutableLocator.defaultShell(),
@@ -164,6 +178,7 @@ public final class AppModel {
         self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
+        self.gitExecutable = git
         self.locateClaude = locateClaude
         self.isGitRepository = isGitRepository
         self.shell = shell
@@ -1132,6 +1147,8 @@ public final class AppModel {
         for event in events {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
+            // A tool may have changed files.
+            if event.name == .postToolUse || event.name == .stop { markChangesDirty(target) }
             changed = true
         }
         if changed { save() }

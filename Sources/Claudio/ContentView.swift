@@ -127,6 +127,13 @@ struct ContentView: View {
             model.pollUsage()
             model.updateMenuFlags()
             model.checkNotifications()
+            // Files Changed: reload visible sessions after their tool calls.
+            let visible = model.visibleSessionIDs
+            if !visible.isEmpty { Task { await model.refreshChangesIfNeeded(visible) } }
+        }
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+            // Also catch changes made outside tool calls (shell commands, your editor).
+            if let id = model.selectedSessionID { Task { await model.refreshChanges(for: id) } }
         }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             // Background agents: liveness, state and titles from `claude agents --json`.

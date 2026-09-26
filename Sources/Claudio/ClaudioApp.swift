@@ -117,6 +117,17 @@ struct ClaudioApp: App {
                 Button("Split") { model.setLayout(.split) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
                 Divider()
+                Button("Files Changed Inspector") { model.toggleFilesInspector() }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
+                    .disabled(!model.menuFlags.hasSelection)
+                Button("Terminal / Changes") {
+                    if let id = model.selectedSessionID {
+                        model.setPaneMode(model.paneMode(for: id) == .changes ? .terminal : .changes, for: id)
+                    }
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+                .disabled(!model.menuFlags.hasSelection)
+                Divider()
                 Button("Resume Session") {
                     if let id = model.selectedSessionID { model.resume(id) }
                 }

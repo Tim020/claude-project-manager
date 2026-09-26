@@ -17,13 +17,21 @@ struct DetailView: View {
                 VStack(spacing: 0) {
                     DetailHeader(session: session, breadcrumb: crumb)
                     TabStrip(sessions: model.tabs, selectedID: session.id)
-                    if model.settings.layout == .split && model.canSplit {
-                        SplitGrid(selectedID: session.id)
-                    } else {
-                        SessionPane(session: session, style: .full)
-                            .id(session.id)
+                    HStack(spacing: 0) {
+                        if model.settings.layout == .split && model.canSplit {
+                            SplitGrid(selectedID: session.id)
+                        } else {
+                            SessionPane(session: session, style: .full)
+                                .id(session.id)
+                        }
+                        // Files Changed inspector (design 4a), beside the terminal.
+                        if model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
+                            FilesInspector(session: session)
+                        }
                     }
+                    .frame(maxHeight: .infinity)
                 }
+                .task(id: session.id) { await model.refreshChanges(for: session.id) }
             } else {
                 emptyState
             }
@@ -103,6 +111,7 @@ private struct DetailHeader: View {
             if model.canSplit {
                 LayoutToggle()
             }
+            FilesButton(session: session)
             pullRequestButton
             Menu {
                 SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
@@ -281,6 +290,10 @@ private struct TabStrip: View {
             .buttonStyle(.plain)
             .help("New Session in Folder")
             Spacer(minLength: 0)
+            if let selected = sessions.first(where: { $0.id == selectedID }) {
+                PaneModeSwitch(session: selected)
+                    .padding(.leading, 8)
+            }
         }
         .padding(.horizontal, 20)
         .overlay(alignment: .bottom) { HorizontalRule() }
@@ -464,7 +477,10 @@ struct SessionPane: View {
                 .contentShape(Rectangle())
                 .onTapGesture { model.select(session.id) }
             }
-            if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
+            if model.paneMode(for: session.id) == .changes {
+                // Changes view (design 4b); the terminal keeps running meanwhile.
+                ChangesView(session: session)
+            } else if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
                 TerminalPane(sessionID: session.id, registry: terminals.registry, isFocused: isFocused && running)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)

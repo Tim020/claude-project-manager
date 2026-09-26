@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap"><style>html{background:#1a1a1a}body{margin:0;background:#1a1a1a;font-family:"Nunito Sans",Avenir,Helvetica,Arial,sans-serif;color:#fff;-webkit-font-smoothing:antialiased}a{color:#00bc8c;text-decoration:none}a:hover{color:#00997a}</style></helmet>
+<section id="t4" style="padding:40px 44px;display:flex;flex-direction:column;gap:20px">
+<div style="display:flex;align-items:baseline;gap:10px"><a href="#t4" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#00bc8c;color:#fff;border-radius:4px">4</a><span style="font-weight:700;font-size:14px">Files changed — three placements</span></div>
+<p style="margin:0;max-width:980px;color:#adb5bd;font-size:13px;line-height:1.55;text-wrap:pretty">Detail pane only; the sidebar is unchanged. Every option offers two scopes: <b style="color:#fff">This Session</b> (files touched by the session's Edit/Write tool calls) and <b style="color:#fff">vs main</b> (a git diff of the session's working directory or worktree). Status uses colour plus a letter, with the word on hover: <span style="color:#00bc8c">A Added</span>, <span style="color:#f39c12">M Modified</span>, <span style="color:#e74c3c">D Deleted</span>, <span style="color:#3498db">R Renamed</span>. Files are clickable in <a href="#4a">4a</a> and <a href="#4b">4b</a>.</p>
+<div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+<div id="4a" style="display:flex;flex-direction:column;gap:10px;flex:none">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12px;color:#adb5bd"><a href="#4a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">4a</a>Inspector: a toggleable right-hand pane next to the terminal; click a file to preview its diff inline</div>
+<div style="width:1180px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column">
+  <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:1px solid #444">
+    <span style="font-size:13px;color:#adb5bd">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span><span style="font-size:13px;color:#adb5bd">Websocket Close State</span><span style="color:#6c757d;font-size:11px">›</span><b style="font-size:14px">websocket close state</b>
+    <span style="font-size:11px;font-weight:800;letter-spacing:.04em;color:#adb5bd;border:1px solid #444;border-radius:4px;padding:1px 6px">CODE</span>
+    <span style="flex:1"></span>
+    <span style="font-size:11.5px;color:#6c757d">Context</span><span style="width:44px;height:4px;border-radius:2px;background:#444;display:flex"><span style="width:26px;background:#00bc8c;border-radius:2px"></span></span><span style="font-size:11.5px;font-weight:600;color:#adb5bd">~58%</span>
+    <span style="font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px;background:#444">Completed</span>
+    <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:4px;background:#444;font-size:12px"><span style="font-weight:700">Files</span><span style="color:#00bc8c;font-family:ui-monospace,Menlo,monospace;font-size:11.5px">{{ tot.addS }}</span><span style="color:#e74c3c;font-family:ui-monospace,Menlo,monospace;font-size:11.5px">{{ tot.delS }}</span></div>
+    <span style="color:#adb5bd;font-size:15px">⋯</span>
+  </div>
+  <div style="display:flex;padding:0 20px;border-bottom:1px solid #444;flex:none;font-size:13.5px">
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;box-shadow:inset 0 -2px 0 #00bc8c"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>websocket close state<span style="font-size:11px;color:#6c757d">CODE</span></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;color:#adb5bd"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>Review #1427<span style="font-size:11px;color:#6c757d">REVIEW</span></div>
+  </div>
+  <div style="flex:1;min-height:0;display:flex">
+    <div style="flex:1;min-width:0;padding:20px 22px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;line-height:1.6;display:flex;flex-direction:column;gap:12px;overflow:hidden">
+      <sc-for list="{{ term }}" as="l" hint-placeholder-count="6"><div style="display:flex;gap:10px"><span style="flex:none;width:12px;color:{{ l.mc }}">{{ l.m }}</span><span style="color:{{ l.c }};white-space:pre-wrap">{{ l.t }}</span></div></sc-for>
+    </div>
+    <div style="width:360px;flex:none;background:#2b2b2b;border-left:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="padding:14px 16px 12px;border-bottom:1px solid #444;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px"><b style="font-size:14px;flex:1">Files Changed</b><span style="color:#6c757d;font-size:13px">✕</span></div>
+        <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><span style="flex:1;text-align:center;padding:4px;background:#444">This Session</span><span style="flex:1;text-align:center;padding:4px;color:#adb5bd">vs main</span></div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:12.5px">
+          <span style="font-weight:700">{{ tot.files }} files</span>
+          <span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#00bc8c">{{ tot.addS }}</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#e74c3c">{{ tot.delS }}</span>
+          <span style="flex:1"></span>
+          <div style="display:flex;gap:2px"><sc-for list="{{ tot.blocks }}" as="b" hint-placeholder-count="5"><span style="width:9px;height:9px;border-radius:2px;background:{{ b }}"></span></sc-for></div>
+        </div>
+        <div style="display:flex;gap:12px;font-size:11.5px;color:#adb5bd"><sc-for list="{{ tot.counts }}" as="c" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.color }}"></span>{{ c.label }}</span></sc-for></div>
+      </div>
+      <div style="flex:1;overflow:auto;padding:6px 8px 12px">
+        <sc-for list="{{ groupsA }}" as="g" hint-placeholder-count="4">
+          <div style="padding:10px 8px 3px;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#6c757d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ g.dir }}</div>
+          <sc-for list="{{ g.files }}" as="f" hint-placeholder-count="2">
+            <div onClick="{{ f.onSelect }}" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;background:{{ f.bg }};cursor:default;font-size:13px" title="{{ f.word }}">
+              <span style="width:16px;flex:none;text-align:center;font:800 11px ui-monospace,Menlo,monospace;color:{{ f.color }}">{{ f.letter }}</span>
+              <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:{{ f.strike }};color:{{ f.nameColor }}">{{ f.name }}</span>
+              <span style="font:11.5px ui-monospace,Menlo,monospace;color:#00bc8c">{{ f.addS }}</span><span style="font:11.5px ui-monospace,Menlo,monospace;color:#e74c3c;min-width:26px;text-align:right">{{ f.delS }}</span>
+            </div>
+            <sc-if value="{{ f.open }}" hint-placeholder-val="{{ false }}">
+              <div style="margin:4px 0 8px 24px;border:1px solid #444;border-radius:4px;overflow:hidden;background:#222">
+                <sc-if value="{{ f.renamed }}" hint-placeholder-val="{{ false }}"><div style="padding:5px 8px;font:11px ui-monospace,Menlo,monospace;color:#3498db;border-bottom:1px solid #444">from {{ f.from }}</div></sc-if>
+                <sc-for list="{{ f.preview }}" as="d" hint-placeholder-count="6"><div style="display:flex;font:11px/1.55 ui-monospace,Menlo,monospace;background:{{ d.bg }}"><span style="width:14px;flex:none;text-align:center;color:{{ d.sc }}">{{ d.s }}</span><span style="white-space:pre;overflow:hidden;color:{{ d.fg }}">{{ d.t }}</span></div></sc-for>
+                <div style="display:flex;gap:14px;padding:6px 8px;border-top:1px solid #444;font-size:11.5px"><a href="#4a">Open Full Diff</a><a href="#4a" style="color:#adb5bd">Open in Editor</a><a href="#4a" style="color:#adb5bd">Reveal in Finder</a></div>
+              </div>
+            </sc-if>
+          </sc-for>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+  <div style="padding:14px 20px 18px;border-top:1px solid #444;flex:none"><div style="background:#303030;border:1px solid #444;border-radius:4px;padding:10px 12px;display:flex;align-items:center;gap:10px"><span style="flex:1;color:#6c757d;font-size:14px">Type a message and press Return to resume…</span><span style="font-size:12px;color:#adb5bd">Opus 5.5</span><span style="background:#00bc8c;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:700">Resume</span></div></div>
+</div>
+</div>
+
+<div id="4b" style="display:flex;flex-direction:column;gap:10px;flex:none">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12px;color:#adb5bd"><a href="#4b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">4b</a>Changes view: a Terminal / Changes switch per session swaps the pane for a file list and full diff</div>
+<div style="width:1180px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column">
+  <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:1px solid #444">
+    <span style="font-size:13px;color:#adb5bd">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span><span style="font-size:13px;color:#adb5bd">Websocket Close State</span><span style="color:#6c757d;font-size:11px">›</span><b style="font-size:14px">websocket close state</b>
+    <span style="font-size:11px;font-weight:800;letter-spacing:.04em;color:#adb5bd;border:1px solid #444;border-radius:4px;padding:1px 6px">CODE</span>
+    <span style="flex:1"></span>
+    <span style="font-size:11.5px;color:#6c757d">Context</span><span style="width:44px;height:4px;border-radius:2px;background:#444;display:flex"><span style="width:26px;background:#00bc8c;border-radius:2px"></span></span><span style="font-size:11.5px;font-weight:600;color:#adb5bd">~58%</span>
+    <span style="font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px;background:#444">Completed</span>
+    <span style="color:#adb5bd;font-size:15px">⋯</span>
+  </div>
+  <div style="display:flex;align-items:center;padding:0 20px;border-bottom:1px solid #444;flex:none;font-size:13.5px">
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;box-shadow:inset 0 -2px 0 #00bc8c"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>websocket close state<span style="font-size:11px;color:#6c757d">CODE</span></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;color:#adb5bd"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>Review #1427<span style="font-size:11px;color:#6c757d">REVIEW</span></div>
+    <span style="flex:1"></span>
+    <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><span style="padding:4px 12px;color:#adb5bd">Terminal</span><span style="padding:4px 12px;background:#444;display:flex;gap:6px;align-items:center">Changes<span style="font-size:11px;font-weight:700;padding:0 6px;border-radius:12px;background:#222">{{ tot.files }}</span></span></div>
+  </div>
+  <div style="flex:1;min-height:0;display:flex">
+    <div style="width:320px;flex:none;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0;background:#2b2b2b">
+      <div style="padding:12px 14px;border-bottom:1px solid #444;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><span style="flex:1;text-align:center;padding:4px;background:#444">This Session</span><span style="flex:1;text-align:center;padding:4px;color:#adb5bd">vs main</span></div>
+        <div style="display:flex;align-items:center;gap:8px;background:#222;border:1px solid #444;border-radius:4px;padding:4px 8px;color:#6c757d;font-size:12.5px">⌕ Filter files</div>
+      </div>
+      <div style="flex:1;overflow:auto;padding:6px">
+        <sc-for list="{{ filesB }}" as="f" hint-placeholder-count="8">
+          <div onClick="{{ f.onSelect }}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;background:{{ f.bg }};cursor:default" title="{{ f.word }}">
+            <span style="width:16px;flex:none;text-align:center;font:800 11px ui-monospace,Menlo,monospace;color:{{ f.color }}">{{ f.letter }}</span>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+              <span style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:{{ f.strike }};color:{{ f.nameColor }}">{{ f.name }}</span>
+              <span style="font:10.5px ui-monospace,Menlo,monospace;color:#6c757d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left">{{ f.dir }}</span>
+            </div>
+            <span style="font:11.5px ui-monospace,Menlo,monospace;color:#00bc8c">{{ f.addS }}</span><span style="font:11.5px ui-monospace,Menlo,monospace;color:#e74c3c;min-width:26px;text-align:right">{{ f.delS }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border-top:1px solid #444;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12.5px">
+        <span style="font-weight:700">{{ tot.files }} files</span><span style="font:12px ui-monospace,Menlo,monospace;color:#00bc8c">{{ tot.addS }}</span><span style="font:12px ui-monospace,Menlo,monospace;color:#e74c3c">{{ tot.delS }}</span><span style="flex:1"></span>
+        <div style="display:flex;gap:2px"><sc-for list="{{ tot.blocks }}" as="b" hint-placeholder-count="5"><span style="width:9px;height:9px;border-radius:2px;background:{{ b }}"></span></sc-for></div>
+      </div>
+    </div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:0">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;background:#303030;border-bottom:1px solid #444">
+        <span style="font-size:11.5px;font-weight:700;padding:1px 9px;border-radius:12px;background:{{ selB.pill }}">{{ selB.word }}</span>
+        <span style="font:12.5px ui-monospace,Menlo,monospace;color:#fff;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ selB.path }}</span>
+        <span style="font:12px ui-monospace,Menlo,monospace;color:#00bc8c">{{ selB.addS }}</span><span style="font:12px ui-monospace,Menlo,monospace;color:#e74c3c">{{ selB.delS }}</span>
+        <span style="padding:3px 10px;border:1px solid #3498db;color:#3498db;border-radius:4px;font-size:12px">Open in Editor</span>
+      </div>
+      <sc-if value="{{ selB.renamed }}" hint-placeholder-val="{{ false }}"><div style="padding:6px 18px;font:11.5px ui-monospace,Menlo,monospace;color:#3498db;border-bottom:1px solid #444">renamed from {{ selB.from }}</div></sc-if>
+      <div style="flex:1;overflow:auto;padding:6px 0">
+        <sc-for list="{{ selB.diff }}" as="d" hint-placeholder-count="14">
+          <div style="display:flex;font:12.5px/1.7 ui-monospace,'SF Mono',Menlo,monospace;background:{{ d.bg }}">
+            <span style="width:44px;flex:none;text-align:right;padding-right:8px;color:#6c757d">{{ d.o }}</span><span style="width:44px;flex:none;text-align:right;padding-right:8px;color:#6c757d">{{ d.n }}</span>
+            <span style="width:18px;flex:none;color:{{ d.sc }}">{{ d.s }}</span><span style="white-space:pre;color:{{ d.fg }}">{{ d.t }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div id="4c" style="display:flex;flex-direction:column;gap:10px;flex:none">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12px;color:#adb5bd"><a href="#4c" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">4c</a>Summary strip: an always-visible line above the prompt that expands into a file table, so the terminal stays full width</div>
+<div style="width:1180px;height:760px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column;position:relative">
+  <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:1px solid #444">
+    <span style="font-size:13px;color:#adb5bd">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span><span style="font-size:13px;color:#adb5bd">Websocket Close State</span><span style="color:#6c757d;font-size:11px">›</span><b style="font-size:14px">websocket close state</b>
+    <span style="font-size:11px;font-weight:800;letter-spacing:.04em;color:#adb5bd;border:1px solid #444;border-radius:4px;padding:1px 6px">CODE</span>
+    <span style="flex:1"></span>
+    <span style="font-size:11.5px;color:#6c757d">Context</span><span style="width:44px;height:4px;border-radius:2px;background:#444;display:flex"><span style="width:26px;background:#00bc8c;border-radius:2px"></span></span><span style="font-size:11.5px;font-weight:600;color:#adb5bd">~58%</span>
+    <span style="font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px;background:#444">Completed</span>
+    <span style="color:#adb5bd;font-size:15px">⋯</span>
+  </div>
+  <div style="display:flex;padding:0 20px;border-bottom:1px solid #444;flex:none;font-size:13.5px">
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;box-shadow:inset 0 -2px 0 #00bc8c"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>websocket close state<span style="font-size:11px;color:#6c757d">CODE</span><span style="font:11px ui-monospace,Menlo,monospace;color:#00bc8c">{{ tot.addS }}</span><span style="font:11px ui-monospace,Menlo,monospace;color:#e74c3c">{{ tot.delS }}</span></div>
+    <div style="display:flex;align-items:center;gap:7px;padding:10px 14px;color:#adb5bd"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>Review #1427<span style="font-size:11px;color:#6c757d">REVIEW</span></div>
+  </div>
+  <div style="flex:1;min-height:0;padding:20px 22px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;line-height:1.6;display:flex;flex-direction:column;gap:12px;overflow:hidden;opacity:.45">
+    <sc-for list="{{ term }}" as="l" hint-placeholder-count="6"><div style="display:flex;gap:10px"><span style="flex:none;width:12px;color:{{ l.mc }}">{{ l.m }}</span><span style="color:{{ l.c }};white-space:pre-wrap">{{ l.t }}</span></div></sc-for>
+  </div>
+  <div style="position:absolute;left:20px;right:20px;bottom:124px;background:#303030;border:1px solid #444;border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;flex-direction:column;max-height:470px">
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid #444">
+      <b style="font-size:14px">Files Changed</b>
+      <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><span style="padding:3px 10px;background:#444">This Session</span><span style="padding:3px 10px;color:#adb5bd">vs main</span></div>
+      <span style="flex:1"></span>
+      <div style="display:flex;gap:12px;font-size:11.5px;color:#adb5bd"><sc-for list="{{ tot.counts }}" as="c" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.color }}"></span>{{ c.label }}</span></sc-for></div>
+    </div>
+    <div style="display:grid;grid-template-columns:110px minmax(0,1fr) 70px 70px 90px;gap:0 14px;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:.05em;color:#6c757d;border-bottom:1px solid #444"><span>STATUS</span><span>FILE</span><span style="text-align:right">ADDED</span><span style="text-align:right">REMOVED</span><span></span></div>
+    <div style="overflow:auto">
+      <sc-for list="{{ filesB }}" as="f" hint-placeholder-count="8">
+        <div style="display:grid;grid-template-columns:110px minmax(0,1fr) 70px 70px 90px;gap:0 14px;align-items:center;padding:7px 14px;border-bottom:1px solid rgba(68,68,68,.5);font-size:13px">
+          <span style="display:flex;align-items:center;gap:6px;color:{{ f.color }};font-size:12.5px"><span style="width:7px;height:7px;border-radius:50%;background:{{ f.color }}"></span>{{ f.word }}</span>
+          <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:12.5px ui-monospace,Menlo,monospace"><span style="color:#6c757d">{{ f.dirSlash }}</span><span style="color:{{ f.nameColor }};text-decoration:{{ f.strike }}">{{ f.name }}</span></span>
+          <span style="text-align:right;font:12px ui-monospace,Menlo,monospace;color:#00bc8c">{{ f.addS }}</span>
+          <span style="text-align:right;font:12px ui-monospace,Menlo,monospace;color:#e74c3c">{{ f.delS }}</span>
+          <div style="display:flex;gap:2px;justify-content:flex-end"><sc-for list="{{ f.blocks }}" as="b" hint-placeholder-count="5"><span style="width:9px;height:9px;border-radius:2px;background:{{ b }}"></span></sc-for></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  <div style="flex:none;display:flex;align-items:center;gap:12px;padding:8px 20px;border-top:1px solid #444;background:#2b2b2b;font-size:12.5px">
+    <span style="color:#fff;font-size:11px">▾</span>
+    <b>{{ tot.files }} files changed</b>
+    <span style="font:12px ui-monospace,Menlo,monospace;color:#00bc8c">{{ tot.addS }}</span><span style="font:12px ui-monospace,Menlo,monospace;color:#e74c3c">{{ tot.delS }}</span>
+    <div style="display:flex;gap:2px"><sc-for list="{{ tot.blocks }}" as="b" hint-placeholder-count="5"><span style="width:9px;height:9px;border-radius:2px;background:{{ b }}"></span></sc-for></div>
+    <span style="flex:1"></span>
+    <span style="color:#6c757d">Last edit 10h ago · worktree websocket-close</span>
+  </div>
+  <div style="padding:14px 20px 18px;border-top:1px solid #444;flex:none"><div style="background:#303030;border:1px solid #444;border-radius:4px;padding:10px 12px;display:flex;align-items:center;gap:10px"><span style="flex:1;color:#6c757d;font-size:14px">Type a message and press Return to resume…</span><span style="font-size:12px;color:#adb5bd">Opus 5.5</span><span style="background:#00bc8c;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:700">Resume</span></div></div>
+</div>
+</div>
+
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const ST = {
+  A: { word: 'Added', color: '#00bc8c', pill: '#007a5e' },
+  M: { word: 'Modified', color: '#f39c12', pill: '#d68910' },
+  D: { word: 'Deleted', color: '#e74c3c', pill: '#a93226' },
+  R: { word: 'Renamed', color: '#3498db', pill: '#2980b9' },
+};
+const FILES = [
+  { p: 'server/digi_server/ws/sessions.py', s: 'M', a: 48, d: 12 },
+  { p: 'server/digi_server/controllers/api/auth.py', s: 'M', a: 31, d: 9 },
+  { p: 'server/digi_server/models/user.py', s: 'M', a: 6, d: 2 },
+  { p: 'server/test/ws/test_close_state.py', s: 'A', a: 142, d: 0 },
+  { p: 'server/test/api/test_change_password.py', s: 'A', a: 88, d: 0 },
+  { p: 'client-v3/src/stores/auth.ts', s: 'M', a: 14, d: 3 },
+  { p: 'client-v3/src/views/LoginView.vue', s: 'M', a: 9, d: 4 },
+  { p: 'client-v3/src/composables/useSocket.ts', s: 'R', a: 22, d: 5, from: 'client-v3/src/utils/socket.ts' },
+  { p: 'client-v3/src/utils/wsReconnect.ts', s: 'D', a: 0, d: 61 },
+  { p: 'client-v3/e2e/logout-switch-user.spec.ts', s: 'A', a: 57, d: 0 },
+];
+const HUNKS = {
+  'server/digi_server/ws/sessions.py': [
+    ['h', '@@ -84,14 +84,32 @@ class WebSocketController(SessionMixin, WebSocketHandler):'],
+    [' ', '    async def on_close(self) -> None:'],
+    ['-', '        await self.application.ws_sessions.remove(self)'],
+    ['-', '        self.close_state = None'],
+    ['+', '        if self.close_state is CloseState.CLOSING:'],
+    ['+', '            return'],
+    ['+', '        self.close_state = CloseState.CLOSING'],
+    ['+', '        try:'],
+    ['+', '            await self.application.ws_sessions.remove(self)'],
+    ['+', '        finally:'],
+    ['+', '            self.close_state = CloseState.CLOSED'],
+    [' ', ''],
+    [' ', '    def write_message(self, message, binary=False):'],
+    ['-', '        return super().write_message(message, binary)'],
+    ['+', '        if self.close_state is not CloseState.OPEN:'],
+    ['+', '            log.debug("Dropping message to closing socket %s", self.uuid)'],
+    ['+', '            return None'],
+    ['+', '        return super().write_message(message, binary)'],
+    ['h', '@@ -131,6 +149,12 @@ async def force_logout(self, user_id: int) -> None:'],
+    [' ', '        for client in self.clients_for(user_id):'],
+    ['+', '            if client.user_id != user_id:'],
+    ['+', '                continue'],
+    [' ', '            await client.send_logout()'],
+  ],
+  'client-v3/src/stores/auth.ts': [
+    ['h', '@@ -52,9 +52,20 @@ export const useAuthStore = defineStore(\'auth\', {'],
+    [' ', '    async logout() {'],
+    ['-', '      this.user = null;'],
+    ['+', '      this.pendingAuthentication = true;'],
+    ['+', '      try {'],
+    ['+', '        await api.post(\'/auth/logout\');'],
+    ['+', '      } finally {'],
+    ['+', '        this.user = null;'],
+    ['+', '        this.pendingAuthentication = false;'],
+    ['+', '      }'],
+    [' ', '      socket.reconnect();'],
+    [' ', '    },'],
+  ],
+};
+function hunk(f) {
+  if (HUNKS[f.p]) return HUNKS[f.p];
+  const name = f.p.split('/').pop();
+  if (f.s === 'A') return [['h', '@@ -0,0 +1,' + f.a + ' @@'], ['+', '"""Tests for ' + name + '."""'], ['+', 'import pytest'], ['+', ''], ['+', 'from digi_server.ws.sessions import CloseState'], ['+', ''], ['+', '@pytest.mark.asyncio'], ['+', 'async def test_close_is_idempotent(ws_client):'], ['+', '    await ws_client.close()'], ['+', '    await ws_client.close()'], ['+', '    assert ws_client.close_state is CloseState.CLOSED']];
+  if (f.s === 'D') return [['h', '@@ -1,' + f.d + ' +0,0 @@'], ['-', 'import { useSocket } from \'@/composables/useSocket\';'], ['-', ''], ['-', 'export function scheduleReconnect(delay = 1000) {'], ['-', '  const socket = useSocket();'], ['-', '  setTimeout(() => socket.connect(), delay);'], ['-', '}']];
+  return [['h', '@@ -12,6 +12,' + (6 + f.a - f.d) + ' @@'], [' ', 'from digi_server.models import db'], ['-', 'def change_password(user, new_password):'], ['+', 'async def change_password(user, new_password):'], ['+', '    await db.commit()'], [' ', '    return user']];
+}
+function diffRows(f) {
+  let o = 84, n = 84;
+  return hunk(f).map(([s, t]) => {
+    if (s === 'h') { const m = t.match(/-(\d+).*\+(\d+)/); if (m) { o = +m[1]; n = +m[2]; } return { s: '', t, o: '', n: '', bg: '#2b2b2b', fg: '#6c757d', sc: '#6c757d' }; }
+    const r = { s: s === ' ' ? '' : s, t, o: s === '+' ? '' : String(o), n: s === '-' ? '' : String(n), bg: s === '+' ? 'rgba(0,188,140,.12)' : s === '-' ? 'rgba(231,76,60,.14)' : 'transparent', fg: s === ' ' ? '#adb5bd' : '#fff', sc: s === '+' ? '#00bc8c' : '#e74c3c' };
+    if (s !== '+') o++; if (s !== '-') n++;
+    return r;
+  });
+}
+const blocks = (a, d) => { const t = a + d || 1, g = Math.round(5 * a / t); return Array.from({ length: 5 }, (_, i) => i < g ? '#00bc8c' : '#e74c3c'); };
+const T = s => ({ m: '●', mc: '#fff', c: '#fff', t: s });
+const M = s => ({ m: '', mc: '#6c757d', c: '#adb5bd', t: s });
+const TERM = [
+  T('The close path now runs once: on_close sets CLOSING before awaiting removal, and write_message drops anything sent after that.'),
+  M('Update(server/digi_server/ws/sessions.py)  +48 −12'),
+  M('Write(server/test/ws/test_close_state.py)  +142'),
+  T('Force-logout now skips connections belonging to other users. Added a test that fails if the filter is removed.'),
+  M('Update(client-v3/src/stores/auth.ts)  +14 −3'),
+  M('Ran 1 shell command'),
+  T('Backend: 709 targeted tests pass twice in parallel. client-v3 unit tests and typecheck pass.'),
+  { m: '✻', mc: '#6c757d', c: '#6c757d', t: 'Brewed for 22m 10s · done 0:31' },
+];
+class Component extends DCLogic {
+  state = { a: FILES[0].p, b: FILES[0].p };
+  renderVals() {
+    const view = (f, key) => {
+      const i = f.p.lastIndexOf('/');
+      return { ...f, name: f.p.slice(i + 1), dir: f.p.slice(0, i), dirSlash: f.p.slice(0, i + 1), letter: f.s, word: ST[f.s].word, color: ST[f.s].color,
+        addS: '+' + f.a, delS: '−' + f.d, strike: f.s === 'D' ? 'line-through' : 'none', nameColor: f.s === 'D' ? '#adb5bd' : '#fff',
+        blocks: blocks(f.a, f.d), renamed: !!f.from, bg: this.state[key] === f.p ? 'rgba(52,152,219,.35)' : 'transparent',
+        onSelect: () => this.setState({ [key]: this.state[key] === f.p && key === 'a' ? '' : f.p }) };
+    };
+    const a = FILES.reduce((s, f) => s + f.a, 0), d = FILES.reduce((s, f) => s + f.d, 0);
+    const cnt = k => FILES.filter(f => f.s === k).length;
+    const tot = { files: String(FILES.length), addS: '+' + a, delS: '−' + d, blocks: blocks(a, d),
+      counts: ['A', 'M', 'D', 'R'].map(k => ({ color: ST[k].color, label: cnt(k) + ' ' + ST[k].word })) };
+    const groups = {};
+    FILES.forEach(f => { const v = view(f, 'a'); (groups[v.dir] = groups[v.dir] || []).push({ ...v, open: this.state.a === f.p, preview: diffRows(f).slice(1, 9) }); });
+    const groupsA = Object.keys(groups).map(dir => ({ dir: dir + '/', files: groups[dir] }));
+    const filesB = FILES.map(f => view(f, 'b'));
+    const sf = FILES.find(f => f.p === this.state.b) || FILES[0];
+    const selB = { path: sf.p, word: ST[sf.s].word, pill: ST[sf.s].pill, addS: '+' + sf.a, delS: '−' + sf.d, renamed: !!sf.from, from: sf.from || '', diff: diffRows(sf) };
+    return { tot, groupsA, filesB, selB, term: TERM };
+  }
+}
+</script>
+</body>
+</html>
