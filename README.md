@@ -15,7 +15,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 ## Features
 
 - **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages. Drag the divider to resize it.
-  - Each project header shows how many of its sessions are Working, Awaiting Input and Completed, as coloured pills (a pill appears only when its count isn't zero); each folder shows the same for its own sessions. The footer shows the same totals for all projects. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
+  - Each project header shows how many of its sessions are Working, Awaiting Input and Completed, as coloured pills (a pill appears only when its count isn't zero); each folder shows the same for its own sessions. The pills count what the filters show (text, status and the recent-activity window), so they always match the list. The footer shows the same totals for all projects. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
   - Only sessions active in the last 2 weeks are shown by default; sessions that are working, awaiting input, open in a tab or selected always show. The end of the list says how many are hidden, with Show All. Change the window (a preset or any number of days, or Any time) from the filter button or Settings → General.
   - Icons beside a session: a terminal (also open in a terminal outside Claudio), a branch (runs in its own git worktree) and a pull request (with a count when there's more than one). Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.

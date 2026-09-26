@@ -246,6 +246,11 @@ public struct StatusCounts: Equatable, Sendable {
 
     public var total: Int { working + awaitingInput + completed }
 
+    public static func + (a: StatusCounts, b: StatusCounts) -> StatusCounts {
+        StatusCounts(working: a.working + b.working, awaitingInput: a.awaitingInput + b.awaitingInput,
+                     completed: a.completed + b.completed)
+    }
+
     public subscript(status: SessionStatus) -> Int {
         switch status {
         case .working: return working

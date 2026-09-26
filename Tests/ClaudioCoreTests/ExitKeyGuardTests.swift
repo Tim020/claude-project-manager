@@ -53,15 +53,51 @@ final class ProjectStatusCountTests: XCTestCase {
         XCTAssertEqual(code.statusCounts, StatusCounts(working: 1, awaitingInput: 1, completed: 1), "archived don't count; collapsed still counts")
         XCTAssertEqual(tree.first { $0.id == other }?.statusCounts, StatusCounts(working: 1))
 
-        // Folders count their own sessions, collapsed or filtered or not.
+        // Folders count their own sessions, collapsed or not.
         ws.toggleCollapsed(p)
         ws.toggleCollapsed(.folder(f))
         let folders = try XCTUnwrap(Sidebar.build(ws, filter: "", home: "/").first { $0.id == p }?.folders)
         XCTAssertEqual(folders.first { $0.name == "F" }?.statusCounts, StatusCounts(working: 1))
         XCTAssertEqual(folders.first { $0.isUnfiled }?.statusCounts, StatusCounts(awaitingInput: 1, completed: 1))
-        let filtered = Sidebar.build(ws, filter: "", status: .completed, home: "/").first { $0.id == p }?.folders
-        XCTAssertEqual(filtered?.first { $0.isUnfiled }?.statusCounts, StatusCounts(awaitingInput: 1, completed: 1),
-                       "a status filter hides sessions but not their counts")
+    }
+
+    func testCountsMatchWhatTheFiltersShow() throws {
+        let now = Date(timeIntervalSince1970: 1_790_352_000)
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code")
+        let f = try ws.createFolder(in: p, named: "F")
+        func add(_ name: String, _ status: SessionStatus, daysAgo: Double, folder: UUID? = nil) throws {
+            let when = now.addingTimeInterval(-daysAgo * 86_400)
+            try ws.addSession(Session(projectID: p, name: name, workingDirectory: "/code", status: status,
+                                      createdAt: when, lastActivity: when), toFolder: folder)
+        }
+        try add("busy api", .working, daysAgo: 1, folder: f)
+        try add("done api", .completed, daysAgo: 2, folder: f)
+        try add("old api", .completed, daysAgo: 30, folder: f)
+        try add("asks ui", .awaitingInput, daysAgo: 1)
+
+        func counts(_ tree: [SidebarProject]) -> (project: StatusCounts?, folder: StatusCounts?) {
+            let project = tree.first { $0.id == p }
+            return (project?.statusCounts, project?.folders.first { $0.name == "F" }?.statusCounts)
+        }
+
+        var c = counts(Sidebar.build(ws, filter: "", home: "/"))
+        XCTAssertEqual(c.project, StatusCounts(working: 1, awaitingInput: 1, completed: 2))
+        XCTAssertEqual(c.folder, StatusCounts(working: 1, completed: 2))
+
+        c = counts(Sidebar.build(ws, filter: "", activeSince: now.addingTimeInterval(-14 * 86_400), home: "/"))
+        XCTAssertEqual(c.project, StatusCounts(working: 1, awaitingInput: 1, completed: 1), "old sessions hidden by the window aren't counted")
+        XCTAssertEqual(c.folder, StatusCounts(working: 1, completed: 1))
+
+        c = counts(Sidebar.build(ws, filter: "", status: .completed, home: "/"))
+        XCTAssertEqual(c.project, StatusCounts(completed: 2), "a status filter leaves only its own pill")
+        XCTAssertEqual(c.folder, StatusCounts(completed: 2))
+
+        c = counts(Sidebar.build(ws, filter: "api", home: "/"))
+        XCTAssertEqual(c.project, StatusCounts(working: 1, completed: 2), "the text filter narrows the counts too")
+
+        c = counts(Sidebar.build(ws, filter: "code", home: "/"))
+        XCTAssertEqual(c.project, StatusCounts(working: 1, awaitingInput: 1, completed: 2), "a matching project shows (and counts) everything")
     }
 }
 
