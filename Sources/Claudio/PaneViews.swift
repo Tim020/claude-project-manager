@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 /// pane (and move its terminal) whenever the tree around it changed shape.
 struct PaneArea: View {
     @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     /// A divider being dragged: the split as it was when the drag started,
     /// and its shares now. Saved when the drag ends.
     @State private var drag: (handle: PaneDividerHandle, fractions: [Double])?
@@ -45,6 +46,7 @@ struct PaneArea: View {
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
+        .onChange(of: model.panes) { commands.dropTarget = nil }
     }
 }
 
@@ -93,7 +95,6 @@ private struct PaneGroupView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
     let group: PaneGroup
-    @State private var dropZone: PaneDropZone?
 
     var body: some View {
         let isFocused = model.panes.focusedGroupID == group.id
@@ -109,12 +110,12 @@ private struct PaneGroupView: View {
                     } else {
                         DS.window
                     }
-                    if let dropZone {
-                        DropZoneHighlight(zone: dropZone, size: geometry.size)
+                    if let target = commands.dropTarget, target.groupID == group.id {
+                        DropZoneHighlight(zone: target.zone, size: geometry.size)
                     }
                 }
                 .onDrop(of: paneDropTypes, delegate: PaneDropDelegate(
-                    group: group, size: geometry.size, zone: $dropZone, model: model, commands: commands))
+                    group: group, size: geometry.size, model: model, commands: commands))
             }
         }
         .overlay {
@@ -157,7 +158,6 @@ private struct DropZoneHighlight: View {
 private struct PaneDropDelegate: DropDelegate {
     let group: PaneGroup
     let size: CGSize
-    @Binding var zone: PaneDropZone?
     let model: AppModel
     let commands: UICommands
 
@@ -166,23 +166,21 @@ private struct PaneDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        zone = zone(for: info)
+        target(info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let next = zone(for: info)
-        if next != zone { zone = next }
+        target(info)
         return DropProposal(operation: .move)
     }
 
     func dropExited(info: DropInfo) {
-        zone = nil
+        if commands.dropTarget?.groupID == group.id { commands.dropTarget = nil }
     }
 
     func performDrop(info: DropInfo) -> Bool {
         let target = zone(for: info)
-        zone = nil
-        commands.draggedTabID = nil
+        commands.endDrag()
         let groupID = group.id
         loadSessionID(from: info.itemProviders(for: paneDropTypes)) { id in
             switch target {
@@ -191,6 +189,11 @@ private struct PaneDropDelegate: DropDelegate {
             }
         }
         return true
+    }
+
+    private func target(_ info: DropInfo) {
+        let next = PaneDropTarget(groupID: group.id, zone: zone(for: info))
+        if commands.dropTarget != next { commands.dropTarget = next }
     }
 
     private func zone(for info: DropInfo) -> PaneDropZone {

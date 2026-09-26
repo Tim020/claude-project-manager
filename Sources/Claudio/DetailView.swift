@@ -271,7 +271,7 @@ struct TabStrip: View {
         .overlay(alignment: .bottom) { HorizontalRule() }
         // Dropping on the strip's empty space adds the tab at the end.
         .onDrop(of: paneDropTypes, isTargeted: $isDropTarget) { providers in
-            commands.draggedTabID = nil
+            commands.endDrag()
             loadSessionID(from: providers) { model.moveTab($0, toPane: group.id) }
             return true
         }
@@ -378,6 +378,7 @@ private struct TabItem: View {
         .onHover { hovering = $0 }
         .onTapGesture { model.select(session.id) }
         .onDrag {
+            commands.endDrag()
             commands.draggedTabID = session.id
             return tabDragItem(session.id)
         } preview: {
@@ -389,7 +390,7 @@ private struct TabItem: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
         }
         .onDrop(of: paneDropTypes, isTargeted: $isDropTarget) { providers in
-            commands.draggedTabID = nil
+            commands.endDrag()
             loadSessionID(from: providers) { id in
                 guard id != session.id else { return }
                 model.moveTab(id, toPane: group.id, at: index)

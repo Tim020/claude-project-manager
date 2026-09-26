@@ -228,5 +228,19 @@ final class UICommands {
     /// beside itself. Cleared on drop; a cancelled drag leaves it stale, which
     /// only matters for that one-tab pane.
     var draggedTabID: UUID?
+    /// The pane a drag is over and where it would land. One for the whole
+    /// window, since panes aren't always told when a drag leaves them.
+    var dropTarget: PaneDropTarget?
+
+    /// A drag finished (dropped anywhere): no pane is a target any more.
+    func endDrag() {
+        draggedTabID = nil
+        dropTarget = nil
+    }
+}
+
+struct PaneDropTarget: Equatable {
+    var groupID: UUID
+    var zone: PaneDropZone
 }
 #endif
