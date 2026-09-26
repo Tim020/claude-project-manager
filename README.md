@@ -19,8 +19,9 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Only sessions active in the last 2 weeks are shown by default; sessions that are working, awaiting input, open in a tab or selected always show. The end of the list says how many are hidden, with Show All. Change the window (a preset or any number of days, or Any time) from the filter button or Settings → General.
   - Icons beside a session: a terminal (also open in a terminal outside Claudio), a branch (runs in its own git worktree) and a pull request (with a count when there's more than one). Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.
-- **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place. Double-click a folder to rename it later.
+- **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place (Return or a click elsewhere saves the name, Esc cancels). Double-click a folder to rename it later.
   - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
+  - Drag a folder onto another to put it just above, or onto a project header to move it (with its sessions) to the end of that project. Drag a project's header onto another project to reorder projects.
   - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running. Right-click a tab for Close Other Tabs, Close Tabs to the Left / Right, Close Completed Tabs and Close All Tabs.
@@ -37,7 +38,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   The header's **Files +a −d** button (⌥⌘F) opens an inspector beside the terminal. It groups files by folder, with coloured A/M/D/R letters, and clicking a file shows a preview of its diff with Open Full Diff (right-click for Copy Path). The **Terminal / Changes** switch in the tab strip (⌥⌘C) swaps the pane for the Changes view: a filterable file list and the selected file's full diff with line numbers. Lists refresh after each tool call, and every 15 seconds for the selected session.
 - **Context window.** Each session's header (and split pane) shows how full its context window is: teal, then orange from 60%, red from 85%. Sessions started or resumed in Claudio report it exactly through Claude Code's status line. For other sessions it's estimated from the token counts in their history, shown with a `~` and a fainter bar. History doesn't record the window size, so the estimate assumes 200k until usage passes that (or the model is a `[1m]` one).
 - **Roles.** Optional labels for sessions (Code, Review, Research by default). Pick one in the New Session sheet, or change it later from the role tag in the session header ("Add Role" when there's none) or the Role submenu when you right-click a session or tab. Edit the list in Settings → Roles.
-- **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
+- **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`). By default each works in its own git worktree (`.claude/worktrees/<name>`), so sessions don't step on each other. The agent creates the worktree itself before its first edit, so it also commits (and pushes) its work there. Untick the worktree option to let it edit the project's checkout instead.
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
   - Claude Code stays open in its tab: a second Ctrl+C or Ctrl+D on an empty prompt, which would quit it, is ignored with a short hint (close the tab to detach, or use Stop Session). A single Ctrl+C still interrupts Claude or clears the prompt.
   - Shift+Enter adds a new line to the prompt instead of sending it, as in iTerm2 or Ghostty.
@@ -62,7 +63,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Notifications.** macOS notifications when a session needs your input or finishes (and, if you turn it on, when an agent stops unexpectedly). They're skipped for the session you're looking at while Claudio is in front; clicking one opens its session. Choose which ones, and whether they play a sound, in Settings. They need the bundled `Claudio.app` (not `swift run`), and macOS asks for permission on first launch.
 - **Settings** (⌘,). A sidebar of pages, each with grouped rows:
   - **General:** the `claude` executable and Claude Code's setup checklist, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
-  - **New Sessions:** Direct or Background sessions, plus the default model and permissions.
+  - **New Sessions:** Direct or Background sessions, the default model, and default permissions for background agents (Auto) and for sessions run in a terminal.
   - **Notifications**, **Roles** and **About**.
 - **Claude Code setup checks.** At launch (and when you come back to Claudio, at most every 5 minutes), Claudio checks three things:
   - that Claude Code is installed and runs (`claude --version`)
@@ -103,7 +104,7 @@ The project is built test-first. All logic lives in the platform-independent `Cl
 - hook event parsing and status reduction, using fixtures recorded from real `claude` runs
 - JSONL history parsing and transcript building
 - terminal launch commands, including shell quoting and hook commands run in a real shell
-- `claude agents --json` parsing (recorded output), background agent commands, worktree naming, and the agent lifecycle in `AppModel`
+- `claude agents --json` parsing (recorded output), background agent commands, worktree isolation, and the agent lifecycle in `AppModel`
 - session discovery from `.jsonl` history
 - launch arguments and executable lookup
 - persistence

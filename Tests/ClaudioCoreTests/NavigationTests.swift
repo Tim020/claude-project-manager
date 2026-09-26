@@ -129,4 +129,69 @@ final class NavigationModelTests: XCTestCase {
             XCTAssertEqual(store.state.settings.sidebarWidth, AppSettings.sidebarWidthRange.upperBound)
         }
     }
+
+    func testDragPayloadsRoundTrip() {
+        let id = UUID()
+        for item in [SidebarDragItem.session(id), .folder(id), .project(id)] {
+            XCTAssertEqual(SidebarDragItem(payload: item.payload), item)
+        }
+        XCTAssertEqual(SidebarDragItem.session(id).payload, id.uuidString, "sessions stay a bare UUID")
+        XCTAssertNil(SidebarDragItem(payload: "folder:nope"))
+        XCTAssertNil(SidebarDragItem(payload: "some text"))
+    }
+
+    func testDroppingFoldersAndProjectsReordersThem() throws {
+        try MainActor.assumeIsolated {
+            let store = MemoryStore()
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p1 = model.addProject(path: "/code/a")
+            let p2 = model.addProject(path: "/code/b")
+            let a = try XCTUnwrap(model.createFolder(in: p1))
+            let b = try XCTUnwrap(model.createFolder(in: p1))
+            model.cancelRename()
+
+            // A folder on a folder goes just above it; on Unfiled, last.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+            XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .group(.folder(a))), "onto itself")
+
+            // A folder on another project's header moves there.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(a).payload], on: .project(p2)))
+            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a])
+
+            // A project dropped anywhere in another goes just above it.
+            XCTAssertTrue(model.drop([SidebarDragItem.project(p2).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertEqual(model.workspace.projects.map(\.id), [p2, p1])
+            XCTAssertEqual(store.state.workspace.projects.map(\.id), [p2, p1], "saved")
+            XCTAssertFalse(model.drop([SidebarDragItem.project(p2).payload], on: .project(p2)))
+        }
+    }
+
+    func testDroppingASessionStillFilesIt() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            let request = NewSessionRequest(projectID: p, folderID: nil, name: "x", role: .code, prompt: "", model: nil, permissionMode: .standard)
+            let a = try XCTUnwrap(model.createSession(request))
+            let b = try XCTUnwrap(model.createSession(request))
+            XCTAssertTrue(model.drop([a.uuidString], on: .group(.folder(f))))
+            XCTAssertEqual(model.workspace.folder(f)?.sessionIDs, [a])
+            XCTAssertTrue(model.drop([b.uuidString], on: .session(a)))
+            XCTAssertEqual(model.workspace.folder(f)?.sessionIDs, [b, a])
+            XCTAssertTrue(model.drop([b.uuidString], on: .project(p)))
+            XCTAssertEqual(model.workspace.group(of: b), .unfiled(projectID: p))
+            XCTAssertFalse(model.drop([SidebarDragItem.folder(f).payload], on: .session(a)))
+        }
+    }
 }

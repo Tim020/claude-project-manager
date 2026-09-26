@@ -10,7 +10,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
-    /// Give a background agent its own git worktree (when the project is a git repo).
+    /// Have a background agent work in its own git worktree (when the project
+    /// is a git repo) rather than in the project's checkout.
     public var useWorktree = true
 
     public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
@@ -608,6 +609,57 @@ public final class AppModel {
         save()
     }
 
+    /// Where something was dropped in the sidebar.
+    public enum SidebarDropTarget: Sendable {
+        case project(UUID)
+        case group(SessionGroup)
+        case session(UUID)
+    }
+
+    /// Handles sidebar drag and drop (payloads as `SidebarDragItem`s). A
+    /// session goes into the group, or just above the session, it's dropped on
+    /// (Unfiled for a project header). A folder goes just above the folder
+    /// it's dropped on, or last when dropped on a project header or Unfiled
+    /// (which always comes last). A project goes just above the project it's
+    /// dropped anywhere in. Returns whether anything moved.
+    @discardableResult
+    public func drop(_ payloads: [String], on target: SidebarDropTarget) -> Bool {
+        let before = state.workspace
+        for item in payloads.compactMap(SidebarDragItem.init(payload:)) {
+            switch (item, target) {
+            case (.session(let id), .project(let projectID)):
+                attempt { try state.workspace.moveSession(id, to: .unfiled(projectID: projectID)) }
+            case (.session(let id), .group(let group)):
+                attempt { try state.workspace.moveSession(id, to: group) }
+            case (.session(let id), .session(let targetID)):
+                guard id != targetID else { continue }
+                attempt { try state.workspace.moveSession(id, before: targetID) }
+            case (.folder(let id), .project(let projectID)), (.folder(let id), .group(.unfiled(let projectID))):
+                attempt { try state.workspace.moveFolder(id, before: nil, inProject: projectID) }
+            case (.folder(let id), .group(.folder(let targetID))):
+                guard let projectID = state.workspace.projectID(containingFolder: targetID) else { continue }
+                attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+            case (.folder, .session):
+                continue
+            case (.project(let id), _):
+                guard let targetProject = projectID(of: target) else { continue }
+                state.workspace.moveProject(id, before: targetProject)
+            }
+        }
+        guard state.workspace != before else { return false }
+        save()
+        return true
+    }
+
+    private func projectID(of target: SidebarDropTarget) -> UUID? {
+        switch target {
+        case .project(let id): return id
+        case .group(.unfiled(let id)): return id
+        case .group(.folder(let id)): return state.workspace.projectID(containingFolder: id)
+        case .session(let id): return state.workspace.session(id)?.projectID
+        }
+    }
+
     public func archiveCompleted(in group: SessionGroup) {
         state.workspace.archiveCompleted(in: group)
         if let selected = selectedSessionID, state.workspace.session(selected)?.isArchived == true {
@@ -885,11 +937,9 @@ public final class AppModel {
         select(session.id)
         save()
         if background {
-            let worktree = request.useWorktree && isGitRepository(project.path)
-                ? Worktree.uniqueName(for: Worktree.name(for: session.name), existing: Worktree.existingNames(in: project.path))
-                : nil
+            let isolation: BackgroundIsolation? = isGitRepository(project.path) ? (request.useWorktree ? .worktree : .inPlace) : nil
             let id = session.id
-            enqueue { await self.dispatch(id, prompt: prompt, worktree: worktree) }
+            enqueue { await self.dispatch(id, prompt: prompt, isolation: isolation) }
         } else {
             start(session.id, prompt: prompt)
         }
@@ -1051,18 +1101,24 @@ public final class AppModel {
         state.workspace.updateSession(sessionID) { $0.status = .awaitingInput; $0.needsAction = text }
     }
 
-    private func dispatch(_ sessionID: UUID, prompt: String, worktree: String?) async {
+    private func dispatch(_ sessionID: UUID, prompt: String, isolation: BackgroundIsolation?) async {
         guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else {
             applyStatus(sessionID, .completed)
             return
         }
-        let result = await run(commands.dispatch(session: session, prompt: prompt, worktree: worktree))
+        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation))
         await linkDispatched(sessionID, result: result)
     }
 
     private func resumeInBackground(_ sessionID: UUID, prompt: String? = nil) async {
-        guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
-        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: session.agentID != nil))
+        guard var session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
+        let continuingAgent = session.agentID != nil
+        // Conversations found in the history (and ones first run in a terminal)
+        // have Ask, which would leave an unattended agent waiting on every tool.
+        if !continuingAgent && session.permissionMode == .standard {
+            session.permissionMode = state.settings.defaultBackgroundPermissionMode
+        }
+        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent))
         await linkDispatched(sessionID, result: result)
     }
 

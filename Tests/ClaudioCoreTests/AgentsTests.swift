@@ -53,19 +53,6 @@ final class AgentListParserTests: XCTestCase {
 }
 
 final class WorktreeTests: XCTestCase {
-    func testSlugifiesSessionNames() {
-        XCTAssertEqual(Worktree.name(for: "PR review inline #1427"), "pr-review-inline-1427")
-        XCTAssertEqual(Worktree.name(for: "  Fix: storage/bug!! "), "fix-storage-bug")
-        XCTAssertEqual(Worktree.name(for: "!!!"), "session")
-        XCTAssertLessThanOrEqual(Worktree.name(for: String(repeating: "word ", count: 30)).count, 40)
-        XCTAssertFalse(Worktree.name(for: String(repeating: "word ", count: 30)).hasSuffix("-"))
-    }
-
-    func testUniqueNamesAvoidExistingWorktrees() {
-        XCTAssertEqual(Worktree.uniqueName(for: "probe", existing: []), "probe")
-        XCTAssertEqual(Worktree.uniqueName(for: "probe", existing: ["probe", "probe-2"]), "probe-3")
-    }
-
     func testRepositoryRootOfWorktreePath() {
         XCTAssertEqual(Worktree.repositoryRoot(of: "/Users/tim/Code/DigiScript/.claude/worktrees/collab-v3-phase1"), "/Users/tim/Code/DigiScript")
         XCTAssertEqual(Worktree.repositoryRoot(of: "/Users/tim/Code/DigiScript/.claude/worktrees/a/sub"), "/Users/tim/Code/DigiScript")
@@ -109,19 +96,32 @@ final class AgentCommandTests: XCTestCase {
                       baseEnvironment: ["PATH": "/usr/bin", "HOME": "/Users/tim"])
     }
 
-    func testDispatchInWorktree() {
-        let command = context().dispatch(session: session, prompt: "Fix it", worktree: "storage-fix")
-        XCTAssertEqual(Array(command.claudeArguments.prefix(8)), [
-            "Fix it", "--bg", "--worktree", "storage-fix", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
+    /// No `--worktree`: an agent started in a worktree it didn't enter itself
+    /// asks before committing. Isolation goes in the settings instead.
+    func testDispatchInWorktree() throws {
+        let command = context().dispatch(session: session, prompt: "Fix it", isolation: .worktree)
+        XCTAssertEqual(Array(command.claudeArguments.prefix(6)), [
+            "Fix it", "--bg", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
         ])
-        XCTAssertEqual(command.claudeArguments[8], "--settings")
+        XCTAssertEqual(command.claudeArguments[6], "--settings")
+        XCTAssertFalse(command.claudeArguments.contains("--worktree"))
+        XCTAssertEqual(try isolation(in: command), "worktree")
         XCTAssertTrue(command.arguments[2].hasPrefix("cd '/Users/tim/My Code/app' && exec '/Users/tim/.local/bin/claude' 'Fix it' '--bg' "))
         XCTAssertEqual(command.executable, "/bin/zsh")
     }
 
-    func testDispatchWithoutWorktree() {
-        let command = context().dispatch(session: session, prompt: "Fix it", worktree: nil)
-        XCTAssertFalse(command.claudeArguments.contains("--worktree"))
+    func testDispatchWithoutWorktreeEditsInPlace() throws {
+        XCTAssertEqual(try isolation(in: context().dispatch(session: session, prompt: "Fix it", isolation: .inPlace)), "none")
+        XCTAssertNil(try isolation(in: context().dispatch(session: session, prompt: "Fix it", isolation: nil)),
+                     "outside a git repository the user's own setting stands")
+    }
+
+    /// `worktree.bgIsolation` from the `--settings` JSON.
+    private func isolation(in command: TerminalLaunch) throws -> String? {
+        let index = try XCTUnwrap(command.claudeArguments.firstIndex(of: "--settings"))
+        let settings = try JSONDecoder().decode(JSONValue.self, from: Data(command.claudeArguments[index + 1].utf8))
+        XCTAssertNotNil(settings["hooks"], "the hooks stay alongside it")
+        return settings["worktree"]?["bgIsolation"]?.stringValue
     }
 
     func testResumeInBackground() {
