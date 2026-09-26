@@ -13,7 +13,9 @@ struct DetailView: View {
 
     var body: some View {
         Group {
-            if let session = model.selectedSession, let crumb = model.breadcrumb {
+            if let overview = model.activeOverview {
+                OverviewView(overview: overview)
+            } else if let session = model.selectedSession, let crumb = model.breadcrumb {
                 VStack(spacing: 0) {
                     DetailHeader(session: session, breadcrumb: crumb)
                     TabStrip(sessions: model.tabs, selectedID: session.id)
@@ -85,14 +87,24 @@ private struct DetailHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(breadcrumb.project)
-                .font(DS.font(13))
-                .foregroundStyle(DS.muted)
+            Button { model.showOverview(.project(session.projectID)) } label: {
+                Text(breadcrumb.project)
+                    .font(DS.font(13))
+                    .foregroundStyle(DS.muted)
+            }
+            .buttonStyle(.plain)
+            .help("Show \(breadcrumb.project)'s pull requests")
             chevron
-            Text(breadcrumb.folder)
-                .font(DS.font(13))
-                .foregroundStyle(DS.muted)
-                .lineLimit(1)
+            Button {
+                if let group = model.workspace.group(of: session.id) { model.showOverview(.folder(group)) }
+            } label: {
+                Text(breadcrumb.folder)
+                    .font(DS.font(13))
+                    .foregroundStyle(DS.muted)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help("Show this folder's pull requests")
             chevron
             Text(breadcrumb.session)
                 .font(DS.font(14, .bold))
@@ -112,7 +124,7 @@ private struct DetailHeader: View {
                 LayoutToggle()
             }
             FilesButton(session: session)
-            pullRequestButton
+            SessionPullRequestButton(session: session)
             Menu {
                 SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
             } label: {
@@ -141,32 +153,6 @@ private struct DetailHeader: View {
         Image(systemName: "chevron.right")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(DS.dim)
-    }
-
-    @ViewBuilder
-    private var pullRequestButton: some View {
-        if session.pullRequestURLs.isEmpty {
-            Image(systemName: "arrow.triangle.pull")
-                .font(.system(size: 15))
-                .foregroundStyle(DS.dim.opacity(0.6))
-                .help("No pull requests yet")
-        } else {
-            Menu {
-                ForEach(session.pullRequestURLs, id: \.self) { url in
-                    Button(PullRequestDetector.number(from: url).map { "Open PR #\($0)" } ?? url) {
-                        if let link = URL(string: url) { NSWorkspace.shared.open(link) }
-                    }
-                }
-            } label: {
-                Image(systemName: "arrow.triangle.pull")
-                    .font(.system(size: 15))
-                    .foregroundStyle(DS.muted)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(PullRequestDetector.countLabel(session.pullRequestURLs.count))
-        }
     }
 }
 

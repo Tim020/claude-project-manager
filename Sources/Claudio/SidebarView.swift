@@ -230,6 +230,9 @@ private struct ProjectSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !project.isCollapsed && model.showsPullRequestsRow(projectID: project.id) {
+                PullRequestsSidebarRow(projectID: project.id)
+            }
             ForEach(project.folders) { folder in
                 FolderSection(folder: folder, projectID: project.id, now: now)
             }
@@ -366,12 +369,13 @@ private struct FolderSection: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            FolderPullRequestChip(group: folder.group)
             StatusCountPills(counts: folder.statusCounts)
         }
         .padding(.vertical, 5)
         .padding(.leading, SidebarIndent.folder)
         .padding(.trailing, 8)
-        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
+        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget || model.overview == .folder(folder.group) ? DS.selection : .clear))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
@@ -466,7 +470,7 @@ private struct SessionRow: View {
     @State private var confirmDelete = false
     @State private var isDropTarget = false
 
-    private var isSelected: Bool { model.selectedSessionID == session.id }
+    private var isSelected: Bool { model.selectedSessionID == session.id && model.overview == nil }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -487,7 +491,7 @@ private struct SessionRow: View {
                         Text(text).font(DS.font(10.5, .semibold))
                     }
                 }
-                .foregroundStyle(DS.dim)
+                .foregroundStyle(indicatorColor(indicator))
                 .help(indicator.help)
             }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
@@ -528,6 +532,12 @@ private struct SessionRow: View {
             Button("Cancel", role: .cancel) {}
         }
         .deleteSessionConfirmation(session: session, isPresented: $confirmDelete)
+    }
+
+    /// Pull requests take the colour of the first one's state, once loaded.
+    private func indicatorColor(_ indicator: SessionIndicator) -> Color {
+        guard indicator.kind == .pullRequests, let first = model.pullRequests(ofSession: session.id).first else { return DS.dim }
+        return DS.color(for: first.attention)
     }
 }
 

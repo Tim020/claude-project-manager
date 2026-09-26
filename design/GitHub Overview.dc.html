@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css"><style>html{background:#1a1a1a}body{margin:0;background:#1a1a1a;font-family:"Nunito Sans",Avenir,Helvetica,Arial,sans-serif;color:#fff;-webkit-font-smoothing:antialiased}a{color:#00bc8c;text-decoration:none}a:hover{color:#00997a}</style></helmet>
+<section id="t5" style="padding:40px 44px;display:flex;flex-direction:column;gap:20px">
+<div style="display:flex;align-items:baseline;gap:10px"><a href="#t5" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#00bc8c;color:#fff;border-radius:4px">5</a><span style="font-weight:700;font-size:14px">Pull requests: one model, three scopes (clickable)</span></div>
+<p style="margin:0;max-width:1040px;color:#adb5bd;font-size:13px;line-height:1.55;text-wrap:pretty">The PR URLs Claudio already picks up for each session (<span style="font-family:ui-monospace,Menlo,monospace;font-size:12px">pullRequestURLs</span>) are filled in with live GitHub data from <span style="font-family:ui-monospace,Menlo,monospace;font-size:12px">gh pr view</span>. Each window below is a working prototype that starts at a different scope. Try: <b style="color:#fff">Pull Requests</b> in the sidebar, a folder's PR chip, a session, a table row, breadcrumbs, and the PR button in a session header. Clicking a folder row collapses it, as it does today.</p>
+<div style="display:flex;flex-wrap:wrap;gap:28px;font-size:12px;color:#adb5bd">
+  <span style="display:flex;gap:12px;align-items:center"><b style="color:#fff">State</b><span style="color:#00bc8c">● Open</span><span style="color:#adb5bd">● Draft</span><span style="color:#5d8fc4">● Merged</span><span style="color:#e74c3c">● Closed</span></span>
+  <span style="display:flex;gap:12px;align-items:center"><b style="color:#fff">Checks</b><span style="color:#00bc8c"><i class="mdi mdi-check-circle"></i> Passing</span><span style="color:#f39c12"><i class="mdi mdi-progress-clock"></i> Running</span><span style="color:#e74c3c"><i class="mdi mdi-close-circle"></i> Failing</span></span>
+  <span style="display:flex;gap:12px;align-items:center"><b style="color:#fff">Review</b><span style="color:#00bc8c">Approved</span><span style="color:#f39c12">Changes Requested</span><span>Review Required</span></span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+<sc-for list="{{ frames }}" as="fr" hint-placeholder-count="3">
+<div id="{{ fr.id }}" style="display:flex;flex-direction:column;gap:10px;flex:none">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12px;color:#adb5bd"><a href="#{{ fr.id }}" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">{{ fr.id }}</a><span style="flex:1">{{ fr.label }}</span><span onClick="{{ fr.reset }}" style="cursor:pointer;color:#6c757d;display:flex;align-items:center;gap:4px" style-hover="color:#fff"><i class="mdi mdi-restore"></i>Reset</span></div>
+<div style="width:1280px;height:800px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;position:relative;user-select:none">
+
+  <div style="width:300px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+    <div style="height:52px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none">
+      <span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span>
+      <span style="flex:1"></span><i class="mdi mdi-folder-plus-outline" style="font-size:17px;color:#adb5bd"></i><i class="mdi mdi-plus" style="font-size:17px;color:#adb5bd"></i>
+    </div>
+    <div style="padding:0 12px 10px"><div style="display:flex;align-items:center;gap:6px;background:#222;border:1px solid #444;border-radius:4px;padding:5px 8px;color:#6c757d;font-size:13px"><i class="mdi mdi-magnify"></i><span style="flex:1">Filter sessions</span><i class="mdi mdi-filter-variant"></i></div></div>
+    <div style="flex:1;overflow:auto;padding:0 8px 12px">
+      <sc-for list="{{ fr.projects }}" as="p" hint-placeholder-count="2">
+        <div style="padding-top:10px">
+          <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;color:#adb5bd">
+            <i class="mdi {{ p.chevron }}" style="font-size:14px;width:14px"></i>
+            <span style="font-size:11px;font-weight:800;letter-spacing:.06em">{{ p.upper }}</span>
+            <span style="flex:1;text-align:right;font-size:11px;font-weight:600;color:#6c757d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.path }}</span>
+            <sc-for list="{{ p.pills }}" as="c" hint-placeholder-count="2"><span style="font-size:10.5px;font-weight:700;padding:0 6px;min-width:8px;text-align:center;border-radius:8px;color:{{ c.fg }};background:{{ c.bg }}">{{ c.n }}</span></sc-for>
+          </div>
+          <sc-if value="{{ p.open }}" hint-placeholder-val="{{ true }}">
+            <div onClick="{{ fr.goProject }}" style="display:flex;align-items:center;gap:7px;padding:5px 8px 5px 22px;margin-top:2px;border-radius:4px;cursor:default;background:{{ fr.prRowBg }}" style-hover="box-shadow:inset 0 0 0 100px rgba(255,255,255,.04)">
+              <span style="width:8px"></span><i class="mdi mdi-source-pull" style="font-size:15px;width:16px;color:#00bc8c"></i>
+              <span style="font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap">Pull Requests</span>
+              <span style="font-size:10.5px;font-weight:700;padding:0 6px;border-radius:8px;white-space:nowrap;flex:none;color:#e74c3c;background:rgba(231,76,60,.2)">{{ attentionCount }}</span>
+              <span style="font-size:10.5px;font-weight:700;padding:0 6px;border-radius:8px;white-space:nowrap;flex:none;color:#adb5bd;background:rgba(108,117,125,.25)">{{ openCount }} open</span>
+            </div>
+            <sc-for list="{{ p.folders }}" as="f" hint-placeholder-count="3">
+              <div style="padding-top:2px">
+                <div onClick="{{ f.onToggle }}" style="display:flex;align-items:center;gap:7px;padding:5px 8px 5px 22px;border-radius:4px;cursor:default;background:{{ f.bg }}">
+                  <i class="mdi {{ f.chevron }}" style="font-size:11px;width:8px;color:#6c757d"></i>
+                  <i class="mdi {{ f.icon }}" style="font-size:15px;width:16px;color:{{ f.iconColor }}"></i>
+                  <span style="font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-style:{{ f.italic }}">{{ f.name }}</span>
+                  <sc-for list="{{ f.chips }}" as="c" hint-placeholder-count="1"><span onClick="{{ c.onOpen }}" title="View Pull Requests" style="display:flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:8px;background:#222;border:1px solid #444;color:#adb5bd;cursor:pointer" style-hover="border-color:#3498db;color:#fff"><span style="width:6px;height:6px;border-radius:50%;background:{{ c.color }}"></span><span>#{{ c.num }}{{ c.more }}</span></span></sc-for>
+                </div>
+                <sc-if value="{{ f.expanded }}" hint-placeholder-val="{{ true }}">
+                <sc-for list="{{ f.sessions }}" as="s" hint-placeholder-count="2">
+                  <div onClick="{{ s.onOpen }}" style="display:flex;align-items:center;gap:8px;padding:5px 8px 5px 54px;border-radius:4px;cursor:default;background:{{ s.bg }}" style-hover="box-shadow:inset 0 0 0 100px rgba(255,255,255,.04)">
+                    <span style="width:8px;height:8px;border-radius:50%;flex:none;background:{{ s.color }}"></span>
+                    <span style="font-size:13.5px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:{{ s.nameColor }}">{{ s.name }}</span>
+                    <sc-if value="{{ s.hasPr }}" hint-placeholder-val="{{ false }}"><span style="display:flex;align-items:center;gap:2px;font-size:10.5px;font-weight:600;color:{{ s.prColor }}"><i class="mdi mdi-source-pull" style="font-size:12px"></i>{{ s.prCount }}</span></sc-if>
+                    <span style="font-size:11px;color:#adb5bd">{{ s.age }}</span>
+                  </div>
+                </sc-for>
+                </sc-if>
+              </div>
+            </sc-for>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+    <div style="border-top:1px solid #444;padding:8px 10px;display:flex;gap:10px;font-size:12px;color:#adb5bd;flex:none">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#00bc8c"></span>1 Working</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#f39c12"></span>0 Awaiting Input</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>8 Completed</span>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column;position:relative">
+
+  <sc-if value="{{ fr.isProject }}" hint-placeholder-val="{{ false }}">
+    <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:1px solid #444">
+      <span style="font-size:13px;color:#adb5bd">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span><b style="font-size:14px">Pull Requests</b>
+      <span style="font:11.5px ui-monospace,Menlo,monospace;color:#6c757d">dreamteamprod/DigiScript</span>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;color:#6c757d">Updated 1m ago</span><i onClick="{{ fr.refresh }}" class="mdi mdi-refresh" style="font-size:16px;color:#adb5bd;cursor:pointer"></i>
+      <span onClick="{{ fr.openGitHub }}" style="padding:3px 10px;border:1px solid #3498db;color:#3498db;border-radius:4px;font-size:12px;cursor:pointer" style-hover="background:#3498db;color:#fff">Open on GitHub</span>
+    </div>
+    <div style="flex:none;display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid #444">
+      <div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px">
+        <sc-for list="{{ fr.proj.filters }}" as="t" hint-placeholder-count="4"><span onClick="{{ t.onPick }}" style="padding:4px 12px;display:flex;gap:6px;align-items:center;cursor:default;background:{{ t.bg }};color:{{ t.fg }}">{{ t.label }}<span style="font-size:11px;font-weight:700;color:{{ t.countFg }}">{{ t.count }}</span></span></sc-for>
+      </div>
+      <span style="flex:1"></span>
+      <label onClick="{{ fr.toggleUnlinked }}" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#adb5bd;cursor:default"><span style="width:12px;height:12px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;background:{{ fr.proj.boxBg }};border:1px solid {{ fr.proj.boxBorder }}"><i class="mdi {{ fr.proj.boxIcon }}"></i></span>Include PRs without a session</label>
+    </div>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 80px 96px 128px 120px 84px 44px;gap:0 14px;padding:8px 20px;font-size:11px;font-weight:800;letter-spacing:.05em;color:#6c757d;border-bottom:1px solid #444;flex:none">
+      <span>PULL REQUEST</span><span>STATE</span><span>CHECKS</span><span>REVIEW</span><span>SESSIONS</span><span style="text-align:right">CHANGES</span><span style="text-align:right">UPDATED</span>
+    </div>
+    <div style="flex:1;overflow:auto">
+      <sc-for list="{{ fr.proj.groups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:7px;padding:12px 20px 6px;font-size:12.5px;font-weight:700;color:#adb5bd"><i class="mdi {{ g.icon }}" style="font-size:15px;color:{{ g.iconColor }}"></i><span style="font-style:{{ g.italic }}">{{ g.name }}</span><span style="font-weight:600;color:#6c757d">{{ g.note }}</span></div>
+        <sc-for list="{{ g.prs }}" as="r" hint-placeholder-count="2">
+          <div onClick="{{ r.onOpen }}" style="display:grid;grid-template-columns:minmax(0,1fr) 80px 96px 128px 120px 84px 44px;gap:0 14px;align-items:center;padding:8px 20px;border-bottom:1px solid rgba(68,68,68,.5);cursor:default" style-hover="background:rgba(52,152,219,.12)">
+            <div style="min-width:0;display:flex;flex-direction:column;gap:1px">
+              <span style="font-size:13.5px;line-height:1.35;text-wrap:pretty"><span style="color:#adb5bd">#{{ r.num }}</span> {{ r.title }}</span>
+              <span style="font:11px ui-monospace,Menlo,monospace;color:#6c757d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.branch }} → main · {{ r.author }}</span>
+            </div>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:{{ r.stateColor }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.stateColor }}"></span>{{ r.state }}</span>
+            <span style="display:flex;align-items:center;gap:5px;font-size:12.5px;color:{{ r.checkColor }}"><i class="mdi {{ r.checkIcon }}" style="font-size:14px"></i>{{ r.checkText }}</span>
+            <span style="font-size:12.5px;color:{{ r.reviewColor }}">{{ r.review }}<span style="color:#6c757d">{{ r.commentsNote }}</span></span>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;min-width:0">
+              <sc-for list="{{ r.sessions }}" as="s" hint-placeholder-count="2"><span onClick="{{ s.onOpen }}" title="{{ s.name }}" style="display:flex;align-items:center;gap:5px;padding:1px 7px 1px 6px;border-radius:12px;background:#303030;border:1px solid #444;cursor:pointer" style-hover="border-color:#3498db"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:{{ s.color }}"></span><span style="font-size:10px;font-weight:800;letter-spacing:.04em;color:#adb5bd">{{ s.role }}</span></span></sc-for>
+              <sc-if value="{{ r.noSession }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px;color:#6c757d">None</span></sc-if>
+            </div>
+            <span style="text-align:right;font:11.5px ui-monospace,Menlo,monospace;white-space:nowrap"><span style="color:#00bc8c">+{{ r.add }}</span> <span style="color:#e74c3c">−{{ r.del }}</span></span>
+            <span style="text-align:right;font-size:12px;color:#adb5bd">{{ r.updated }}</span>
+          </div>
+        </sc-for>
+      </sc-for>
+      <sc-if value="{{ fr.proj.empty }}" hint-placeholder-val="{{ false }}"><div style="padding:48px 20px;text-align:center;color:#adb5bd;font-size:13.5px">No pull requests match this filter.</div></sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ fr.isFolder }}" hint-placeholder-val="{{ false }}">
+    <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:0.1rem solid #3498db">
+      <span onClick="{{ fr.goProject }}" style="font-size:13px;color:#adb5bd;cursor:pointer" style-hover="color:#fff">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span>
+      <i class="mdi {{ fr.fold.icon }}" style="font-size:17px;color:{{ fr.fold.iconColor }}"></i><b style="font-size:14px">{{ fr.fold.name }}</b>
+      <span style="font-size:12px;color:#6c757d">{{ fr.fold.summary }}</span>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;color:#6c757d">Updated 1m ago</span><i onClick="{{ fr.refresh }}" class="mdi mdi-refresh" style="font-size:16px;color:#adb5bd;cursor:pointer"></i>
+    </div>
+    <div style="flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:16px">
+      <sc-if value="{{ fr.fold.empty }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:64px 20px;text-align:center;display:flex;flex-direction:column;gap:6px;align-items:center"><i class="mdi mdi-source-pull" style="font-size:32px;color:#6c757d"></i><span style="font-size:15px">No pull requests yet</span><span style="font-size:13px;color:#adb5bd">Pull requests opened by sessions in this folder appear here.</span></div>
+      </sc-if>
+      <sc-for list="{{ fr.fold.prs }}" as="pr" hint-placeholder-count="1">
+        <div style="background:#303030;border-radius:4px;display:flex;flex-direction:column;flex:none">
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:16px 18px 14px;border-bottom:1px solid #444">
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;align-items:center;gap:10px"><span style="font-size:11.5px;font-weight:700;padding:1px 10px;border-radius:12px;background:{{ pr.pill }}">{{ pr.state }}</span><span style="font-size:20px;line-height:1.25"><span style="color:#adb5bd">#{{ pr.num }}</span> {{ pr.title }}</span></div>
+              <div style="display:flex;align-items:center;gap:12px;font-size:12px;color:#adb5bd"><span style="font:11.5px ui-monospace,Menlo,monospace;background:#222;border:1px solid #444;border-radius:4px;padding:1px 6px">{{ pr.branch }} → main</span><span>Opened by {{ pr.author }} · {{ pr.opened }}</span><span style="font:11.5px ui-monospace,Menlo,monospace"><span style="color:#00bc8c">+{{ pr.add }}</span> <span style="color:#e74c3c">−{{ pr.del }}</span></span></div>
+            </div>
+            <span onClick="{{ fr.openGitHub }}" style="padding:4px 12px;border:1px solid #3498db;color:#3498db;border-radius:4px;font-size:12.5px;cursor:pointer" style-hover="background:#3498db;color:#fff">Open on GitHub</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr))">
+            <div style="padding:14px 18px;border-right:1px solid #444;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;color:#6c757d;flex:1">CHECKS</span><span style="font-size:12px;color:{{ pr.checkColor }}">{{ pr.checkText }}</span></div>
+              <sc-for list="{{ pr.checks }}" as="c" hint-placeholder-count="6"><div style="display:flex;align-items:center;gap:8px;font-size:13px"><i class="mdi {{ c.icon }}" style="font-size:15px;color:{{ c.color }}"></i><span style="flex:1;font-family:ui-monospace,Menlo,monospace;font-size:12px;color:{{ c.fg }}">{{ c.name }}</span><span style="font-size:11.5px;color:#6c757d">{{ c.time }}</span></div></sc-for>
+            </div>
+            <div style="padding:14px 18px;border-right:1px solid #444;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;color:#6c757d;flex:1">REVIEW</span><span style="font-size:12px;color:{{ pr.reviewColor }}">{{ pr.review }}</span></div>
+              <sc-for list="{{ pr.reviewers }}" as="v" hint-placeholder-count="2"><div style="display:flex;align-items:center;gap:8px;font-size:13px"><i class="mdi {{ v.icon }}" style="font-size:15px;color:{{ v.color }}"></i><span style="flex:1">{{ v.name }} <span style="font-size:11px;color:#6c757d">{{ v.via }}</span></span><span style="font-size:11.5px;color:{{ v.color }}">{{ v.state }}</span></div></sc-for>
+              <div style="height:1px;background:#444"></div>
+              <div style="font-size:12.5px;color:#adb5bd;line-height:1.5">{{ pr.reviewNote }}</div>
+            </div>
+            <div style="padding:14px 18px;display:flex;flex-direction:column;gap:10px">
+              <span style="font-size:11px;font-weight:800;letter-spacing:.05em;color:#6c757d">SESSIONS</span>
+              <sc-for list="{{ pr.sessions }}" as="s" hint-placeholder-count="2">
+                <div onClick="{{ s.onOpen }}" style="display:flex;gap:9px;align-items:flex-start;cursor:pointer;border-radius:4px;padding:4px 6px;margin:-4px -6px" style-hover="background:rgba(52,152,219,.2)">
+                  <span style="width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;background:{{ s.color }}"></span>
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                    <div style="display:flex;align-items:center;gap:6px;font-size:13.5px"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ s.name }}</span><span style="font-size:10.5px;font-weight:800;letter-spacing:.04em;color:#adb5bd;border:1px solid #444;border-radius:4px;padding:0 5px">{{ s.role }}</span></div>
+                    <span style="font-size:12px;color:#adb5bd">{{ s.did }}</span>
+                  </div>
+                  <i class="mdi mdi-chevron-right" style="color:#6c757d"></i>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <sc-if value="{{ pr.hasComments }}" hint-placeholder-val="{{ false }}">
+          <div style="background:#303030;border-radius:4px;display:flex;flex-direction:column;flex:none">
+            <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid #444">
+              <b style="font-size:14px;flex:1">Unresolved Comments <span style="color:#adb5bd;font-weight:600">{{ pr.commentCount }}</span></b>
+            </div>
+            <sc-for list="{{ pr.comments }}" as="c" hint-placeholder-count="2">
+              <div style="display:flex;gap:12px;padding:12px 18px;border-bottom:1px solid rgba(68,68,68,.5)">
+                <i class="mdi mdi-comment-outline" style="font-size:15px;color:#adb5bd;flex:none"></i>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#adb5bd"><span style="font-family:ui-monospace,Menlo,monospace;color:#fff">{{ c.file }}</span><span>{{ c.by }}</span><sc-if value="{{ c.blocking }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;font-weight:700;padding:0 8px;border-radius:12px;background:#a93226;color:#fff">Blocking</span></sc-if></div>
+                  <span style="font-size:13.5px;line-height:1.45;text-wrap:pretty">{{ c.text }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ fr.isSession }}" hint-placeholder-val="{{ false }}">
+    <div style="height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 20px;background:#2b2b2b;border-bottom:1px solid #444">
+      <span onClick="{{ fr.goProject }}" style="font-size:13px;color:#adb5bd;cursor:pointer" style-hover="color:#fff">DigiScript</span><span style="color:#6c757d;font-size:11px">›</span><span onClick="{{ fr.sess.onFolder }}" style="font-size:13px;color:#adb5bd;cursor:pointer" style-hover="color:#fff">{{ fr.sess.folder }}</span><span style="color:#6c757d;font-size:11px">›</span><b style="font-size:14px">{{ fr.sess.name }}</b>
+      <span style="font-size:11px;font-weight:800;letter-spacing:.04em;color:#adb5bd;border:1px solid #444;border-radius:4px;padding:1px 6px">{{ fr.sess.role }}</span>
+      <span style="flex:1"></span>
+      <span style="font-size:12px;font-weight:700;padding:2px 10px;border-radius:12px;background:{{ fr.sess.statusBg }}">{{ fr.sess.status }}</span>
+      <span onClick="{{ fr.sess.onPr }}" title="{{ fr.sess.prHelp }}" style="display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:4px;font-size:12px;font-weight:700;cursor:pointer;background:{{ fr.sess.prBtnBg }};color:{{ fr.sess.prBtnFg }}"><i class="mdi mdi-source-pull" style="font-size:14px"></i>{{ fr.sess.prLabel }}<sc-if value="{{ fr.sess.hasPr }}" hint-placeholder-val="{{ false }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ fr.sess.prDot }}"></span></sc-if></span>
+      <span style="color:#adb5bd;font-size:15px">⋯</span>
+    </div>
+    <div style="display:flex;padding:0 20px;border-bottom:1px solid #444;flex:none;font-size:13.5px">
+      <sc-for list="{{ fr.sess.tabs }}" as="t" hint-placeholder-count="2"><div onClick="{{ t.onOpen }}" style="display:flex;align-items:center;gap:7px;padding:10px 14px;cursor:default;color:{{ t.fg }};box-shadow:{{ t.underline }}"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.color }}"></span>{{ t.name }}<span style="font-size:11px;color:#6c757d">{{ t.role }}</span></div></sc-for>
+    </div>
+    <div onClick="{{ fr.sess.closePop }}" style="flex:1;min-height:0;padding:20px 22px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;line-height:1.6;display:flex;flex-direction:column;gap:12px;overflow:hidden;opacity:{{ fr.sess.termOpacity }}">
+      <sc-for list="{{ fr.sess.term }}" as="l" hint-placeholder-count="6"><div style="display:flex;gap:10px"><span style="flex:none;width:12px;color:{{ l.mc }}">{{ l.m }}</span><span style="color:{{ l.c }};white-space:pre-wrap">{{ l.t }}</span></div></sc-for>
+    </div>
+    <div style="padding:14px 20px 18px;border-top:1px solid #444;flex:none"><div style="background:#303030;border:1px solid #444;border-radius:4px;padding:10px 12px;display:flex;align-items:center;gap:10px"><span style="flex:1;color:#6c757d;font-size:14px">Type a message and press Return to resume…</span><span style="font-size:12px;color:#adb5bd">Opus 5.5</span><span style="background:#00bc8c;border-radius:4px;padding:4px 12px;font-size:13px;font-weight:700">Resume</span></div></div>
+    <sc-if value="{{ fr.sess.pop }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;right:48px;top:58px;width:400px;background:#303030;border:1px solid #444;border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;flex-direction:column;max-height:660px;overflow:auto;z-index:2">
+      <sc-for list="{{ fr.sess.prs }}" as="pr" hint-placeholder-count="1">
+        <div style="border-bottom:1px solid #444">
+          <div style="padding:14px 16px 12px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid #444">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:700;padding:0 9px;border-radius:12px;background:{{ pr.pill }}">{{ pr.state }}</span><span style="flex:1;font-size:12px;color:#adb5bd">{{ pr.relation }}</span><i onClick="{{ fr.openGitHub }}" class="mdi mdi-open-in-new" style="color:#adb5bd;cursor:pointer"></i></div>
+            <div style="font-size:15px;font-weight:700;line-height:1.3"><span style="color:#adb5bd;font-weight:400">#{{ pr.num }}</span> {{ pr.title }}</div>
+            <div style="font:11.5px ui-monospace,Menlo,monospace;color:#6c757d">{{ pr.branch }} → main · <span style="color:#00bc8c">+{{ pr.add }}</span> <span style="color:#e74c3c">−{{ pr.del }}</span></div>
+          </div>
+          <div style="padding:10px 16px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid #444;font-size:13px">
+            <div style="display:flex;align-items:center;gap:8px"><i class="mdi {{ pr.checkIcon }}" style="font-size:15px;color:{{ pr.checkColor }}"></i><span style="flex:1">{{ pr.checkSummary }}</span><span style="font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:{{ pr.checkColor }}">{{ pr.failingName }}</span></div>
+            <div style="display:flex;align-items:center;gap:8px"><i class="mdi {{ pr.reviewIcon }}" style="font-size:15px;color:{{ pr.reviewColor }}"></i><span style="flex:1">{{ pr.review }}</span><span style="font-size:11.5px;color:#adb5bd">{{ pr.reviewBy }}</span></div>
+            <div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-comment-outline" style="font-size:15px;color:#adb5bd"></i><span style="flex:1">{{ pr.commentSummary }}</span><span style="font-size:11.5px;color:#adb5bd">{{ pr.blockingNote }}</span></div>
+          </div>
+          <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;gap:8px"><span onClick="{{ fr.sess.onFolder }}" style="flex:1;text-align:center;padding:5px;border:1px solid #3498db;color:#3498db;border-radius:4px;font-size:12.5px;cursor:pointer" style-hover="background:#3498db;color:#fff">View Folder Overview</span><span onClick="{{ fr.openGitHub }}" style="flex:1;text-align:center;padding:5px;border:1px solid #3498db;color:#3498db;border-radius:4px;font-size:12.5px;cursor:pointer" style-hover="background:#3498db;color:#fff">Open on GitHub</span></div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    </sc-if>
+  </sc-if>
+
+  <sc-if value="{{ fr.hasToast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;left:50%;bottom:92px;transform:translateX(-50%);background:#303030;border:1px solid #444;border-left:4px solid {{ fr.toastColor }};border-radius:4px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px 16px;font-size:13.5px;display:flex;align-items:center;gap:10px;z-index:3;white-space:nowrap"><i class="mdi {{ fr.toastIcon }}" style="color:{{ fr.toastColor }};font-size:16px"></i>{{ fr.toast }}</div>
+  </sc-if>
+
+  </div>
+</div>
+</div>
+</sc-for>
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const C = { teal: '#00bc8c', orange: '#f39c12', red: '#e74c3c', dim: '#6c757d', muted: '#adb5bd', merged: '#5d8fc4' };
+const SEL = 'rgba(52,152,219,.35)';
+const STATE = { Open: C.teal, Draft: C.muted, Merged: C.merged, Closed: C.red };
+const PILL = { Open: '#007a5e', Draft: '#444', Merged: '#375a7f', Closed: '#a93226' };
+const CHECK = { pass: ['mdi-check-circle', C.teal], run: ['mdi-progress-clock', C.orange], fail: ['mdi-close-circle', C.red] };
+const REVIEW = { 'Approved': C.teal, 'Changes Requested': C.orange, 'Review Required': C.muted };
+const REVIEW_ICON = { 'Approved': 'mdi-check-circle-outline', 'Changes Requested': 'mdi-message-alert-outline', 'Review Required': 'mdi-account-clock-outline' };
+const SESS = {
+  ws: { name: 'websocket close state', role: 'CODE', st: C.dim, status: 'Completed', age: '10h', folder: 'ws' },
+  wsr: { name: 'Review #1427', role: 'REVIEW', st: C.dim, status: 'Completed', age: '12m', folder: 'ws' },
+  se: { name: 'collaborative script editing', role: 'CODE', st: C.teal, status: 'Working', age: '2m', folder: 'se' },
+  ser: { name: 'pr review inline 1421', role: 'REVIEW', st: C.dim, status: 'Completed', age: '1h', folder: 'se' },
+  pm: { name: 'evaluate package managers', role: 'CODE', st: C.dim, status: 'Completed', age: '1d', folder: 'pm' },
+  pmr: { name: 'review pr 1422', role: 'REVIEW', st: C.dim, status: 'Completed', age: '1d', folder: 'pm' },
+  pdf: { name: 'pdf script handling', role: 'RESEARCH', st: C.dim, status: 'Completed', age: '3d', folder: 'un' },
+};
+const CHECK_NAMES = [['server / pytest', '4m 12s'], ['server / pylint', '1m 03s'], ['client-v3 / lint', '48s'], ['client-v3 / typecheck', '1m 20s'], ['client-v3 / unit', '2m 06s'], ['e2e / playwright', '7m 41s']];
+const PRS = [
+  { num: 1427, folder: 'ws', title: 'Fix websocket close state on logout', branch: 'websocket-close', author: 'Tim020', opened: '15h ago', state: 'Open', fail: [2], run: [], review: 'Changes Requested', sessions: ['ws', 'wsr'], add: 417, del: 96, updated: '12m',
+    did: { ws: 'Opened this PR · pushed 3 commits since review round 1', wsr: 'Posted review round 2: Changes Requested' }, note: 'Round 2 of 2. 3 comments, 2 unresolved, 1 blocking.',
+    comments: [
+      { id: 'c1', file: 'server/digi_server/ws/sessions.py:112', blocking: true, text: 'write_message returns None for a closing socket, but broadcast() awaits the result. This raises TypeError when a user logs out during a broadcast.' },
+      { id: 'c2', file: 'client-v3/src/stores/auth.ts:58', blocking: false, text: 'pendingAuthentication stays true if the request is aborted by navigation. Reset it in the abort handler as well.' } ] },
+  { num: 1421, folder: 'se', title: 'Collaborative script editing', branch: 'collab-editing', author: 'Tim020', opened: '2d ago', state: 'Open', fail: [], run: [], review: 'Approved', sessions: ['se', 'ser'], add: 1284, del: 310, updated: '1h',
+    did: { se: 'Opened this PR · addressed review round 1', ser: 'Posted review round 2: Approved' }, note: 'Round 2 of 2. All comments resolved.', comments: [] },
+  { num: 1424, folder: 'se', title: 'Presence cursors in script editor', branch: 'collab-cursors', author: 'Tim020', opened: '20m ago', state: 'Draft', fail: [], run: [0, 4, 5], review: 'Review Required', sessions: ['se'], add: 212, del: 18, updated: '2m',
+    did: { se: 'Opened this PR as a draft · still working' }, note: 'Draft. No review requested yet.', comments: [] },
+  { num: 1422, folder: 'pm', title: 'Switch client-v3 to pnpm', branch: 'pnpm', author: 'Tim020', opened: '3d ago', state: 'Merged', fail: [], run: [], review: 'Approved', sessions: ['pm', 'pmr'], add: 96, del: 4120, updated: '1d',
+    did: { pm: 'Opened this PR · merged 1d ago', pmr: 'Posted review round 2: Approved' }, note: 'Merged into main 1d ago.', comments: [] },
+  { num: 1430, folder: null, title: 'Bump tornado from 6.4.2 to 6.5.1', branch: 'dependabot/pip/tornado-6.5.1', author: 'dependabot', opened: '4h ago', state: 'Open', fail: [0, 1], run: [], review: 'Review Required', sessions: [], add: 2, del: 2, updated: '4h', comments: [] },
+  { num: 1418, folder: null, title: 'Docs: live show modes', branch: 'docs-live-modes', author: 'contributor', opened: '2d ago', state: 'Open', fail: [], run: [], review: 'Review Required', sessions: [], add: 140, del: 12, updated: '2d', comments: [] },
+];
+const FOLDERS = [
+  { id: 'ws', name: 'Websocket Close State', sessions: ['ws', 'wsr'] },
+  { id: 'se', name: 'Script Editing', sessions: ['se', 'ser'] },
+  { id: 'pm', name: 'Package Managers', sessions: ['pm', 'pmr'] },
+  { id: 'un', name: 'Unfiled', unfiled: true, sessions: ['pdf'] },
+];
+const checkState = p => p.fail.length ? 'fail' : p.run.length ? 'run' : 'pass';
+const checkText = p => p.fail.length ? p.fail.length + ' failing' : p.run.length ? p.run.length + ' running' : '6 passing';
+const needsAttention = p => p.state === 'Open' && (p.fail.length > 0 || p.review === 'Changes Requested');
+const attention = p => p.state === 'Merged' ? C.merged : p.state === 'Closed' ? C.red : p.fail.length ? C.red : p.review === 'Changes Requested' ? C.orange : p.run.length || p.state === 'Draft' ? C.muted : C.teal;
+const reviewLabel = p => p.state === 'Merged' ? 'Merged' : p.review;
+const START = { '5a': { scope: 'project' }, '5b': { scope: 'folder', folder: 'ws' }, '5c': { scope: 'session', session: 'ws', pop: true } };
+const fresh = id => ({ scope: 'project', folder: 'ws', session: 'ws', pop: false, filter: 'Needs Attention', unlinked: true, collapsed: {}, sent: {}, unchecked: {}, toast: null, ...START[id] });
+
+class Component extends DCLogic {
+  state = { f: { '5a': fresh('5a'), '5b': fresh('5b'), '5c': fresh('5c') } };
+  set(id, patch) { this.setState(s => ({ f: { ...s.f, [id]: { ...s.f[id], ...(typeof patch === 'function' ? patch(s.f[id]) : patch) } } })); }
+  toast(id, text, icon = 'mdi-check-circle', color = C.teal) {
+    clearTimeout(this['t' + id]);
+    this.set(id, { toast: { text, icon, color } });
+    this['t' + id] = setTimeout(() => this.set(id, { toast: null }), 2600);
+  }
+  componentWillUnmount() { ['5a', '5b', '5c'].forEach(id => clearTimeout(this['t' + id])); }
+  frame(id, label) {
+    const st = this.state.f[id];
+    const go = patch => e => { e && e.stopPropagation && e.stopPropagation(); this.set(id, { pop: false, ...patch }); };
+    const goFolder = fid => go({ scope: 'folder', folder: fid });
+    const goSession = k => go({ scope: 'session', session: k, pop: false });
+    const sendFor = p => e => {
+      e && e.stopPropagation && e.stopPropagation();
+      const target = SESS[p.sessions[0]];
+      const picked = p.comments.filter(c => !st.unchecked[c.id] && !st.sent[c.id]);
+      const parts = [];
+      if (picked.length) parts.push(picked.length + (picked.length === 1 ? ' comment' : ' comments'));
+      if (p.fail.length && !st.sent['chk' + p.num]) parts.push(p.fail.length === 1 ? 'the failing check' : p.fail.length + ' failing checks');
+      if (!parts.length) { this.toast(id, 'Nothing new to send for #' + p.num, 'mdi-information-outline', C.muted); return; }
+      const sent = { ...st.sent, ['chk' + p.num]: true };
+      picked.forEach(c => { sent[c.id] = true; });
+      this.set(id, { sent, pop: false });
+      this.toast(id, 'Sent ' + parts.join(' and ') + ' to ' + target.name);
+    };
+    const pendingFor = p => p.comments.filter(c => !st.sent[c.id]).length + (p.fail.length && !st.sent['chk' + p.num] ? 1 : 0);
+
+    const folders = FOLDERS.map(f => {
+      const open = PRS.filter(p => p.folder === f.id && p.state !== 'Merged');
+      return {
+        name: f.name, icon: f.unfiled ? 'mdi-tray' : 'mdi-folder-outline', iconColor: f.unfiled ? C.dim : '#3498db', italic: f.unfiled ? 'italic' : 'normal',
+        bg: st.scope === 'folder' && st.folder === f.id ? SEL : 'transparent',
+        expanded: !st.collapsed[f.id], chevron: st.collapsed[f.id] ? 'mdi-chevron-right' : 'mdi-chevron-down',
+        onToggle: () => this.set(id, s => ({ collapsed: { ...s.collapsed, [f.id]: !s.collapsed[f.id] } })),
+        chips: open.length ? [{ num: String(open[0].num), more: open.length > 1 ? ' +' + (open.length - 1) : '', color: attention(open[0]), onOpen: goFolder(f.id) }] : [],
+        sessions: f.sessions.map(k => {
+          const s = SESS[k], prs = PRS.filter(p => p.sessions[0] === k), sel = st.scope === 'session' && st.session === k;
+          return { name: s.name, color: s.st, age: s.age, bg: sel ? SEL : 'transparent', nameColor: s.st === C.dim && !sel ? C.muted : '#fff',
+            hasPr: prs.length > 0, prCount: prs.length > 1 ? String(prs.length) : '', prColor: prs.length ? attention(prs[0]) : C.dim, onOpen: goSession(k) };
+        }),
+      };
+    });
+    const projects = [
+      { upper: 'DIGISCRIPT', path: '~/…/DigiScript', chevron: 'mdi-chevron-down', open: true, folders, pills: [{ n: '1', fg: C.teal, bg: 'rgba(0,188,140,.22)' }, { n: '6', fg: C.muted, bg: 'rgba(108,117,125,.18)' }] },
+      { upper: 'DREAMTEAM-WEB', path: '~/Code/dreamteam-web', chevron: 'mdi-chevron-right', open: false, folders: [], pills: [{ n: '2', fg: C.muted, bg: 'rgba(108,117,125,.18)' }] },
+    ];
+
+    const FILTERS = { 'Needs Attention': needsAttention, 'Open': p => p.state === 'Open' || p.state === 'Draft', 'Merged': p => p.state === 'Merged', 'All': () => true };
+    const pool = PRS.filter(p => st.unlinked || p.folder);
+    const match = pool.filter(FILTERS[st.filter]);
+    const row = p => {
+      const [ci, cc] = CHECK[checkState(p)];
+      return { num: String(p.num), title: p.title, branch: p.branch, author: p.author, state: p.state, updated: p.updated, add: String(p.add), del: String(p.del),
+        stateColor: STATE[p.state], checkIcon: ci, checkColor: cc, checkText: checkText(p),
+        review: reviewLabel(p), reviewColor: p.state === 'Merged' ? C.merged : REVIEW[p.review], commentsNote: p.comments.length ? ' · ' + p.comments.length : '',
+        noSession: p.sessions.length === 0,
+        onOpen: p.folder ? goFolder(p.folder) : () => this.toast(id, '#' + p.num + ' has no session in Claudio', 'mdi-information-outline', C.muted),
+        sessions: p.sessions.map(k => ({ name: SESS[k].name, role: SESS[k].role, color: SESS[k].st, onOpen: goSession(k) })) };
+    };
+    const groups = [
+      ...FOLDERS.map(f => ({ name: f.name, icon: 'mdi-folder-outline', iconColor: '#3498db', italic: 'normal', note: '', prs: match.filter(p => p.folder === f.id).map(row) })),
+      { name: 'No Session', icon: 'mdi-source-pull', iconColor: C.dim, italic: 'italic', note: 'On GitHub, not started from Claudio', prs: match.filter(p => !p.folder).map(row) },
+    ].filter(g => g.prs.length);
+    const proj = {
+      groups, empty: groups.length === 0,
+      boxBg: st.unlinked ? C.teal : 'transparent', boxBorder: st.unlinked ? C.teal : C.dim, boxIcon: st.unlinked ? 'mdi-check' : '',
+      filters: Object.keys(FILTERS).map(label => {
+        const on = st.filter === label, n = pool.filter(FILTERS[label]).length;
+        return { label, count: String(n), bg: on ? '#444' : 'transparent', fg: on ? '#fff' : C.muted, countFg: label === 'Needs Attention' && n ? C.red : on ? C.muted : C.dim, onPick: () => this.set(id, { filter: label }) };
+      }),
+    };
+
+    const card = p => {
+      const cs = checkState(p);
+      const pending = pendingFor(p);
+      return {
+        num: String(p.num), title: p.title, branch: p.branch, author: p.author, opened: p.opened, state: p.state, pill: PILL[p.state], add: String(p.add), del: String(p.del),
+        checkText: checkText(p), checkColor: CHECK[cs][1],
+        checks: CHECK_NAMES.map(([name, time], i) => { const s = p.fail.includes(i) ? 'fail' : p.run.includes(i) ? 'run' : 'pass'; return { name, time: s === 'run' ? 'running' : time, icon: CHECK[s][0], color: CHECK[s][1], fg: s === 'fail' ? '#fff' : C.muted }; }),
+        review: reviewLabel(p), reviewColor: p.state === 'Merged' ? C.merged : REVIEW[p.review], reviewNote: p.note,
+        reviewers: [
+          ...p.sessions.filter(k => SESS[k].role === 'REVIEW').map(k => ({ name: SESS[k].name, via: 'via Claudio', state: p.review, color: REVIEW[p.review], icon: REVIEW_ICON[p.review] })),
+          { name: 'dreamteamprod/maintainers', via: '', state: p.state === 'Merged' || p.review === 'Approved' ? 'Approved' : 'Review Required', color: p.state === 'Merged' || p.review === 'Approved' ? C.teal : C.muted, icon: p.state === 'Merged' || p.review === 'Approved' ? REVIEW_ICON.Approved : REVIEW_ICON['Review Required'] },
+        ],
+        sessions: p.sessions.map(k => ({ name: SESS[k].name, role: SESS[k].role, color: SESS[k].st, did: p.did[k], onOpen: goSession(k) })),
+        hasComments: p.comments.length > 0, commentCount: String(p.comments.filter(c => !st.sent[c.id]).length),
+        sendLabel: pending ? 'Send to ' + SESS[p.sessions[0]].name : 'Sent to ' + SESS[p.sessions[0]].name, sendOpacity: pending ? '1' : '0.65', onSend: sendFor(p),
+        onRound: () => this.toast(id, 'Started review round 3 in ' + (SESS[p.sessions.find(k => SESS[k].role === 'REVIEW')] || {}).name),
+        comments: p.comments.map(c => {
+          const on = !st.unchecked[c.id], sent = !!st.sent[c.id];
+          return { ...c, by: 'Review #' + p.num, sent, opacity: sent ? '0.55' : '1', boxBg: on && !sent ? C.teal : 'transparent', boxBorder: on && !sent ? C.teal : C.dim, boxIcon: on && !sent ? 'mdi-check' : '',
+            onToggle: () => { if (!sent) this.set(id, s => ({ unchecked: { ...s.unchecked, [c.id]: !s.unchecked[c.id] } })); } };
+        }),
+      };
+    };
+    const F = FOLDERS.find(f => f.id === st.folder);
+    const fprs = PRS.filter(p => p.folder === F.id);
+    const fold = { name: F.name, icon: F.unfiled ? 'mdi-tray' : 'mdi-folder-outline', iconColor: F.unfiled ? C.dim : '#3498db',
+      summary: F.sessions.length + (F.sessions.length === 1 ? ' session' : ' sessions') + ' · ' + fprs.length + (fprs.length === 1 ? ' pull request' : ' pull requests'),
+      empty: fprs.length === 0, prs: fprs.map(card) };
+
+    const S = SESS[st.session], SF = FOLDERS.find(f => f.id === S.folder);
+    const sprs = PRS.filter(p => p.sessions.includes(st.session));
+    const T = s => ({ m: '●', mc: '#fff', c: '#fff', t: s }), M = s => ({ m: '', mc: C.dim, c: C.muted, t: s });
+    const term = S.role === 'REVIEW'
+      ? [T('Reviewing PR #' + (sprs[0] ? sprs[0].num : '') + ' inline, round 2.'), M('Bash(gh pr diff ' + (sprs[0] ? sprs[0].num : '') + ')'), M('Read 6 files'), T('Posted the review: ' + (sprs[0] ? sprs[0].review : '') + '.'), { m: '✻', mc: C.dim, c: C.dim, t: 'Brewed for 8m 02s' }]
+      : [T('Pushed the latest changes to ' + (sprs[0] ? sprs[0].branch : 'the branch') + '.'), M('Bash(git push)'), T(sprs[0] ? 'PR #' + sprs[0].num + ' is updated: https://github.com/dreamteamprod/DigiScript/pull/' + sprs[0].num : 'No pull request opened yet.'), M('Ran 1 shell command'), T('Backend tests pass. client-v3 unit tests and typecheck pass.'), { m: '✻', mc: C.dim, c: C.dim, t: 'Brewed for 22m 10s' }];
+    const first = sprs[0];
+    const sess = {
+      name: S.name, role: S.role, folder: SF.name, status: S.status, statusBg: S.status === 'Working' ? '#007a5e' : '#444',
+      onFolder: goFolder(SF.id),
+      hasPr: !!first, prLabel: first ? '#' + first.num + (sprs.length > 1 ? ' +' + (sprs.length - 1) : '') : '', prDot: first ? attention(first) : C.dim,
+      prHelp: first ? 'Pull request status' : 'No pull requests yet',
+      prBtnBg: st.pop ? '#3498db' : first ? '#444' : 'transparent', prBtnFg: first ? '#fff' : C.dim,
+      onPr: e => { e.stopPropagation(); if (first) this.set(id, { pop: !st.pop }); },
+      pop: st.pop && !!first, closePop: () => st.pop && this.set(id, { pop: false }), termOpacity: st.pop && first ? '0.5' : '1',
+      tabs: SF.sessions.map(k => ({ name: SESS[k].name, role: SESS[k].role, color: SESS[k].st, fg: k === st.session ? '#fff' : C.muted, underline: k === st.session ? 'inset 0 -2px 0 #00bc8c' : 'none', onOpen: goSession(k) })),
+      term,
+      prs: sprs.map(p => {
+        const cs = checkState(p), pending = pendingFor(p), rev = p.sessions.find(k => SESS[k].role === 'REVIEW');
+        const unresolved = p.comments.filter(c => !st.sent[c.id]).length;
+        return { num: String(p.num), title: p.title, branch: p.branch, add: String(p.add), del: String(p.del), state: p.state, pill: PILL[p.state],
+          relation: (p.sessions[0] === st.session ? 'Opened by this session · ' : 'Reviewed by this session · ') + p.opened,
+          checkIcon: CHECK[cs][0], checkColor: CHECK[cs][1],
+          checkSummary: cs === 'fail' ? (6 - p.fail.length) + ' of 6 checks passing' : cs === 'run' ? p.run.length + ' checks running' : 'All 6 checks passing',
+          failingName: p.fail.length ? CHECK_NAMES[p.fail[0]][0] : '',
+          review: reviewLabel(p), reviewColor: p.state === 'Merged' ? C.merged : REVIEW[p.review], reviewIcon: p.state === 'Merged' ? 'mdi-source-merge' : REVIEW_ICON[p.review], reviewBy: rev ? 'by ' + SESS[rev].name : '',
+          commentSummary: unresolved ? unresolved + ' unresolved ' + (unresolved === 1 ? 'comment' : 'comments') : 'No unresolved comments',
+          blockingNote: p.comments.some(c => c.blocking && !st.sent[c.id]) ? '1 blocking' : '',
+          sendLabel: p.sessions[0] !== st.session ? 'Send Feedback to ' + SESS[p.sessions[0]].name : pending ? (p.comments.length && p.fail.length ? 'Send Comments and Failing Check to Session' : p.fail.length ? 'Send Failing Check to Session' : 'Send Comments to Session') : 'Nothing to Send',
+          sendOpacity: pending ? '1' : '0.65', onSend: sendFor(p) };
+      }),
+    };
+
+    return {
+      id, label, isProject: st.scope === 'project', isFolder: st.scope === 'folder', isSession: st.scope === 'session',
+      prRowBg: st.scope === 'project' ? SEL : 'transparent', projects, proj, fold, sess,
+      goProject: go({ scope: 'project' }),
+      refresh: () => this.toast(id, 'Pull requests updated', 'mdi-refresh', '#3498db'),
+      openGitHub: e => { e && e.stopPropagation && e.stopPropagation(); this.toast(id, 'Opens github.com in your browser', 'mdi-open-in-new', '#3498db'); },
+      toggleUnlinked: () => this.set(id, { unlinked: !st.unlinked }),
+      reset: () => { clearTimeout(this['t' + id]); this.setState(s => ({ f: { ...s.f, [id]: fresh(id) } })); },
+      hasToast: !!st.toast, toast: st.toast ? st.toast.text : '', toastIcon: st.toast ? st.toast.icon : '', toastColor: st.toast ? st.toast.color : C.teal,
+    };
+  }
+  renderVals() {
+    return {
+      attentionCount: String(PRS.filter(needsAttention).length),
+      openCount: String(PRS.filter(p => p.state === 'Open' || p.state === 'Draft').length),
+      frames: [
+        this.frame('5a', 'Starts at Project: every PR in the repo, grouped by folder'),
+        this.frame('5b', 'Starts at Folder: a change session and its review session around one PR'),
+        this.frame('5c', 'Starts at Session: PR popover in the header'),
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

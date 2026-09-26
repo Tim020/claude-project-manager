@@ -58,6 +58,7 @@ These were verified against real CLI output, which is recorded in `Tests/Claudio
 **Other tools.**
 - `git` is read-only here: it runs with `GIT_OPTIONAL_LOCKS=0`.
 - `gh` is optional. Recorded output: signed out from gh 2.63.2, signed in from 2.101.0. `gh pr view` also returns merged or closed PRs, so only `state: OPEN` counts.
+- Pull Requests overviews (`AppModel+PullRequests.swift`) use `gh repo view`, `gh pr list/view --json` (`GitHubCLI.overviewFields`) and `gh api graphql` for unresolved review threads. Recorded output (DigiScript #1427, gh 2.101.0) is in `Fixtures/gh-pr-view.json` and `gh-review-threads.json`. Checks without a workflow (SonarCloud, CodeQL's summary) have `workflowName: ""`. A session belongs to a pull request when its `pullRequestURLs` mention it; sessions whose role is Review count as reviewers.
 - Files Changed's "vs" branch comes from, in order: the PR's base (`gh pr view --json baseRefName,number,state`, cached for 5 minutes), then `Project.comparisonBranch`, then `origin/HEAD` or `main`/`master` (`GitChanges.load(preferred:)`).
 
 To check CLI behaviour without touching the user's setup, install it in a container:
