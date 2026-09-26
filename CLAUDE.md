@@ -17,7 +17,7 @@ swift run Claudio                             # run from the package (no notific
 ```
 
 - Behind an HTTPS proxy, `test-linux.sh` passes the proxy variables through, and mounts `$SSL_CERT_FILE` when that's set.
-- CI (`.github/workflows/ci.yml`) runs the tests on Linux (`swift:6.1-noble`) and on macOS 15 (Xcode 16.4). The macOS job also runs `build-app.sh` and uploads `Claudio.zip`. The macOS job is the only place the SwiftUI layer gets compiled, so when working without a Mac, check its result after pushing UI changes.
+- CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `main` and manual dispatch. It runs the tests on Linux (`swift:6.1-noble`) and on macOS 15 (Xcode 16.4). The macOS job also runs `build-app.sh` and uploads `Claudio.zip`. The macOS job is the only place the SwiftUI layer gets compiled, so when working without a Mac, check its result after pushing UI changes.
 - There's no linter. Keep builds warning-free.
 
 ## Architecture
@@ -86,5 +86,6 @@ A fresh container is signed out, with an empty config. Any claim about CLI outpu
 
 ## Working in this repo
 
-- Commit directly to `main`, then check the CI run for the commit, the macOS job in particular.
+- Work on a feature branch and open a pull request into `main`; don't push to `main` directly. Name branches by kind: `feature/…`, `fix/…`, `ci/…`, `docs/…`.
+- CI runs on every pull request (and again on `main` after merging). Check the PR's checks before merging, the macOS job in particular: it's the only place the SwiftUI layer compiles. Each run uploads the built `Claudio.zip`, so a PR can be tried before it merges.
 - Keep `README.md`'s feature list current when behaviour changes. Log user-visible actions and CLI commands in the Activity Log (`log.append`), but never account details (see `run(_:hideOutput:)`).
