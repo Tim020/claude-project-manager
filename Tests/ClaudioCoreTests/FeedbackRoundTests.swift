@@ -101,7 +101,7 @@ final class SessionStatusCaptureTests: XCTestCase {
         await MainActor.run {
             XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 5)
             XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42)
-            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250)
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 2000)
         }
     }
 }

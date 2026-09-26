@@ -1488,7 +1488,7 @@ public final class AppModel {
            modified != usageModified {
             usageModified = modified
             if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
-                adopt(snapshot)
+                adopt(snapshot, fromStatusLine: true)
             }
         }
         guard let statusDirectory,
@@ -1513,18 +1513,19 @@ public final class AppModel {
         // Log the text only: the stream's report includes credit spend, and
         // its ids change every run.
         let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage",
-                               loggedOutput: UsageSnapshot.usageText(fromStream:))
+                               loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? "" })
         if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
             adopt(snapshot)
         }
     }
 
-    private func adopt(_ snapshot: UsageSnapshot) {
+    /// `fromStatusLine`: status line input has no credits, so the last
+    /// `/usage` figures are kept. A `/usage` report without them replaces them.
+    private func adopt(_ snapshot: UsageSnapshot, fromStatusLine: Bool = false) {
         guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
         var merged = snapshot
         if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
-        // Status line input has no credits: keep the last `/usage` figures.
-        if merged.credits == nil { merged.credits = usage?.credits }
+        if fromStatusLine { merged.credits = usage?.credits }
         usage = merged
     }
 

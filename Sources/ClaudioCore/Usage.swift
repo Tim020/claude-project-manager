@@ -159,11 +159,12 @@ extension UsageSnapshot {
     /// doesn't show. Falls back to the text when there's no report.
     public static func parseUsageStream(_ output: String, updatedAt: Date) -> UsageSnapshot? {
         var report: JSONValue?
-        var text: String?
-        for line in output.split(separator: "\n") {
-            guard line.hasPrefix("{"), let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else { continue }
-            if let value = event["usage_report"], value["rate_limits"] != nil { report = value }
-            if event["type"]?.stringValue == "result", let result = event["result"]?.stringValue { text = result }
+        let text = usageText(fromStream: output)
+        for line in output.split(separator: "\n") where line.hasPrefix("{") {
+            if let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+               let value = event["usage_report"], value["rate_limits"] != nil {
+                report = value
+            }
         }
         guard let report else { return text.flatMap { parseUsageCommand($0, updatedAt: updatedAt) } }
 
@@ -193,16 +194,24 @@ extension UsageSnapshot {
         return snapshot
     }
 
-    /// The human-readable `/usage` text inside stream-json output, for the
-    /// Activity Log: the report itself has account details (credit spend).
-    public static func usageText(fromStream output: String) -> String {
+    /// The human-readable `/usage` text inside stream-json output: the result
+    /// event's `result`, else the assistant message's text. Also what the
+    /// Activity Log shows, since the report has account details (credit spend).
+    public static func usageText(fromStream output: String) -> String? {
+        var assistantText: String?
         for line in output.split(separator: "\n") where line.hasPrefix("{") {
-            if let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
-               event["type"]?.stringValue == "result", let result = event["result"]?.stringValue {
-                return result
+            guard let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else { continue }
+            switch event["type"]?.stringValue {
+            case "result":
+                if let result = event["result"]?.stringValue, !result.isEmpty { return result }
+            case "assistant":
+                let parts = event["message"]?["content"]?.arrayValue?.compactMap { $0["text"]?.stringValue } ?? []
+                if !parts.isEmpty { assistantText = parts.joined(separator: "\n") }
+            default:
+                break
             }
         }
-        return ""
+        return assistantText
     }
 
     /// "2026-09-27T03:49:59.519416+00:00". Fractional seconds are dropped:

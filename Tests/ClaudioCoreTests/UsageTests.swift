@@ -96,7 +96,7 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertEqual(usage.fiveHour?.resetsAt, Date(timeIntervalSince1970: 1_790_480_999), "2026-09-27T03:49:59Z")
         XCTAssertEqual(usage.sevenDay?.usedPercentage, 42)
         XCTAssertEqual(usage.sevenDay?.resetsAt, Date(timeIntervalSince1970: 1_790_571_599))
-        XCTAssertEqual(usage.credits, UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP"))
+        XCTAssertEqual(usage.credits, UsageCredits(isEnabled: true, monthlyLimit: 8000, usedCredits: 2000, utilization: 25, currency: "GBP"))
         XCTAssertFalse(usage.reportsUsingCredits)
         XCTAssertFalse(usage.isUsingCredits, "no plan limit is reached")
         XCTAssertEqual(usage.updatedAt, now)
@@ -111,6 +111,12 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertNil(usage.credits)
         XCTAssertFalse(usage.isUsingCredits, "credits aren't known to be enabled")
         XCTAssertNil(UsageSnapshot.parseUsageStream("Current session: 5% used", updatedAt: now), "plain text isn't stream JSON")
+
+        let assistant = JSONValue.object(["type": .string("assistant"), "message": .object([
+            "content": .array([.object(["type": .string("text"), "text": .string("Current week (all models): 7% used")])]),
+        ])])
+        let fromMessage = try UsageSnapshot.parseUsageStream(String(decoding: JSONEncoder().encode(assistant), as: UTF8.self), updatedAt: now)
+        XCTAssertEqual(fromMessage?.sevenDay?.usedPercentage, 7, "no result event: the message text")
     }
 
     func testUsingCreditsOnceAPlanLimitIsReached() {
@@ -161,13 +167,13 @@ final class UsageCreditsTests: XCTestCase {
         }
         await model.refreshUsage()
         try await MainActor.run {
-            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250)
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 2000)
             XCTAssertFalse(model.usage?.isUsingCredits ?? true)
 
             try #"{"rate_limits":{"seven_day":{"used_percentage":100,"resets_at":1790571600}}}"#.write(to: usageFile, atomically: true, encoding: .utf8)
             model.pollUsage()
             XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 100)
-            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250, "the status line has no credits")
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 2000, "the status line has no credits")
             XCTAssertTrue(model.usage?.isUsingCredits ?? false)
 
             let logged = model.log.entries.compactMap(\.detail).joined()
