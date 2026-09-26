@@ -295,12 +295,13 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects[p].folders.insert(folder, at: index)
     }
 
-    /// Puts a project just before another in the sidebar.
-    public mutating func moveProject(_ id: UUID, before targetID: UUID) {
-        guard id != targetID, let from = projects.firstIndex(where: { $0.id == id }) else { return }
-        let project = projects.remove(at: from)
-        let index = projects.firstIndex { $0.id == targetID } ?? projects.count
-        projects.insert(project, at: index)
+    /// Moves a project into another's place in the sidebar: just after it when
+    /// dragged down, just before it when dragged up. So one drag can swap
+    /// neighbours or make a project first or last.
+    public mutating func moveProject(_ id: UUID, onto targetID: UUID) {
+        guard id != targetID, let from = projects.firstIndex(where: { $0.id == id }),
+              let to = projects.firstIndex(where: { $0.id == targetID }) else { return }
+        projects.insert(projects.remove(at: from), at: to)
     }
 
     /// Archives the completed sessions in a group. Returns how many were archived.

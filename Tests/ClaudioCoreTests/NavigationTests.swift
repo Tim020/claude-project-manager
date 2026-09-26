@@ -163,11 +163,49 @@ final class NavigationModelTests: XCTestCase {
             XCTAssertTrue(model.drop([SidebarDragItem.folder(a).payload], on: .project(p2)))
             XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a])
 
-            // A project dropped anywhere in another goes just above it.
+            // A folder on a folder in another project moves there, just above it.
+            let c = try XCTUnwrap(model.createFolder(in: p2))
+            model.cancelRename()
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
+            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [b, a, c])
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [])
+
+            // A project dropped anywhere in another takes its place.
             XCTAssertTrue(model.drop([SidebarDragItem.project(p2).payload], on: .group(.unfiled(projectID: p1))))
             XCTAssertEqual(model.workspace.projects.map(\.id), [p2, p1])
             XCTAssertEqual(store.state.workspace.projects.map(\.id), [p2, p1], "saved")
+            XCTAssertTrue(model.drop([SidebarDragItem.project(p2).payload], on: .project(p1)), "onto the one below: they swap")
+            XCTAssertEqual(model.workspace.projects.map(\.id), [p1, p2])
+            XCTAssertTrue(model.drop([SidebarDragItem.project(p1).payload], on: .group(.folder(c))), "on a folder row")
+            XCTAssertEqual(model.workspace.projects.map(\.id), [p2, p1])
             XCTAssertFalse(model.drop([SidebarDragItem.project(p2).payload], on: .project(p2)))
+        }
+    }
+
+    func testDroppingAProjectOrFolderOnASessionGoesByItsFolder() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p1 = model.addProject(path: "/code/a")
+            let p2 = model.addProject(path: "/code/b")
+            let a = try XCTUnwrap(model.createFolder(in: p1))
+            let b = try XCTUnwrap(model.createFolder(in: p1))
+            model.cancelRename()
+            let filed = Session(projectID: p1, name: "filed", workingDirectory: "/code/a")
+            let loose = Session(projectID: p1, name: "loose", workingDirectory: "/code/a")
+            model.applyTestSession(filed)
+            model.applyTestSession(loose)
+            model.moveSession(filed.id, to: .folder(a))
+
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .session(filed.id)), "just above the session's folder")
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .session(loose.id)), "an Unfiled session: last")
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+            XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .session(filed.id)), "its own session")
+
+            XCTAssertTrue(model.drop([SidebarDragItem.project(p2).payload], on: .session(loose.id)))
+            XCTAssertEqual(model.workspace.projects.map(\.id), [p2, p1])
         }
     }
 

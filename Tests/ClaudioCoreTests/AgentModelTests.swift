@@ -252,22 +252,68 @@ final class AgentModelTests: XCTestCase {
     /// A conversation found in the history has no permission mode of its own:
     /// run in the background, it gets the background default, not Ask.
     func testBackgroundResumeOfAHistoryConversationUsesTheBackgroundDefault() async throws {
+        let (model, id) = try await resumeInBackground(mode: .standard, backgroundDefault: .plan)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "plan")
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.session(id)?.permissionMode, .plan, "saved, so the session shows what it runs with")
+            XCTAssertTrue(model.log.entries.contains { $0.title.contains("with Plan Only permissions") })
+        }
+    }
+
+    func testBackgroundResumeKeepsAChosenMode() async throws {
+        _ = try await resumeInBackground(mode: .acceptEdits, backgroundDefault: .plan)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "acceptEdits")
+    }
+
+    func testBackgroundResumeWithAnAskDefaultPassesNoMode() async throws {
+        _ = try await resumeInBackground(mode: .standard, backgroundDefault: .standard)
+        XCTAssertNil(try permissionMode(in: runner.commands.last { $0.contains("--resume") }))
+    }
+
+    /// Bypass Permissions has to be chosen for the session itself.
+    func testBackgroundResumeNeverFallsBackBeyondAuto() async throws {
+        _ = try await resumeInBackground(mode: .standard, backgroundDefault: .bypassPermissions)
+        XCTAssertEqual(try permissionMode(in: runner.commands.last { $0.contains("--resume") }), "auto")
+    }
+
+    /// The New Session sheet and `createSession` agree: without agent support
+    /// a prompt still opens a terminal session.
+    func testRunsInBackgroundNeedsAgentSupport() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            XCTAssertFalse(model.runsInBackground(prompt: "  "))
+            XCTAssertEqual(model.runsInBackground(prompt: "Fix it"), model.backgroundAgentsEnabled)
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            XCTAssertFalse(model.runsInBackground(prompt: "Fix it"))
+        }
+    }
+
+    /// Resumes a history conversation (no agent yet) in the background.
+    private func resumeInBackground(mode: PermissionMode, backgroundDefault: PermissionMode) async throws -> (AppModel, UUID) {
         runner.dispatchOutput = "backgrounded · 83526b6d\n"
-        let model = try await MainActor.run { () -> AppModel in
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
             let model = try makeModel()
             let p = model.addProject(path: repo)
             var settings = model.settings
             settings.defaultPermissionMode = .acceptEdits
+            settings.defaultBackgroundPermissionMode = backgroundDefault
             model.updateSettings(settings)
-            model.applyTestSession(Session(projectID: p, claudeSessionID: "83526b6d-2eed", hasConversation: true, name: "found",
-                                           workingDirectory: repo, status: .awaitingInput))
-            model.resume(model.workspace.sessions[0].id)
-            return model
+            let session = Session(projectID: p, claudeSessionID: "83526b6d-2eed", hasConversation: true, name: "found",
+                                  workingDirectory: repo, status: .awaitingInput, permissionMode: mode)
+            model.applyTestSession(session)
+            model.resume(session.id)
+            return (model, session.id)
         }
         await model.lastTask?.value
-        let resume = try XCTUnwrap(runner.commands.last { $0.contains("--resume") })
-        let mode = try XCTUnwrap(resume.firstIndex(of: "--permission-mode"))
-        XCTAssertEqual(resume[mode + 1], "auto")
+        return (model, id)
+    }
+
+    /// The `--permission-mode` value in a command, if any.
+    private func permissionMode(in arguments: [String]?) throws -> String? {
+        let arguments = try XCTUnwrap(arguments)
+        return arguments.firstIndex(of: "--permission-mode").map { arguments[$0 + 1] }
     }
 
     func testStopAndDeleteUseTheCLI() async throws {

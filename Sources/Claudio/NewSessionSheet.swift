@@ -142,7 +142,7 @@ struct NewSessionSheet: View {
     }
 
     private var backgroundMode: Bool {
-        model.settings.useBackgroundAgents && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.runsInBackground(prompt: prompt)
     }
 
     private var isGitProject: Bool {

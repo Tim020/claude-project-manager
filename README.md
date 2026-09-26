@@ -21,7 +21,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Sessions that aren't in a folder appear under **Unfiled**.
 - **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place (Return or a click elsewhere saves the name, Esc cancels). Double-click a folder to rename it later.
   - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
-  - Drag a folder onto another to put it just above, or onto a project header to move it (with its sessions) to the end of that project. Drag a project's header onto another project to reorder projects.
+  - Drag a folder onto another folder (or one of its sessions) to put it just above, or onto a project header or Unfiled to move it, with its sessions, to the end of that project. Drag a project's header onto another project to take its place.
   - Click a folder, or Unfiled, to collapse or expand it.
   - Right-click a folder for Rename, New Session in Folder, Move to Project, Archive Completed and Delete Folder.
 - **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running. Right-click a tab for Close Other Tabs, Close Tabs to the Left / Right, Close Completed Tabs and Close All Tabs.

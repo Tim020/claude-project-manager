@@ -135,17 +135,30 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.session(s.id)?.projectID, p2)
     }
 
-    func testMoveProjectBeforeAnother() {
+    func testMoveFolderDownBeforeALaterOne() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let a = try ws.createFolder(in: p, named: "A")
+        _ = try ws.createFolder(in: p, named: "B")
+        let c = try ws.createFolder(in: p, named: "C")
+        try ws.moveFolder(a, before: c, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["B", "A", "C"])
+    }
+
+    /// A project takes the target's place: after it going down, before it going up.
+    func testMoveProjectOntoAnother() {
         var ws = Workspace()
         let a = ws.addProject(path: "/code/a")
         let b = ws.addProject(path: "/code/b")
         let c = ws.addProject(path: "/code/c")
-        ws.moveProject(c, before: a)
-        XCTAssertEqual(ws.projects.map(\.id), [c, a, b])
-        ws.moveProject(c, before: b)
-        XCTAssertEqual(ws.projects.map(\.id), [a, c, b])
-        ws.moveProject(a, before: a)
-        XCTAssertEqual(ws.projects.map(\.id), [a, c, b])
+        ws.moveProject(a, onto: c)
+        XCTAssertEqual(ws.projects.map(\.id), [b, c, a], "one drag makes a project last")
+        ws.moveProject(a, onto: b)
+        XCTAssertEqual(ws.projects.map(\.id), [a, b, c], "and first")
+        ws.moveProject(a, onto: b)
+        XCTAssertEqual(ws.projects.map(\.id), [b, a, c], "neighbours swap")
+        ws.moveProject(a, onto: a)
+        XCTAssertEqual(ws.projects.map(\.id), [b, a, c])
     }
 
     // MARK: Sessions
