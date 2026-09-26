@@ -28,7 +28,7 @@ final class UsageCommandTests: XCTestCase {
     func testUsageCommand() {
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/h")
         let command = commands.usage()
-        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--no-session-persistence"])
+        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
         XCTAssertEqual(command.arguments.first, "-c", "no login shell for a periodic check")
     }
 }
@@ -47,25 +47,26 @@ final class SessionStatusCaptureTests: XCTestCase {
         XCTAssertNil(ContextUsage.parse(Data(#"{"context_window":{"used_percentage":null}}"#.utf8)))
     }
 
-    func testCaptureWritesPerSessionStatusAndSharedUsage() throws {
+    func testCaptureWritesPerSessionStatusAndRunsTheUsersCommand() throws {
         let dir = try makeTemporaryDirectory()
         let appID = UUID()
         let capture = StatusLineCapture(statusDirectory: dir.appendingPathComponent("status").path,
-                                        usagePath: dir.appendingPathComponent("usage.json").path, userStatusLine: nil)
+                                        userStatusLine: UserStatusLine(command: "cat >/dev/null; echo 'my status'", padding: nil))
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", capture.command(for: appID)]
-        let stdin = Pipe()
+        let stdin = Pipe(), stdout = Pipe()
         process.standardInput = stdin
+        process.standardOutput = stdout
         try process.run()
         stdin.fileHandleForWriting.write(Data(input.utf8))
         try stdin.fileHandleForWriting.close()
         process.waitUntilExit()
 
+        XCTAssertEqual(String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self), "my status\n")
         let status = try Data(contentsOf: dir.appendingPathComponent("status/\(appID.uuidString).json"))
         XCTAssertEqual(ContextUsage.parse(status)?.usedPercentage, 42)
-        let usage = try Data(contentsOf: dir.appendingPathComponent("usage.json"))
-        XCTAssertEqual(UsageSnapshot.parse(usage, updatedAt: Date())?.fiveHour?.usedPercentage, 40)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("usage.json").path), "no shared usage file")
     }
 
     func testModelReadsContextPerSession() throws {
@@ -80,18 +81,18 @@ final class SessionStatusCaptureTests: XCTestCase {
             let store = MemoryStore()
             store.state = state
             let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: dir), hookEventsURL: dir.appendingPathComponent("h.log"),
-                                 usageURL: dir.appendingPathComponent("usage.json"), statusDirectory: status,
+                                 statusDirectory: status,
                                  locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
             XCTAssertNil(model.context(for: s.id))
             try input.write(to: status.appendingPathComponent("\(s.id.uuidString).json"), atomically: true, encoding: .utf8)
-            model.pollUsage()
+            model.pollStatusLines()
             XCTAssertEqual(model.context(for: s.id)?.usedPercentage, 42)
         }
     }
 
     func testModelRefreshesUsageFromTheUsageCommand() async throws {
         let runner = FakeRunner()
-        runner.usageOutput = "Current session: 12% used · resets 5pm\nCurrent week (all models): 3% used\n"
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
         let model = try await MainActor.run {
             AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                      hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
@@ -99,8 +100,9 @@ final class SessionStatusCaptureTests: XCTestCase {
         }
         await model.refreshUsage()
         await MainActor.run {
-            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 12)
-            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 3)
+            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 5)
+            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42)
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 2000)
         }
     }
 }

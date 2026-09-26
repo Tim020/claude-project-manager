@@ -130,7 +130,7 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
             // Status updates from the Claude Code hooks of running sessions.
             model.pollHookEvents()
-            model.pollUsage()
+            model.pollStatusLines()
             model.updateMenuFlags()
             model.checkNotifications()
             // Files Changed: reload visible sessions after their tool calls.
@@ -147,7 +147,7 @@ struct ContentView: View {
         }
         .task { await model.refreshAgents() }
         .task { await model.refreshUsage() }
-        .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in
+        .onReceive(Timer.publish(every: AppModel.usageRefreshInterval, on: .main, in: .common).autoconnect()) { _ in
             // Plan usage via `claude -p /usage` (no model call).
             Task { await model.refreshUsage() }
         }
