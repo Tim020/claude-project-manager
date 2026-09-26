@@ -55,7 +55,17 @@ public struct PaneGroup: Codable, Equatable, Identifiable, Sendable {
     public init(id: UUID = UUID(), tabIDs: [UUID] = [], selectedTabID: UUID? = nil) {
         self.id = id
         self.tabIDs = tabIDs
-        self.selectedTabID = selectedTabID ?? tabIDs.first
+        self.selectedTabID = selectedTabID.flatMap { tabIDs.contains($0) ? $0 : nil } ?? tabIDs.first
+    }
+
+    enum CodingKeys: String, CodingKey { case id, tabIDs, selectedTabID }
+
+    /// Goes through `init` so a saved selection that isn't one of the tabs is fixed.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id),
+                  tabIDs: try c.decodeIfPresent([UUID].self, forKey: .tabIDs) ?? [],
+                  selectedTabID: try c.decodeIfPresent(UUID.self, forKey: .selectedTabID))
     }
 
     /// Removes a tab; if it was shown, its left neighbour (or the new first tab) is.
@@ -81,6 +91,21 @@ public struct PaneSplit: Codable, Equatable, Identifiable, Sendable {
         self.axis = axis
         self.children = children
         self.fractions = PaneSplit.normalized(fractions ?? [], count: children.count)
+    }
+
+    enum CodingKeys: String, CodingKey { case id, axis, children, fractions }
+
+    /// Goes through `init`, so saved shares always match the panes (equal
+    /// shares if they don't). A split with no panes isn't a layout: it throws,
+    /// and the workspace starts again with one pane.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let children = try c.decode([PaneNode].self, forKey: .children)
+        guard !children.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .children, in: c, debugDescription: "A split with no panes")
+        }
+        self.init(id: try c.decode(UUID.self, forKey: .id), axis: try c.decode(SplitAxis.self, forKey: .axis),
+                  children: children, fractions: try c.decodeIfPresent([Double].self, forKey: .fractions))
     }
 
     /// `values` scaled to sum to 1, or equal shares if they don't fit `count`.

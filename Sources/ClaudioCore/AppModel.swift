@@ -257,10 +257,11 @@ public final class AppModel {
         Set(tabs.compactMap { state.workspace.group(of: $0.id) }).count > 1
     }
 
-    /// Sessions in the selected folder whose tabs are closed (to reopen).
-    public var closedTabs: [Session] {
-        guard let group = selectedGroup else { return [] }
-        return state.workspace.sessions(in: group).filter { !state.workspace.isOpen($0.id) }
+    /// Sessions whose tabs are closed, in the folder of the tab a pane shows
+    /// (to reopen in that pane).
+    public func closedTabs(besidePane group: PaneGroup) -> [Session] {
+        guard let shown = group.selectedTabID, let folder = state.workspace.group(of: shown) else { return [] }
+        return state.workspace.sessions(in: folder).filter { !state.workspace.isOpen($0.id) }
     }
 
     /// How the open tabs are arranged into panes.
@@ -622,12 +623,34 @@ public final class AppModel {
             // Reopening a live agent reattaches rather than showing the old terminal.
             exitCodes[sessionID] = nil
         }
-        updatePanes { $0.selectTab(sessionID) }
+        // Opening a tab is saved at once; which tab has focus rides along with
+        // the next save rather than writing the state file on every click.
+        let opening = !state.workspace.isOpen(sessionID)
+        updatePanes(saving: opening) { $0.selectTab(sessionID) }
     }
 
     /// Focuses a pane (e.g. when it's clicked), selecting the tab it shows.
     public func focusPane(_ groupID: UUID) {
-        updatePanes { $0.focusPane(groupID) }
+        updatePanes(saving: false) { $0.focusPane(groupID) }
+    }
+
+    /// Drops a tab (or a session from the sidebar) on a pane: in the middle it
+    /// joins the pane's tabs, on an edge it docks in a new pane there. A drop
+    /// that wouldn't change anything (a tab let go over its own pane, or a
+    /// pane's only tab on its own edge) just shows the tab.
+    public func dropTab(_ sessionID: UUID, on groupID: UUID, zone: PaneDropZone) {
+        guard state.workspace.session(sessionID) != nil else { return }
+        let owner = state.workspace.panes.group(containing: sessionID)
+        switch zone {
+        case .center where owner?.id == groupID:
+            select(sessionID)
+        case .center:
+            moveTab(sessionID, toPane: groupID)
+        case .edge where owner?.id == groupID && owner?.tabIDs.count == 1:
+            select(sessionID)
+        case .edge(let edge):
+            splitTab(sessionID, to: edge, of: groupID)
+        }
     }
 
     /// Moves a tab (from any pane, or a session from the sidebar) into a pane,
@@ -656,13 +679,13 @@ public final class AppModel {
         updatePanes { $0.resizeSplit(splitID, fractions: fractions) }
     }
 
-    /// Changes the pane layout, saving only if it changed.
-    private func updatePanes(_ body: (inout Workspace) -> Void) {
+    /// Changes the pane layout, saving (unless `saving` is false) only if it changed.
+    private func updatePanes(saving: Bool = true, _ body: (inout Workspace) -> Void) {
         var workspace = state.workspace
         body(&workspace)
         guard workspace != state.workspace else { return }
         state.workspace = workspace
-        save()
+        if saving { save() }
     }
 
     /// Closes a tab. The session keeps running (its sidebar status still

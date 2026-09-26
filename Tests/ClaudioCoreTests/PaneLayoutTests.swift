@@ -85,6 +85,31 @@ final class PaneLayoutTests: XCTestCase {
         XCTAssertEqual(layout.focusedTabID, ids[1])
     }
 
+    func testSplittingATabBesideAnotherPaneClosesItsOwn() {
+        var layout = layout(2)
+        let first = layout.focusedGroupID
+        layout.split(ids[1], to: .right, of: first)
+        XCTAssertEqual(shape(layout.root), "H[[0],[1]]")
+        layout.split(ids[1], to: .bottom, of: first)
+        XCTAssertEqual(shape(layout.root), "V[[0],[1]]", "its old pane closed, leaving no empty column")
+        XCTAssertEqual(layout.focusedTabID, ids[1])
+    }
+
+    func testClosingTheFocusedMiddlePaneFocusesTheOneBefore() {
+        var layout = layout(3)
+        let first = layout.focusedGroupID
+        layout.split(ids[2], to: .right, of: first)
+        let last = layout.focusedGroupID
+        layout.split(ids[1], to: .left, of: last)
+        XCTAssertEqual(shape(layout.root), "H[[0],[1],[2]]")
+        XCTAssertEqual(layout.focusedTabID, ids[1])
+        layout.reconcile(openTabIDs: [ids[0], ids[2]])
+        XCTAssertEqual(layout.focusedGroupID, first, "the pane before, not the first found")
+        layout.select(ids[2])
+        layout.reconcile(openTabIDs: [ids[0]])
+        XCTAssertEqual(layout.focusedGroupID, first)
+    }
+
     func testNestedSameAxisSplitsMerge() {
         var layout = layout(3)
         let first = layout.focusedGroupID
@@ -193,6 +218,23 @@ final class PaneLayoutTests: XCTestCase {
         XCTAssertEqual(width, 400, accuracy: 1e-9)
     }
 
+    func testDraggingAMiddleDividerOnlyTradesBetweenItsNeighbours() throws {
+        var layout = layout(3)
+        let first = layout.focusedGroupID
+        layout.split(ids[1], to: .right, of: first)
+        layout.split(ids[2], to: .right, of: layout.focusedGroupID)
+        // H[[0],[1],[2]] with shares [0.5, 0.25, 0.25] over 1000pt.
+        let handle = try XCTUnwrap(layout.frames(width: 1010, height: 600, divider: 5).dividers.last)
+        XCTAssertEqual(handle.index, 1)
+        let moved = handle.fractions(draggedBy: -50, minimum: 100)
+        XCTAssertEqual(moved[0], 0.5, accuracy: 1e-9, "the first pane doesn't move")
+        XCTAssertEqual(moved[1], 0.2, accuracy: 1e-9)
+        XCTAssertEqual(moved[2], 0.3, accuracy: 1e-9)
+        let stopped = handle.fractions(draggedBy: 400, minimum: 100)
+        XCTAssertEqual(stopped[2], 0.1, accuracy: 1e-9, "the last pane keeps its 100pt")
+        XCTAssertEqual(stopped[1], 0.4, accuracy: 1e-9)
+    }
+
     func testDropZones() {
         XCTAssertEqual(PaneDropZone.zone(x: 500, y: 400, width: 1000, height: 800), .center)
         XCTAssertEqual(PaneDropZone.zone(x: 50, y: 400, width: 1000, height: 800), .edge(.left))
@@ -265,14 +307,54 @@ final class WorkspacePaneTests: XCTestCase {
         let data = try JSONFileStore.encoder.encode(ws)
         XCTAssertEqual(try JSONFileStore.decoder.decode(Workspace.self, from: data).panes, ws.panes)
 
-        let old = #"{"projects":[],"sessions":[],"openSessionIDs":["\#(ids[0].uuidString)","\#(ids[1].uuidString)"]}"#
-        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: Data(old.utf8))
-        XCTAssertEqual(decoded.panes.groups.map(\.tabIDs), [[ids[0], ids[1]]])
-        XCTAssertEqual(decoded.panes.focusedTabID, ids[0])
-
         let broken = #"{"projects":[],"sessions":[],"openSessionIDs":[],"panes":{"root":42}}"#
         XCTAssertEqual(try JSONFileStore.decoder.decode(Workspace.self, from: Data(broken.utf8)).panes, PaneLayout(),
                        "a layout that doesn't decode starts again")
+    }
+
+    /// A file from before panes: no layout, and (as archiving didn't close
+    /// tabs then) an archived session's tab still open, first.
+    func testOldFilesStartWithOnePaneWithoutArchivedTabs() throws {
+        var (ws, ids) = try workspace(3)
+        ws.updateSession(ids[0]) { $0.isArchived = true }
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONFileStore.encoder.encode(ws)) as? [String: Any])
+        json["panes"] = nil
+        json["openSessionIDs"] = [ids[0].uuidString, UUID().uuidString, ids[1].uuidString, ids[2].uuidString]
+        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.openTabIDs, [ids[1], ids[2]], "archived and unknown tabs are dropped")
+        XCTAssertEqual(decoded.panes.groups.map(\.tabIDs), [[ids[1], ids[2]]])
+        XCTAssertEqual(decoded.panes.focusedTabID, ids[1])
+    }
+
+    /// Saved layouts go through the same checks as new ones.
+    func testSavedLayoutsThatDontFitTogetherAreRepaired() throws {
+        var (ws, ids) = try workspace(3)
+        ws.splitTab(ids[2], to: .right, of: ws.panes.focusedGroupID)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONFileStore.encoder.encode(ws)) as? [String: Any])
+        var panes = try XCTUnwrap(json["panes"] as? [String: Any])
+        var root = try XCTUnwrap(panes["root"] as? [String: Any])
+        var split = try XCTUnwrap((root["split"] as? [String: Any])?["_0"] as? [String: Any])
+        split["fractions"] = [1]
+        var children = try XCTUnwrap(split["children"] as? [[String: Any]])
+        var first = try XCTUnwrap((children[0]["group"] as? [String: Any])?["_0"] as? [String: Any])
+        first["selectedTabID"] = UUID().uuidString
+        children[0] = ["group": ["_0": first]]
+        split["children"] = children
+        root["split"] = ["_0": split]
+        panes["root"] = root
+        json["panes"] = panes
+        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.panes.groups.map(\.tabIDs), [[ids[0], ids[1]], [ids[2]]], "every open tab is still in a pane")
+        guard case .split(let repaired) = decoded.panes.root else { return XCTFail("not split") }
+        XCTAssertEqual(repaired.fractions, [0.5, 0.5], "shares that don't fit become equal")
+        XCTAssertEqual(decoded.panes.groups[0].selectedTabID, ids[0], "a selection that isn't a tab becomes the first")
+
+        split["children"] = []
+        root["split"] = ["_0": split]
+        panes["root"] = root
+        json["panes"] = panes
+        let empty = try JSONFileStore.decoder.decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(empty.panes.groups.map(\.tabIDs), [[ids[0], ids[1], ids[2]]], "a split with no panes starts again")
     }
 
     func testStaleTabsInASavedLayoutAreDropped() throws {

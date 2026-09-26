@@ -285,11 +285,11 @@ struct TabStrip: View {
                     Button(session.name) { model.select(session.id) }
                 }
             }
-            let closed = model.closedTabs
+            let closed = model.closedTabs(besidePane: group)
             if !closed.isEmpty {
                 Section("Closed") {
                     ForEach(closed) { session in
-                        Button(session.name) { model.select(session.id) }
+                        Button(session.name) { model.moveTab(session.id, toPane: group.id) }
                     }
                 }
             }

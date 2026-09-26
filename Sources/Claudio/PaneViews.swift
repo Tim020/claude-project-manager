@@ -183,10 +183,7 @@ private struct PaneDropDelegate: DropDelegate {
         commands.endDrag()
         let groupID = group.id
         loadSessionID(from: info.itemProviders(for: paneDropTypes)) { id in
-            switch target {
-            case .center: model.moveTab(id, toPane: groupID)
-            case .edge(let edge): model.splitTab(id, to: edge, of: groupID)
-            }
+            model.dropTab(id, on: groupID, zone: target)
         }
         return true
     }

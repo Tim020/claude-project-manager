@@ -50,7 +50,10 @@ public struct Workspace: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
-        openTabIDs = try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []
+        // Older files kept archived sessions' tabs open (hidden); archiving closes
+        // them now, so drop those, and any id without a session.
+        let visible = Set(sessions.filter { !$0.isArchived }.map(\.id))
+        openTabIDs = (try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []).filter(visible.contains)
         removedSessions = try c.decodeIfPresent([RemovedSession].self, forKey: .removedSessions) ?? []
         deletedClaudeSessionIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedClaudeSessionIDs) ?? []
         deletedAgentIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedAgentIDs) ?? []
