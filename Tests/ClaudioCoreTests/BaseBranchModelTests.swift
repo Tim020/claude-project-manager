@@ -6,7 +6,7 @@ final class RoutingRunner: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     private let real = ProcessCommandRunner()
     var ghAuthOutput = "github.com\n  ✓ Logged in to github.com account Tim020 (keyring)\n"
-    var ghPullRequest: String? = #"{"baseRefName":"dev","number":1427}"#
+    var ghPullRequest: String? = #"{"baseRefName":"dev","number":1427,"state":"OPEN"}"#
     private var _ghCalls: [[String]] = []
     var ghCalls: [[String]] { lock.withLock { _ghCalls } }
 

@@ -97,7 +97,7 @@ extension AppModel {
         if let cached = pullRequestCache[directory], now().timeIntervalSince(cached.checked) < AppModel.pullRequestCacheInterval {
             return cached.pullRequest
         }
-        let output = await run(GitHubCLI.command(["pr", "view", "--json", "baseRefName,number"], in: directory, gh: gh),
+        let output = await run(GitHubCLI.command(["pr", "view", "--json", GitHubCLI.pullRequestFields], in: directory, gh: gh),
                                logOnlyChanges: true, changeKey: "gh-pr|\(directory)")
         let pullRequest = output.exitCode == 0 ? GitHubCLI.parsePullRequest(output.output) : nil
         pullRequestCache[directory] = (pullRequest, now())

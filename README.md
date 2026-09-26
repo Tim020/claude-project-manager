@@ -27,7 +27,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Files Changed** (design 4a + 4b). Two scopes, switched in either view:
   - **This Session:** files the session's own Edit and Write tool calls changed (including its subagents'). Each file is compared from its state when the session first touched it to what's on disk now, so it works outside git.
   - **vs main:** a git diff of the session's folder or worktree against where it branched from its base branch, including uncommitted and untracked files. The base is, in order:
-    1. the base branch of the session's open pull request, found with the GitHub CLI (`gh pr view`, cached for 5 minutes) when `gh` is installed and signed in;
+    1. the base branch of the session's open pull request (merged or closed ones are ignored), found with the GitHub CLI (`gh pr view`, cached for 5 minutes) when `gh` is installed and signed in;
     2. the branch chosen for the project in the ▾ menu next to "vs";
     3. the repository's default branch (`origin/HEAD`, else `main`/`master`).
 

@@ -35,10 +35,16 @@ public enum GitHubCLI {
         return .signedIn(account: account)
     }
 
-    /// `gh pr view --json baseRefName,number`.
+    /// The fields to ask `gh pr view` for.
+    public static let pullRequestFields = "baseRefName,number,state"
+
+    /// `gh pr view --json baseRefName,number,state`. gh picks the branch's
+    /// pull request even when it's merged or closed (seen on a `dev` branch
+    /// whose old PR into main was merged), so only an open one counts.
     public static func parsePullRequest(_ output: String) -> PullRequest? {
         guard let start = output.firstIndex(of: "{"),
               let value = try? JSONDecoder().decode(JSONValue.self, from: Data(output[start...].utf8)),
+              value["state"]?.stringValue == "OPEN",
               let base = value["baseRefName"]?.stringValue, !base.isEmpty,
               let number = value["number"]?.doubleValue
         else { return nil }
@@ -52,6 +58,8 @@ public enum GitHubCLI {
         environment["GH_PROMPT_DISABLED"] = "1"
         environment["GH_NO_UPDATE_NOTIFIER"] = "1"
         environment["NO_COLOR"] = "1"
+        // gh pages long output through less in a terminal.
+        environment["GH_PAGER"] = "cat"
         return TerminalLaunch(executable: gh, arguments: args, environment: environment, workingDirectory: directory,
                               claudeArguments: [], label: (["gh"] + args).joined(separator: " "))
     }

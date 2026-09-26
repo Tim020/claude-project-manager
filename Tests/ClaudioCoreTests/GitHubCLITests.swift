@@ -11,19 +11,27 @@ final class GitHubCLIParsingTests: XCTestCase {
           - Active account: true
           - The token in GH_TOKEN is invalid.
         """), .signedOut)
-        // Signed in (gh 2.40+), and the older "as" wording.
+        // Recorded from gh 2.101.0, signed in; and the older "as" wording.
         XCTAssertEqual(GitHubCLI.parseAuthStatus("""
         github.com
           ✓ Logged in to github.com account Tim020 (keyring)
           - Active account: true
-          - Git operations protocol: https
+          - Git operations protocol: ssh
           - Token: gho_************************************
+          - Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
         """), .signedIn(account: "Tim020"))
         XCTAssertEqual(GitHubCLI.parseAuthStatus("github.com\n  ✓ Logged in to github.com as octocat (oauth_token)\n"), .signedIn(account: "octocat"))
     }
 
     func testPullRequestBase() {
-        XCTAssertEqual(GitHubCLI.parsePullRequest(#"{"baseRefName":"dev","number":1427}"#), GitHubCLI.PullRequest(number: 1427, base: "dev"))
+        // gh pr view picks the branch's PR even when it's merged or closed
+        // (recorded on DigiScript's dev branch: merged PR #1356 into main), so
+        // only an open one counts.
+        XCTAssertEqual(GitHubCLI.parsePullRequest("{\n  \"baseRefName\": \"dev\",\n  \"number\": 1427,\n  \"state\": \"OPEN\"\n}\n"),
+                       GitHubCLI.PullRequest(number: 1427, base: "dev"))
+        XCTAssertNil(GitHubCLI.parsePullRequest("{\n  \"baseRefName\": \"main\",\n  \"number\": 1356,\n  \"state\": \"MERGED\"\n}\n"))
+        XCTAssertNil(GitHubCLI.parsePullRequest(#"{"baseRefName":"main","number":7,"state":"CLOSED"}"#))
+        XCTAssertNil(GitHubCLI.parsePullRequest(#"{"baseRefName":"main","number":7}"#), "no state, no trust")
         XCTAssertNil(GitHubCLI.parsePullRequest("no pull requests found for branch \"feature\""))
         XCTAssertNil(GitHubCLI.parsePullRequest(#"{"number":3}"#))
     }
@@ -42,6 +50,7 @@ final class GitHubCLIParsingTests: XCTestCase {
         XCTAssertEqual(launch.executable, "/opt/homebrew/bin/gh")
         XCTAssertEqual(launch.workingDirectory, "/code/app")
         XCTAssertEqual(launch.environment["GH_PROMPT_DISABLED"], "1")
+        XCTAssertEqual(launch.environment["GH_PAGER"], "cat", "gh pages its output in a terminal")
         XCTAssertEqual(launch.displayCommand, "gh pr view --json baseRefName,number")
     }
 }

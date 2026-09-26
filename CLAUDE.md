@@ -57,8 +57,8 @@ These were verified against real CLI output, which is recorded in `Tests/Claudio
 
 **Other tools.**
 - `git` is read-only here: it runs with `GIT_OPTIONAL_LOCKS=0`.
-- `gh` is optional. Its signed-out output was recorded from gh 2.63.2. The signed-in `auth status` wording is taken from known formats, not recorded, because this environment has no real token.
-- Files Changed's "vs" branch comes from, in order: the PR's base (`gh pr view --json baseRefName,number`, cached for 5 minutes), then `Project.comparisonBranch`, then `origin/HEAD` or `main`/`master` (`GitChanges.load(preferred:)`).
+- `gh` is optional. Recorded output: signed out from gh 2.63.2, signed in from 2.101.0. `gh pr view` also returns merged or closed PRs, so only `state: OPEN` counts.
+- Files Changed's "vs" branch comes from, in order: the PR's base (`gh pr view --json baseRefName,number,state`, cached for 5 minutes), then `Project.comparisonBranch`, then `origin/HEAD` or `main`/`master` (`GitChanges.load(preferred:)`).
 
 To check CLI behaviour without touching the user's setup, install it in a container:
 
