@@ -160,6 +160,22 @@ public struct SessionDiscovery: Sendable {
         projectDirectory(for: projectPath).appendingPathComponent("\(claudeSessionID).jsonl")
     }
 
+    /// A conversation's files: `<id>.jsonl` and the `<id>/` folder beside it
+    /// (subagent transcripts, tool results), in the project's own history
+    /// directory, its worktrees' directories, or the session's working directory's.
+    public func historyItems(projectPath: String, workingDirectory: String, claudeSessionID: String) -> [URL] {
+        let fileManager = FileManager.default
+        let root = claudeHome.appendingPathComponent("projects")
+        let worktreePrefix = SessionDiscovery.directoryName(forProjectPath: projectPath + Worktree.marker)
+        let names = Set([projectPath, workingDirectory].map(SessionDiscovery.directoryName(forProjectPath:)))
+            .union(((try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.hasPrefix(worktreePrefix) })
+        return names.sorted().flatMap { name -> [URL] in
+            let directory = root.appendingPathComponent(name)
+            return [directory.appendingPathComponent("\(claudeSessionID).jsonl"), directory.appendingPathComponent(claudeSessionID)]
+                .filter { fileManager.fileExists(atPath: $0.path) }
+        }
+    }
+
     /// All sessions with at least one real prompt, newest first.
     public func discover(projectPath: String, cache: SessionSummaryCache? = nil) throws -> [DiscoveredSession] {
         let fileManager = FileManager.default

@@ -579,8 +579,8 @@ struct SessionMenu: View {
     }
 }
 extension View {
-    /// Confirms deleting a session; for a background agent this also runs
-    /// `claude rm`, which removes its worktree when that's safe.
+    /// Confirms deleting a session, from Claudio only or from Claude Code
+    /// too (`claude rm` for a background agent, plus its history files).
     func deleteSessionConfirmation(session: Session, isPresented: Binding<Bool>) -> some View {
         modifier(DeleteSessionConfirmation(session: session, isPresented: isPresented))
     }
@@ -593,13 +593,14 @@ private struct DeleteSessionConfirmation: ViewModifier {
 
     func body(content: Content) -> some View {
         content.confirmationDialog("Delete “\(session.name)”?", isPresented: $isPresented, titleVisibility: .visible) {
-            Button("Delete Session", role: .destructive) { model.deleteSession(session.id) }
+            Button("Remove from Claudio") { model.deleteSession(session.id, .claudioOnly) }
+            Button("Remove from Claude Code and Claudio", role: .destructive) { model.deleteSession(session.id, .everywhere) }
             Button("Cancel", role: .cancel) {}
         } message: {
             if session.agentID != nil {
-                Text("The background agent is removed with `claude rm`, along with its worktree when that's safe.")
+                Text("Remove from Claudio leaves the background agent and its history in Claude Code. Removing it from Claude Code too runs `claude rm`, which also removes its worktree when that's safe, and deletes its history. This can't be undone.")
             } else {
-                Text("The session is removed from Claudio. Its Claude Code history stays on disk.")
+                Text("Remove from Claudio leaves the conversation's history in Claude Code. Removing it from Claude Code too deletes that history. This can't be undone.")
             }
         }
     }

@@ -324,7 +324,7 @@ final class AppModelTests: XCTestCase {
             let first = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
             let second = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
             XCTAssertEqual(model.selectedSessionID, second)
-            model.deleteSession(second)
+            model.deleteSession(second, .claudioOnly)
             XCTAssertEqual(terminals.terminated, [second])
             XCTAssertNil(model.workspace.session(second))
             XCTAssertEqual(model.selectedSessionID, first)
@@ -336,7 +336,7 @@ final class AppModelTests: XCTestCase {
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = try XCTUnwrap(model.workspace.sessions(in: .unfiled(projectID: p)).first)
-            model.deleteSession(s.id)
+            model.deleteSession(s.id, .claudioOnly)
             return (model, try XCTUnwrap(s.claudeSessionID))
         }
         await model.refreshAll()

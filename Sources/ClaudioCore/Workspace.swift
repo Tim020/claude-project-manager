@@ -419,3 +419,13 @@ public struct Workspace: Codable, Equatable, Sendable {
         return value
     }
 }
+
+/// What deleting a session removes.
+public enum SessionDeletion: Sendable {
+    /// Only Claudio's entry. Claude Code keeps the conversation (and any
+    /// background agent), and Claudio doesn't import it again.
+    case claudioOnly
+    /// Claudio's entry, the background agent (`claude rm`) and the
+    /// conversation's history files, which `claude rm` leaves behind.
+    case everywhere
+}

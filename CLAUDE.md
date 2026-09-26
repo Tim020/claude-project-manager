@@ -53,6 +53,7 @@ These were verified against real CLI output, which is recorded in `Tests/Claudio
 - **← on an empty prompt in an attached terminal switches to the agents view.** Its title is "claude agents". `AgentsViewDetector` and `TerminalRegistry.returnToSession` reattach the tab.
 - **Titles.** `/rename` writes `{"type":"custom-title","customTitle":…,"sessionId":…}` to the history file. Claudio writes the same record when renaming (`SessionTitleWriter`) and follows new ones from the terminal. `Session.claudeTitle` stops a rename bouncing back and forth.
 - **`claude auth status --json`** exits 1 when signed out but still prints JSON with `loggedIn: false`. `claude auth login` signs in (Console / API-key sign-in is tracked in issue #1).
+- **`claude rm` leaves the history behind.** It removes the agent and its worktree, but `<sessionId>.jsonl` (and the `<sessionId>/` folder of subagent transcripts and tool results) stays in `~/.claude/projects`. The agent even writes to it while stopping. Verified with 2.1.283. So deleting from Claude Code removes those files itself, after the `rm` (`AppModel.removeHistory`).
 - **Background agents live in `<repo>/.claude/worktrees/<name>`.** Their history directories are prefixed `<encoded repo>--claude-worktrees-`, and they're grouped under the repository's project.
 
 **Other tools.**

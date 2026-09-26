@@ -790,7 +790,10 @@ public final class AppModel {
         return choices
     }
 
-    public func deleteSession(_ id: UUID) {
+    /// Deletes the session from Claudio, and with `.everywhere` from Claude
+    /// Code too: its background agent (`claude rm`) and its history files.
+    public func deleteSession(_ id: UUID, _ scope: SessionDeletion) {
+        guard let session = state.workspace.session(id) else { return }
         if selectedSessionID == id {
             let siblings = tabs
             let index = siblings.firstIndex { $0.id == id } ?? 0
@@ -798,14 +801,36 @@ public final class AppModel {
             selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
         }
         detach(id)
-        if let agentID = state.workspace.session(id)?.agentID {
-            runAgentCommand { $0.remove(agentID: agentID) }
+        if scope == .everywhere {
+            if let agentID = session.agentID {
+                runAgentCommand { $0.remove(agentID: agentID) }
+            }
+            // After `claude rm`, so the agent can't write to them again.
+            if let claudeID = session.claudeSessionID {
+                let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+                enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
+            }
         }
+        log.append(.info, scope == .everywhere ? "Deleted “\(session.name)” from Claude Code and Claudio"
+                                              : "Removed “\(session.name)” from Claudio")
         recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         historyLines[id] = nil
         state.workspace.deleteSession(id)
         save()
+    }
+
+    private func removeHistory(of session: Session, claudeSessionID: String, projectPath: String) {
+        let items = discovery.historyItems(projectPath: projectPath, workingDirectory: session.workingDirectory,
+                                           claudeSessionID: claudeSessionID)
+        for item in items {
+            do {
+                try FileManager.default.removeItem(at: item)
+                log.append(.info, "Deleted Claude Code history", detail: PathDisplay.tilde(item.path, home: home))
+            } catch {
+                report("Couldn't delete \(PathDisplay.tilde(item.path, home: home)): \(AppModel.describe(error))")
+            }
+        }
     }
 
     /// Adds a session, selects it and opens its terminal (with the prompt, if any).
