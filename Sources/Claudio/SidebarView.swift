@@ -246,12 +246,16 @@ private struct ProjectSection: View {
                 .font(DS.font(11, .extraBold))
                 .kerning(0.66)
                 .lineLimit(1)
+                .help(project.path)
             Spacer(minLength: 4)
             Text(project.displayPath)
                 .font(DS.font(11, .semibold))
                 .foregroundStyle(DS.dim)
                 .lineLimit(1)
                 .truncationMode(.head)
+                .layoutPriority(-1)
+                .help(project.path)
+            StatusCountPills(counts: project.statusCounts)
         }
         .foregroundStyle(DS.muted)
         .padding(.vertical, 4)
@@ -259,7 +263,6 @@ private struct ProjectSection: View {
         .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
         .contentShape(Rectangle())
         .onTapGesture { model.toggleCollapsed(project.id) }
-        .help(project.path)
         .dropDestination(for: String.self) { items, _ in
             // Dropping on the project header files the session as Unfiled.
             moveSessions(items, to: .unfiled(projectID: project.id))
@@ -282,6 +285,31 @@ private struct ProjectSection: View {
         let ids = items.compactMap(UUID.init(uuidString:))
         ids.forEach { model.moveSession($0, to: group) }
         return !ids.isEmpty
+    }
+}
+
+/// One pill per state with sessions in it (working, awaiting input,
+/// completed), coloured like the status dots, for a project header.
+private struct StatusCountPills: View {
+    let counts: StatusCounts
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(SessionStatus.allCases, id: \.self) { status in
+                let count = counts[status]
+                if count > 0 {
+                    Text("\(count)")
+                        .font(DS.font(10.5, .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(status == .completed ? DS.muted : DS.color(for: status))
+                        .padding(.horizontal, 6)
+                        .frame(minWidth: 20, minHeight: 16)
+                        .background(Capsule().fill(DS.color(for: status).opacity(status == .completed ? 0.18 : 0.22)))
+                        .help("\(count) \(status.label)")
+                }
+            }
+        }
+        .fixedSize()
     }
 }
 

@@ -23,6 +23,8 @@ public struct SidebarProject: Identifiable, Equatable, Sendable {
     /// Working + awaiting input sessions (badge on the project).
     public var activeCount: Int
     public var hasAwaitingInput: Bool
+    /// Sessions in each state (not archived), for the project header.
+    public var statusCounts: StatusCounts
 }
 
 /// Builds the Project → Folder → Session source list, applying the filter
@@ -102,7 +104,8 @@ public enum Sidebar {
                 isCollapsed: project.isCollapsed,
                 folders: project.isCollapsed && !filtering ? [] : folders,
                 activeCount: active.count,
-                hasAwaitingInput: active.contains { $0.status == .awaitingInput })
+                hasAwaitingInput: active.contains { $0.status == .awaitingInput },
+                statusCounts: workspace.statusCounts(projectID: project.id))
         }
     }
 }

@@ -15,7 +15,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 ## Features
 
 - **Sidebar tree.** Projects, folders and sessions in one list, with a filter field and live status dots and ages. Drag the divider to resize it.
-  - The footer counts Working / Awaiting Input / Completed sessions. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
+  - Each project header shows how many of its sessions are Working, Awaiting Input and Completed, as coloured pills (a pill appears only when its count isn't zero). The footer shows the same totals for all projects. Click a count (or use the filter button in the filter field) to show only sessions with that status; click it again to show all.
   - Only sessions active in the last 2 weeks are shown by default; sessions that are working, awaiting input, open in a tab or selected always show. The end of the list says how many are hidden, with Show All. Change the window (a preset or any number of days, or Any time) from the filter button or Settings → General.
   - Icons beside a session: a terminal (also open in a terminal outside Claudio), a branch (runs in its own git worktree) and a pull request (with a count when there's more than one). Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.
@@ -28,6 +28,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Roles.** Optional labels for sessions (Code, Review, Research by default). Pick one in the New Session sheet, or change it later from the role tag in the session header ("Add Role" when there's none) or the Role submenu when you right-click a session or tab. Edit the list in Settings → Roles.
 - **Claude Code background agents.** New sessions start (with Auto permissions by default) as background agents (`claude --bg`), each in its own git worktree (`.claude/worktrees/<name>`) by default, so sessions don't step on each other.
   - A tab is a terminal running `claude attach <id>`, so you get the full interactive Claude Code UI: slash-command autocomplete, `@` mentions, permission prompts, plan mode and pickers.
+  - Claude Code stays open in its tab: a second Ctrl+C or Ctrl+D on an empty prompt, which would quit it, is ignored with a short hint (close the tab to detach, or use Stop Session). A single Ctrl+C still interrupts Claude or clears the prompt.
   - The terminal stays in its session. In Claude Code, ← on an empty prompt switches an attached terminal to its agents view; the app spots that (the terminal title becomes "claude agents") and reattaches the tab straight away, since the sidebar and tabs handle navigation. ← still moves the cursor as normal.
   - A session that isn't running shows its history with a message box: type and press Return to resume it with that message as the first prompt, or click Resume to resume without one.
   - Closing a tab only detaches; the agent keeps running and its sidebar status keeps updating. Quitting the app leaves agents running, and they reattach when you reopen them.

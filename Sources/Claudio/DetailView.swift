@@ -468,6 +468,18 @@ struct SessionPane: View {
                 TerminalPane(sessionID: session.id, registry: terminals.registry, isFocused: isFocused && running)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)
+                    .overlay(alignment: .top) {
+                        if let hint = model.terminalHints[session.id] {
+                            TerminalHint(text: hint)
+                                .padding(.top, 10)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .task(id: hint) {
+                                    try? await Task.sleep(for: .seconds(5))
+                                    model.clearTerminalHint(session.id)
+                                }
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.2), value: model.terminalHints[session.id])
                     .simultaneousGesture(TapGesture().onEnded { model.select(session.id) })
                 if !running {
                     ResumeBar(session: session, message: exitMessage(exitCode), compact: style.isCompact)
@@ -582,6 +594,28 @@ private struct ResumeBar: View {
         model.select(session.id)
         model.resume(session.id, message: text.isEmpty ? nil : text)
         draft = ""
+    }
+}
+/// A brief notice over a terminal, e.g. why a key press was ignored.
+private struct TerminalHint: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .foregroundStyle(DS.blue)
+            Text(text)
+                .font(DS.font(12.5))
+                .foregroundStyle(DS.text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(DS.menu))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        .frame(maxWidth: 520)
+        .allowsHitTesting(false)
     }
 }
 #endif

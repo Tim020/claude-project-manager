@@ -74,6 +74,10 @@ public final class AppModel {
     /// How long a check stays fresh before coming back to Claudio re-checks.
     public static let environmentCheckInterval: TimeInterval = 300
 
+    /// A short notice shown over a session's terminal (e.g. why a key was
+    /// ignored), cleared by `clearTerminalHint`.
+    public private(set) var terminalHints: [UUID: String] = [:]
+
     /// Shows only sessions with this status in the sidebar (nil: all).
     public var statusFilter: SessionStatus?
     public var renamingFolderID: UUID?
@@ -1145,6 +1149,19 @@ public final class AppModel {
         }
         let shortID = String(claudeID.prefix(8))
         return workspace.sessions.first { $0.agentID == shortID }?.id
+    }
+
+    /// A second Ctrl+C / Ctrl+D would have quit Claude Code in this terminal.
+    public func exitKeyBlocked(_ sessionID: UUID) {
+        let agent = state.workspace.session(sessionID)?.agentID != nil
+        terminalHints[sessionID] = agent
+            ? "Claudio keeps Claude Code open here. Close the tab to detach (it keeps running), or use Stop Session."
+            : "Claudio keeps Claude Code open here. Use Stop Session to end it."
+        log.append(.info, "Blocked a second Ctrl+C/Ctrl+D that would have quit Claude Code")
+    }
+
+    public func clearTerminalHint(_ sessionID: UUID) {
+        if terminalHints[sessionID] != nil { terminalHints[sessionID] = nil }
     }
 
     /// For tests: adds a session directly.

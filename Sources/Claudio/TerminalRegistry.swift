@@ -63,6 +63,10 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         view.onBlockedLeave = { [weak self] in
             self?.model.log.append(.info, "Blocked ← that would have left the session for the agents view")
         }
+        view.onBlockedExit = { [weak self, weak view] in
+            guard let self, let view, let id = self.sessionID(for: view) else { return }
+            self.model.exitKeyBlocked(id)
+        }
         view.onAgentsViewShown = { [weak self, weak view] in
             guard let self, let view, let id = self.sessionID(for: view) else { return }
             self.returnToSession(id)
@@ -89,6 +93,9 @@ final class TerminalRegistry: NSObject, TerminalControlling {
 /// Code to its agents view is dropped (the app's sidebar and tabs do that job).
 final class SessionTerminalView: LocalProcessTerminalView {
     var onBlockedLeave: (() -> Void)?
+    /// A second Ctrl+C / Ctrl+D that would have quit Claude Code was dropped.
+    var onBlockedExit: (() -> Void)?
+    private var lastExitKey: (key: ExitKeyGuard.Key, date: Date)?
     /// Claude Code switched this terminal to its agents view.
     var onAgentsViewShown: (() -> Void)?
     private var lastLeftArrow: Date?
@@ -96,6 +103,14 @@ final class SessionTerminalView: LocalProcessTerminalView {
 
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let input = Array(data)
+        if let key = ExitKeyGuard.exitKey(input) {
+            let seconds = lastExitKey.flatMap { $0.key == key ? Date().timeIntervalSince($0.date) : nil }
+            lastExitKey = (key, Date())
+            if ExitKeyGuard.shouldBlock(input: input, screen: bottomLines(12), secondsSinceSameKey: seconds) {
+                onBlockedExit?()
+                return
+            }
+        }
         if LeaveSessionGuard.isLeftArrow(input) {
             if LeaveSessionGuard.shouldBlock(input: input, screen: bottomLines(12)) {
                 onBlockedLeave?()

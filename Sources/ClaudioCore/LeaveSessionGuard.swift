@@ -23,6 +23,44 @@ public enum LeaveSessionGuard {
     }
 }
 
+/// Keeps Ctrl+C and Ctrl+D from quitting Claude Code in a session's terminal.
+///
+/// On an empty prompt, the first press shows "Press Ctrl-C again to exit" (or
+/// "Ctrl-D") and a second quits, which would leave the tab on a dead terminal.
+/// The app has Stop and close-tab for that, so the second press is dropped:
+/// while the confirmation is on screen, or within a second of the first press
+/// in case it isn't drawn yet. A single press still interrupts Claude or
+/// clears the prompt.
+public enum ExitKeyGuard {
+    public enum Key: Equatable, Sendable { case ctrlC, ctrlD }
+
+    static let confirmations = ["Ctrl-C again to exit", "Ctrl-D again to exit"]
+    public static let repeatWindow: TimeInterval = 1
+
+    /// The key, as plain control bytes, the kitty keyboard protocol
+    /// (`ESC [ 99 ; 5 u`) or xterm's modifyOtherKeys (`ESC [ 27 ; 5 ; 99 ~`),
+    /// which Claude Code can switch the terminal into.
+    public static func exitKey(_ input: [UInt8]) -> Key? {
+        switch input {
+        case [0x03]: return .ctrlC
+        case [0x04]: return .ctrlD
+        default: break
+        }
+        switch String(decoding: input, as: UTF8.self) {
+        case "\u{1B}[99;5u", "\u{1B}[27;5;99~": return .ctrlC
+        case "\u{1B}[100;5u", "\u{1B}[27;5;100~": return .ctrlD
+        default: return nil
+        }
+    }
+
+    public static func shouldBlock(input: [UInt8], screen: [String], secondsSinceSameKey: TimeInterval?) -> Bool {
+        guard exitKey(input) != nil else { return false }
+        if screen.contains(where: { line in confirmations.contains { line.contains($0) } }) { return true }
+        if let seconds = secondsSinceSameKey, seconds < repeatWindow { return true }
+        return false
+    }
+}
+
 /// Recognises Claude Code's agents view, which a single ← on an empty prompt
 /// switches an attached terminal to, so the app can put the terminal straight
 /// back into its session.
