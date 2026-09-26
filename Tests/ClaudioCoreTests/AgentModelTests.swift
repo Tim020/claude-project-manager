@@ -40,12 +40,14 @@ final class AgentModelTests: XCTestCase {
     var runner = FakeRunner()
     var terminals: FakeTerminals!
     var gitRepos: Set<String> = ["/Users/tim/Documents/Code/DigiScript"]
+    var claudeHome: URL!
 
     @MainActor
     private func makeModel() throws -> AppModel {
+        claudeHome = try makeTemporaryDirectory()
         let model = AppModel(
             store: store,
-            discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+            discovery: SessionDiscovery(claudeHome: claudeHome),
             hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("hooks.log"),
             runner: runner,
             locateClaude: { _ in "/usr/local/bin/claude" }, locateGitHubCLI: { nil },
@@ -237,9 +239,70 @@ final class AgentModelTests: XCTestCase {
         await MainActor.run { model.stop(id) }
         await model.lastTask?.value
         XCTAssertTrue(runner.commands.contains(["stop", "abcd1234"]))
-        await MainActor.run { model.deleteSession(id) }
+        await MainActor.run { model.deleteSession(id, .everywhere) }
         await model.lastTask?.value
         XCTAssertTrue(runner.commands.contains(["rm", "abcd1234"]))
+    }
+
+    /// A linked agent in a worktree, with history in the worktree's
+    /// directory and an unrelated conversation beside it.
+    private func agentWithHistory() async throws -> (AppModel, UUID, history: [URL], other: URL) {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            return (model, try XCTUnwrap(model.createSession(request(p))))
+        }
+        await model.lastTask?.value
+        let worktree = "\(repo)/.claude/worktrees/fix-it"
+        runner.agentsJSON = #"[{"id":"abcd1234","sessionId":"abcd1234-0000","kind":"background","cwd":"\#(worktree)","name":"n","pid":5,"status":"idle","state":"done"}]"#
+        await model.refreshAgents()
+        let directory = claudeHome.appendingPathComponent("projects")
+            .appendingPathComponent(SessionDiscovery.directoryName(forProjectPath: worktree))
+        let subagents = directory.appendingPathComponent("abcd1234-0000/subagents")
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let history = [directory.appendingPathComponent("abcd1234-0000.jsonl"), directory.appendingPathComponent("abcd1234-0000")]
+        let other = directory.appendingPathComponent("ffff0000-0000.jsonl")
+        for file in [history[0], subagents.appendingPathComponent("agent-1.jsonl"), other] {
+            try Data("{}\n".utf8).write(to: file)
+        }
+        return (model, id, history, other)
+    }
+
+    func testDeletingEverywhereRemovesTheAgentAndItsHistory() async throws {
+        let (model, id, history, other) = try await agentWithHistory()
+        await MainActor.run { model.deleteSession(id, .everywhere) }
+        await model.lastTask?.value
+        XCTAssertTrue(runner.commands.contains(["rm", "abcd1234"]))
+        for item in history { XCTAssertFalse(FileManager.default.fileExists(atPath: item.path), item.lastPathComponent) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path), "other conversations are kept")
+    }
+
+    func testRemovingFromClaudioLeavesClaudeCodeAlone() async throws {
+        let (model, id, history, _) = try await agentWithHistory()
+        await MainActor.run { model.deleteSession(id, .claudioOnly) }
+        await model.lastTask?.value
+        XCTAssertFalse(runner.commands.contains { $0.first == "rm" })
+        for item in history { XCTAssertTrue(FileManager.default.fileExists(atPath: item.path), item.lastPathComponent) }
+        await model.refreshAll()
+        await model.refreshAgents()
+        await MainActor.run { XCTAssertTrue(model.workspace.sessions.isEmpty, "the listed agent isn't imported again") }
+    }
+
+    func testDeletedAgentIsNotImportedAgainWhileStillListed() async throws {
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            return (model, try XCTUnwrap(model.createSession(request(p))))
+        }
+        await model.lastTask?.value
+        runner.agentsJSON = #"[{"id":"abcd1234","sessionId":"abcd1234-0000","kind":"background","cwd":"\#(repo)","name":"n","pid":5,"status":"idle","state":"done"}]"#
+        await model.refreshAgents()
+        await MainActor.run { model.deleteSession(id, .everywhere) }
+        // `claude rm` hasn't finished yet: the agent is still listed.
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertTrue(model.workspace.sessions.isEmpty)
+        }
     }
 
     func testShutdownDetachesWithoutStoppingAgents() async throws {

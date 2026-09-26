@@ -14,17 +14,30 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// tab never stops or removes the session.
     public private(set) var openTabIDs: [UUID]
 
+    /// Sessions removed from Claudio but kept in Claude Code. They can be
+    /// restored, and until then aren't imported again.
+    public private(set) var removedSessions: [RemovedSession]
+    /// Conversation ids and agent ids of sessions deleted from Claude Code
+    /// too. Until `claude rm` finishes and the history files are gone,
+    /// discovery and the agent list would otherwise bring them back.
+    public private(set) var deletedClaudeSessionIDs: Set<String>
+    public private(set) var deletedAgentIDs: Set<String>
+
     public var openSessionIDs: Set<UUID> { Set(openTabIDs) }
 
     enum CodingKeys: String, CodingKey {
         case projects, sessions
         case openTabIDs = "openSessionIDs"
+        case removedSessions, deletedClaudeSessionIDs, deletedAgentIDs
     }
 
     public init(projects: [Project] = [], sessions: [Session] = [], openTabIDs: [UUID] = []) {
         self.projects = projects
         self.sessions = sessions
         self.openTabIDs = openTabIDs
+        removedSessions = []
+        deletedClaudeSessionIDs = []
+        deletedAgentIDs = []
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +45,9 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
         openTabIDs = try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []
+        removedSessions = try c.decodeIfPresent([RemovedSession].self, forKey: .removedSessions) ?? []
+        deletedClaudeSessionIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedClaudeSessionIDs) ?? []
+        deletedAgentIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedAgentIDs) ?? []
     }
 
     // MARK: - Tabs
@@ -207,6 +223,7 @@ public struct Workspace: Codable, Equatable, Sendable {
         let removed = Set(sessions.filter { $0.projectID == id }.map(\.id))
         openTabIDs.removeAll { removed.contains($0) }
         sessions.removeAll { $0.projectID == id }
+        removedSessions.removeAll { $0.session.projectID == id }
     }
 
     public func isCollapsed(_ group: SessionGroup) -> Bool {
@@ -330,6 +347,62 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects[p].folders[f].sessionIDs = ids
     }
 
+    /// Removes a session from the sidebar but keeps it (and its folder) so
+    /// it can be restored.
+    public mutating func removeFromClaudio(_ id: UUID, at date: Date) {
+        guard let session = session(id) else { return }
+        removedSessions.append(RemovedSession(session: session, folderID: folderID(containing: id), removedAt: date))
+        removeSession(id)
+    }
+
+    /// Puts a removed session back: in its folder if that's still in its
+    /// project, otherwise Unfiled.
+    public mutating func restoreSession(_ id: UUID) throws {
+        guard let index = removedSessions.firstIndex(where: { $0.id == id }) else { throw WorkspaceError.sessionNotFound }
+        let removed = removedSessions[index]
+        let folderID = removed.folderID.flatMap { folderID in
+            folderIndex(folderID).flatMap { projects[$0.0].id == removed.session.projectID ? folderID : nil }
+        }
+        try addSession(removed.session, toFolder: folderID)
+        removedSessions.remove(at: index)
+    }
+
+    /// Deletes a session for good (it's being deleted from Claude Code too).
+    public mutating func deleteSession(_ id: UUID) {
+        if let session = session(id) {
+            if let claudeID = session.claudeSessionID { deletedClaudeSessionIDs.insert(claudeID) }
+            if let agentID = session.agentID { deletedAgentIDs.insert(agentID) }
+        }
+        removeSession(id)
+    }
+
+    /// Forgets deleted agents that `claude agents` no longer lists: `claude rm` has finished.
+    public mutating func forgetDeletedAgents(notIn listed: Set<String>) {
+        if !deletedAgentIDs.isSubset(of: listed) { deletedAgentIDs.formIntersection(listed) }
+    }
+
+    /// Whether a conversation or agent belongs to a removed or deleted
+    /// session, so mustn't be imported again.
+    public func isRemoved(claudeSessionID: String?, agentID: String? = nil) -> Bool {
+        if let claudeSessionID, deletedClaudeSessionIDs.contains(claudeSessionID)
+            || removedSessions.contains(where: { $0.session.claudeSessionID == claudeSessionID }) {
+            return true
+        }
+        if let agentID, deletedAgentIDs.contains(agentID) || removedSessions.contains(where: { $0.session.agentID == agentID }) {
+            return true
+        }
+        return false
+    }
+
+    /// Archived sessions, most recently active first.
+    public var archivedSessions: [Session] {
+        sessions.filter(\.isArchived).sorted { $0.lastActivity > $1.lastActivity }
+    }
+
+    public mutating func unarchive(_ id: UUID) {
+        updateSession(id) { $0.isArchived = false }
+    }
+
     public mutating func removeSession(_ id: UUID) {
         openTabIDs.removeAll { $0 == id }
         detachFromFolders(id)
@@ -392,4 +465,31 @@ public struct Workspace: Codable, Equatable, Sendable {
         while value.count > 1 && value.hasSuffix("/") { value.removeLast() }
         return value
     }
+}
+
+/// A session removed from Claudio (but not from Claude Code), kept so it
+/// can be restored.
+public struct RemovedSession: Codable, Equatable, Sendable, Identifiable {
+    public var session: Session
+    /// The folder it was in; nil for Unfiled.
+    public var folderID: UUID?
+    public var removedAt: Date
+
+    public var id: UUID { session.id }
+
+    public init(session: Session, folderID: UUID?, removedAt: Date) {
+        self.session = session
+        self.folderID = folderID
+        self.removedAt = removedAt
+    }
+}
+
+/// What deleting a session removes.
+public enum SessionDeletion: Sendable {
+    /// Only Claudio's entry. Claude Code keeps the conversation (and any
+    /// background agent), and Claudio doesn't import it again.
+    case claudioOnly
+    /// Claudio's entry, the background agent (`claude rm`) and the
+    /// conversation's history files, which `claude rm` leaves behind.
+    case everywhere
 }
