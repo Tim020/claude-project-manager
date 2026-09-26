@@ -114,7 +114,11 @@ swift test                        # macOS or Linux with a Swift toolchain
 ./scripts/test-linux.sh           # no local toolchain: runs in the swift:6.1 Docker image
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS. On macOS it also builds the `.app` bundle and uploads it as an artifact.
+GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and on macOS for every pull request and every push to `main`. On macOS it also builds the `.app` bundle and uploads it as an artifact, so a pull request's build can be downloaded and tried before merging.
+
+## Contributing
+
+Changes go through pull requests: branch from `main` (`feature/…`, `fix/…`, `ci/…`, `docs/…`), push the branch, and open a pull request into `main`. Merge once both CI jobs pass.
 
 ## Layout
 
