@@ -131,6 +131,14 @@ final class UsageTests: XCTestCase {
         XCTAssertEqual(merged.subscriptionType, "max")
         // A timed reading replaces an untimed one, since they can't be compared.
         XCTAssertEqual(command.merged(with: reading(fiveHour: (1, 1_790_481_000)), now: now).fiveHour?.usedPercentage, 1)
+        // `/usage` is always current, so a lower one after a reset replaces the old figure.
+        var afterReset = command
+        afterReset.fiveHour = UsageWindow(usedPercentage: 2, resetsAt: nil, resetText: "4:50am")
+        XCTAssertEqual(command.merged(with: afterReset, now: now).fiveHour?.usedPercentage, 2)
+        // …and it doesn't bring back a status line's reset time that has passed.
+        let expired = reading(fiveHour: (73, 1_790_459_000)).merged(with: afterReset, now: now).fiveHour
+        XCTAssertEqual(expired?.usedPercentage, 2)
+        XCTAssertNil(expired?.resetsAt)
     }
 
     func testAWindowThatHasResetShowsNothingUsed() {

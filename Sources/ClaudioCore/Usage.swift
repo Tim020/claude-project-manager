@@ -42,16 +42,20 @@ public struct UsageWindow: Equatable, Sendable {
         guard let incoming, !incoming.isExpired(at: now) else { return current }
         guard let current else { return incoming }
         switch (current.resetsAt, incoming.resetsAt) {
+        case (_, nil):
+            // `claude /usage` is read when it runs, so it's never stale. It has
+            // no timestamp, so keep the known one for comparing later readings.
+            var merged = incoming
+            merged.resetsAt = current.resetsAt
+            return merged
+        case (nil, _?):
+            // The windows can't be compared, so trust the one with a timestamp.
+            return incoming
         case let (old?, new?) where old != new:
             return new > old ? incoming : current
-        case (nil, _?):
-            // `claude /usage` gives no timestamp, so the windows can't be compared.
-            return incoming
         default:
             // Same window: usage only grows, so the lower reading is the stale one.
-            var merged = incoming.usedPercentage >= current.usedPercentage ? incoming : current
-            merged.resetsAt = current.resetsAt ?? incoming.resetsAt
-            return merged
+            return incoming.usedPercentage >= current.usedPercentage ? incoming : current
         }
     }
 }
