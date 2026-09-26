@@ -108,3 +108,46 @@ final class SessionChangesScopeTests: XCTestCase {
         XCTAssertEqual(result.changes.files.map(\.path), ["src/x.swift"])
     }
 }
+
+/// A session can work somewhere other than the folder it started in (Claude
+/// entered a worktree, or a subagent worked in one); Files Changed follows it.
+final class ChangesDirectoryTests: XCTestCase {
+    let repo = "/Users/tim/Code/DigiScript"
+
+    func testLogSummaryHasTheLatestEditAndWorkingDirectory() {
+        let lines = [
+            #"{"type":"user","cwd":"/Users/tim/Code/DigiScript","message":{"content":"go"}}"#,
+            #"{"type":"user","cwd":"/Users/tim/Code/DigiScript","toolUseResult":{"type":"create","filePath":"/Users/tim/Code/DigiScript/.claude/worktrees/fix/a.py","content":"x","originalFile":null,"structuredPatch":[]}}"#,
+            #"{"type":"assistant","cwd":"/Users/tim/Code/DigiScript/.claude/worktrees/fix/server","message":{"content":[]}}"#,
+        ]
+        let summary = SessionEditLog.summary(lines: lines)
+        XCTAssertEqual(summary.baselines.map(\.path), ["\(repo)/.claude/worktrees/fix/a.py"])
+        XCTAssertEqual(summary.lastEditPath, "\(repo)/.claude/worktrees/fix/a.py")
+        XCTAssertEqual(summary.lastWorkingDirectory, "\(repo)/.claude/worktrees/fix/server")
+    }
+
+    func testTheWorktreeOfTheLatestEditWins() {
+        let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo,
+                                           lastWorkingDirectory: repo,
+                                           lastEditPath: "\(repo)/.claude/worktrees/fix-ws-reconnect/server/utils/web/a.py",
+                                           exists: { _ in true })
+        XCTAssertEqual(dir, "\(repo)/.claude/worktrees/fix-ws-reconnect")
+    }
+
+    func testThenTheLastWorkingDirectoryInsideTheProject() {
+        let dir = ChangesDirectory.resolve(recorded: repo, projectDirectory: repo,
+                                           lastWorkingDirectory: "\(repo)/server", lastEditPath: "\(repo)/server/app.py",
+                                           exists: { _ in true })
+        XCTAssertEqual(dir, "\(repo)/server")
+    }
+
+    func testIgnoresPlacesOutsideTheProjectOrGone() {
+        XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: "/tmp",
+                                                lastEditPath: "/tmp/scratch.py", exists: { _ in true }), repo, "cd /tmp")
+        XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: repo, lastWorkingDirectory: nil,
+                                                lastEditPath: "\(repo)/.claude/worktrees/removed/a.py",
+                                                exists: { !$0.contains("removed") }), repo, "worktree since removed")
+        XCTAssertEqual(ChangesDirectory.resolve(recorded: repo, projectDirectory: nil, lastWorkingDirectory: nil,
+                                                lastEditPath: nil, exists: { _ in true }), repo)
+    }
+}

@@ -19,37 +19,48 @@ public struct SessionChangeState: Equatable, Sendable {
     /// Diffs fetched from git, by path (cleared when the file list changes).
     public var gitDiffs: [String: FileDiff] = [:]
     public var updatedAt: Date?
+    /// Where the changes were looked for (see `ChangesDirectory`).
+    public var directory: String?
 }
 
-/// Parsed Edit/Write baselines per history file, reused while the file is
+/// Parsed edit summaries per history file, reused while the file is
 /// unchanged (history files can be many megabytes).
 public final class EditLogCache: @unchecked Sendable {
-    private struct Entry { var modified: Date; var size: Int; var baselines: [SessionEditLog.Baseline] }
+    private struct Entry { var modified: Date; var size: Int; var summary: SessionEditLog.Summary }
     private var entries: [URL: Entry] = [:]
     private let lock = NSLock()
 
     public init() {}
 
-    /// The first baseline per file across all the given history files.
-    public func baselines(files: [URL]) -> [SessionEditLog.Baseline] {
+    /// The first baseline per file across all the given history files (the
+    /// session's first, then its subagents'). The latest edit and working
+    /// directory come from the session's own history when it has them.
+    public func summary(files: [URL]) -> SessionEditLog.Summary {
         var seen = Set<String>()
-        var merged: [SessionEditLog.Baseline] = []
+        var merged = SessionEditLog.Summary()
         for file in files {
-            for baseline in baselines(file: file) where seen.insert(baseline.path).inserted {
-                merged.append(baseline)
+            let summary = summary(file: file)
+            for baseline in summary.baselines where seen.insert(baseline.path).inserted {
+                merged.baselines.append(baseline)
             }
+            merged.lastEditPath = merged.lastEditPath ?? summary.lastEditPath
+            merged.lastWorkingDirectory = merged.lastWorkingDirectory ?? summary.lastWorkingDirectory
         }
         return merged
     }
 
-    private func baselines(file: URL) -> [SessionEditLog.Baseline] {
+    public func baselines(files: [URL]) -> [SessionEditLog.Baseline] {
+        summary(files: files).baselines
+    }
+
+    private func summary(file: URL) -> SessionEditLog.Summary {
         let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let modified = values?.contentModificationDate ?? .distantPast, size = values?.fileSize ?? -1
         if let entry = lock.withLock({ entries[file] }), entry.modified == modified, entry.size == size {
-            return entry.baselines
+            return entry.summary
         }
-        let parsed = SessionEditLog.baselines(files: [file])
-        lock.withLock { entries[file] = Entry(modified: modified, size: size, baselines: parsed) }
+        let parsed = SessionEditLog.summary(files: [file])
+        lock.withLock { entries[file] = Entry(modified: modified, size: size, summary: parsed) }
         return parsed
     }
 }
@@ -92,6 +103,12 @@ extension AppModel {
     /// or "vs" is showing and a newly chosen branch is still being compared.
     public func showsChangesLoading(for sessionID: UUID) -> Bool {
         sessionChanges[sessionID] == nil || (changesScope == .base && pendingBaseNames[sessionID] != nil)
+    }
+
+    /// Where Files Changed looked for this session's changes: usually its own
+    /// folder, or the worktree it's been working in.
+    public func changesDirectory(for sessionID: UUID) -> String? {
+        sessionChanges[sessionID]?.directory
     }
 
     /// Where the "vs" branch came from (pull request, project, default).
@@ -181,13 +198,19 @@ extension AppModel {
         guard let session = state.workspace.session(sessionID) else { return }
         changesDirty.remove(sessionID)
 
-        let directory = session.workingDirectory
+        let recorded = session.workingDirectory
         let projectDirectory = state.workspace.project(session.projectID)?.path
-        let files = session.claudeSessionID.map { discovery.editLogFiles(projectPath: directory, claudeSessionID: $0) } ?? []
+        let files = session.claudeSessionID.map { discovery.editLogFiles(projectPath: recorded, claudeSessionID: $0) } ?? []
         let cache = editLogCache
-        let sessionResult = await Task.detached(priority: .utility) {
-            SessionChanges.compute(baselines: cache.baselines(files: files), workingDirectory: directory,
-                                   projectDirectory: projectDirectory, read: SessionChanges.readFile)
+        let (sessionResult, directory) = await Task.detached(priority: .utility) { () -> (SessionChangesResult, String) in
+            let summary = cache.summary(files: files)
+            let directory = ChangesDirectory.resolve(recorded: recorded, projectDirectory: projectDirectory,
+                                                     lastWorkingDirectory: summary.lastWorkingDirectory,
+                                                     lastEditPath: summary.lastEditPath,
+                                                     exists: { FileManager.default.fileExists(atPath: $0) })
+            let result = SessionChanges.compute(baselines: summary.baselines, workingDirectory: directory,
+                                                projectDirectory: projectDirectory, read: SessionChanges.readFile)
+            return (result, directory)
         }.value
         var preferred: [PreferredBase] = []
         if let pullRequest = await pullRequest(forDirectory: directory) {
@@ -203,6 +226,7 @@ extension AppModel {
         if updated.git != gitResult { updated.gitDiffs = [:] }
         updated.session = sessionResult
         updated.git = gitResult
+        updated.directory = directory
         updated.updatedAt = now()
         if updated != sessionChanges[sessionID] { sessionChanges[sessionID] = updated }
     }

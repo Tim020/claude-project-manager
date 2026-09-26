@@ -243,6 +243,34 @@ struct PaneModeSwitch: View {
     }
 }
 
+/// "In worktree fix-ws-reconnect" when the session has been working somewhere
+/// other than the folder it started in, so Files Changed looks there.
+private struct ChangesLocation: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+
+    var body: some View {
+        if let directory = model.changesDirectory(for: session.id),
+           SessionChanges.standardized(directory) != SessionChanges.standardized(session.workingDirectory) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 10))
+                Text(label(directory))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .font(DS.font(11.5))
+            .foregroundStyle(DS.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help("This session has been working in \(PathDisplay.tilde(directory, home: model.home)), so Files Changed looks there.")
+        }
+    }
+
+    private func label(_ directory: String) -> String {
+        if let name = Worktree.name(ofPath: directory) { return "In worktree \(name)" }
+        return "In \(PathDisplay.tilde(directory, home: model.home))"
+    }
+}
+
 /// Per-file "+a −d", or "folder" for an untracked folder.
 private struct FileCounts: View {
     let file: FileChange
@@ -327,6 +355,7 @@ struct FilesInspector: View {
                     .help("Hide Files Changed")
                 }
                 ScopeToggle(session: session)
+                ChangesLocation(session: session)
                 HStack(spacing: 10) {
                     Text("\(changes.files.count) file\(changes.files.count == 1 ? "" : "s")")
                         .font(DS.font(12.5, .bold))
@@ -562,6 +591,7 @@ struct ChangesView: View {
         return VStack(spacing: 0) {
             VStack(spacing: 10) {
                 ScopeToggle(session: session)
+                ChangesLocation(session: session)
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass").font(.system(size: 11))
                     TextField("Filter files", text: $filter)

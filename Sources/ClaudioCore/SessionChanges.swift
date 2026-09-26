@@ -15,27 +15,54 @@ public enum SessionEditLog {
         }
     }
 
+    /// What a history file says about the session's edits.
+    public struct Summary: Equatable, Sendable {
+        public var baselines: [Baseline] = []
+        /// The file the session edited most recently.
+        public var lastEditPath: String?
+        /// The last working directory recorded (every message carries `cwd`;
+        /// it follows `cd` and entering a worktree).
+        public var lastWorkingDirectory: String?
+
+        public init(baselines: [Baseline] = [], lastEditPath: String? = nil, lastWorkingDirectory: String? = nil) {
+            self.baselines = baselines
+            self.lastEditPath = lastEditPath
+            self.lastWorkingDirectory = lastWorkingDirectory
+        }
+    }
+
+    public static func summary(lines: [String]) -> Summary {
+        var seen = Set<String>()
+        var summary = Summary()
+        for line in lines {
+            let isEdit = line.contains("\"toolUseResult\"") && line.contains("\"filePath\"")
+            guard isEdit || line.contains("\"cwd\""),
+                  let record = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8))
+            else { continue }
+            if let cwd = record["cwd"]?.stringValue, !cwd.isEmpty { summary.lastWorkingDirectory = cwd }
+            guard isEdit, let tool = record["toolUseResult"], let path = tool["filePath"]?.stringValue, isEditResult(tool) else { continue }
+            summary.lastEditPath = path
+            guard seen.insert(path).inserted else { continue }
+            let original = tool["type"]?.stringValue == "create" ? nil : tool["originalFile"]?.stringValue
+            summary.baselines.append(Baseline(path: path, original: original))
+        }
+        return summary
+    }
+
     /// The first baseline for each file, in the order the session touched them.
     public static func baselines(lines: [String]) -> [Baseline] {
-        var seen = Set<String>()
-        var result: [Baseline] = []
-        for line in lines where line.contains("\"toolUseResult\"") && line.contains("\"filePath\"") {
-            guard let record = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
-                  let tool = record["toolUseResult"], let path = tool["filePath"]?.stringValue,
-                  isEditResult(tool), seen.insert(path).inserted
-            else { continue }
-            let original = tool["type"]?.stringValue == "create" ? nil : tool["originalFile"]?.stringValue
-            result.append(Baseline(path: path, original: original))
-        }
-        return result
+        summary(lines: lines).baselines
+    }
+
+    public static func summary(files: [URL]) -> Summary {
+        summary(lines: files.flatMap { file -> [String] in
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+            return text.split(separator: "\n").map(String.init)
+        })
     }
 
     public static func baselines(files: [URL]) -> [Baseline] {
-        let lines = files.flatMap { file -> [String] in
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
-            return text.split(separator: "\n").map(String.init)
-        }
-        return baselines(lines: lines)
+        summary(files: files).baselines
     }
 
     /// Edit/MultiEdit results carry `structuredPatch`/`oldString`; Write
@@ -108,7 +135,7 @@ public enum SessionChanges {
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func standardized(_ path: String) -> String {
+    public static func standardized(_ path: String) -> String {
         (path as NSString).standardizingPath
     }
 
@@ -120,6 +147,37 @@ public enum SessionChanges {
     static func relativePath(_ path: String, to directory: String) -> String {
         let base = directory.hasSuffix("/") ? directory : directory + "/"
         return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
+    }
+}
+
+/// Where a session is actually working, for Files Changed. It can differ from
+/// the folder it started in: Claude may enter a worktree mid-session, or work
+/// in one through a subagent.
+public enum ChangesDirectory {
+    /// The worktree of the most recent edit (if it still exists), else the
+    /// last recorded working directory if it's in the project, else the folder
+    /// the session started in.
+    public static func resolve(recorded: String, projectDirectory: String?, lastWorkingDirectory: String?, lastEditPath: String?,
+                               exists: (String) -> Bool) -> String {
+        let recordedPath = SessionChanges.standardized(recorded)
+        let project = SessionChanges.standardized(projectDirectory ?? recorded)
+        if let edit = lastEditPath.map(SessionChanges.standardized), let worktree = worktreeRoot(containing: edit),
+           SessionChanges.isWithin(worktree, project), exists(worktree) {
+            return worktree
+        }
+        if let cwd = lastWorkingDirectory.map(SessionChanges.standardized),
+           SessionChanges.isWithin(cwd, project) || SessionChanges.isWithin(cwd, recordedPath), exists(cwd) {
+            return cwd
+        }
+        return recorded
+    }
+
+    /// `<repo>/.claude/worktrees/<name>` for a path inside it.
+    static func worktreeRoot(containing path: String) -> String? {
+        guard let range = path.range(of: Worktree.marker) else { return nil }
+        let rest = path[range.upperBound...]
+        guard let name = rest.split(separator: "/").first else { return nil }
+        return String(path[..<range.upperBound]) + name
     }
 }
 

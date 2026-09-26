@@ -152,3 +152,59 @@ final class VisibleSessionTests: XCTestCase {
         }
     }
 }
+
+final class FollowWorktreeTests: XCTestCase {
+    func testBothScopesUseTheWorktreeTheSessionWorkedIn() async throws {
+        let git = GitChanges.defaultGit
+        guard FileManager.default.isExecutableFile(atPath: git) else { throw XCTSkip("git not installed") }
+        let root = try makeTemporaryDirectory()
+        let repo = root.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        func run(_ args: [String]) throws {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: git)
+            p.arguments = ["-C", repo.path, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"] + args
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try p.run(); p.waitUntilExit()
+        }
+        try run(["init", "-q"])
+        try "a\n".write(to: repo.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try run(["add", "."]); try run(["commit", "-qm", "base"])
+        // Clutter in the main checkout that has nothing to do with the session:
+        try "junk\n".write(to: repo.appendingPathComponent("reply_1.txt"), atomically: true, encoding: .utf8)
+        // The session's work, in a worktree it created:
+        let worktree = repo.appendingPathComponent(".claude/worktrees/fix")
+        try run(["worktree", "add", "-q", "-b", "fix", worktree.path])
+        let edited = worktree.appendingPathComponent("server/new.py")
+        try FileManager.default.createDirectory(at: edited.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "print(1)\n".write(to: edited, atomically: true, encoding: .utf8)
+
+        let home = try makeTemporaryDirectory()
+        let sid = "11111111-2222-3333-4444-555555555555"
+        let history = SessionDiscovery(claudeHome: home).historyFile(projectPath: repo.path, claudeSessionID: sid)
+        try FileManager.default.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"{"type":"user","cwd":"\#(repo.path)","toolUseResult":{"type":"create","filePath":"\#(edited.path)","content":"x","originalFile":null,"structuredPatch":[]}}"#
+            .write(to: history, atomically: true, encoding: .utf8)
+
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: repo.path)
+            let session = Session(projectID: p, claudeSessionID: sid, hasConversation: true, name: "s", workingDirectory: repo.path)
+            try state.workspace.addSession(session)
+            let store = MemoryStore()
+            store.state = state
+            return (AppModel(store: store, discovery: SessionDiscovery(claudeHome: home), hookEventsURL: home.appendingPathComponent("h.log"),
+                             runner: ProcessCommandRunner(), git: git, locateClaude: { _ in nil }, locateGitHubCLI: { nil },
+                             shell: "/bin/sh", home: "/"), session.id)
+        }
+        await model.refreshChanges(for: id)
+        await MainActor.run {
+            XCTAssertEqual(model.changes(for: id, scope: .session)?.files.map(\.path), ["server/new.py"],
+                           "relative to the worktree")
+            XCTAssertEqual(model.changes(for: id, scope: .base)?.files.map(\.path), ["server/"],
+                           "the worktree's changes, not the main checkout's clutter")
+            XCTAssertEqual(model.changesDirectory(for: id).map { ($0 as NSString).lastPathComponent }, "fix")
+            XCTAssertEqual(model.workspace.session(id)?.workingDirectory, repo.path, "the session's own folder is unchanged")
+        }
+    }
+}
