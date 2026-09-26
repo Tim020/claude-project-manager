@@ -816,7 +816,31 @@ public final class AppModel {
         recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         historyLines[id] = nil
-        state.workspace.deleteSession(id)
+        switch scope {
+        case .claudioOnly: state.workspace.removeFromClaudio(id, at: now())
+        case .everywhere: state.workspace.deleteSession(id)
+        }
+        save()
+    }
+
+    /// Brings back a session removed from Claudio, then refreshes it from
+    /// Claude Code (it may have moved on while it was removed).
+    public func restoreSession(_ id: UUID) {
+        guard let removed = state.workspace.removedSessions.first(where: { $0.id == id }),
+              attempt({ try state.workspace.restoreSession(id) }) != nil else { return }
+        log.append(.info, "Restored “\(removed.session.name)”")
+        save()
+        let projectID = removed.session.projectID
+        enqueue {
+            await self.refreshProjects([projectID])
+            await self.refreshAgents()
+        }
+    }
+
+    public func unarchive(_ id: UUID) {
+        guard let session = state.workspace.session(id), session.isArchived else { return }
+        state.workspace.unarchive(id)
+        log.append(.info, "Unarchived “\(session.name)”")
         save()
     }
 
@@ -984,7 +1008,7 @@ public final class AppModel {
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
                 }
-            } else if !workspace.isDeleted(claudeSessionID: agent.sessionID, agentID: agent.id),
+            } else if !workspace.isRemoved(claudeSessionID: agent.sessionID, agentID: agent.id),
                       let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
                 var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
                                       name: agent.name ?? agent.id, workingDirectory: agent.cwd, status: agent.sessionStatus,
@@ -1000,6 +1024,7 @@ public final class AppModel {
                 workspace.updateSession(session.id) { $0.agentID = nil }
             }
         }
+        workspace.forgetDeletedAgents(notIn: listedIDs)
         let byID = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         if agents != byID { agents = byID }
         if workspace != state.workspace {

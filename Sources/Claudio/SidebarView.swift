@@ -598,9 +598,9 @@ private struct DeleteSessionConfirmation: ViewModifier {
             Button("Cancel", role: .cancel) {}
         } message: {
             if session.agentID != nil {
-                Text("Remove from Claudio leaves the background agent and its history in Claude Code. Removing it from Claude Code too runs `claude rm`, which also removes its worktree when that's safe, and deletes its history. This can't be undone.")
+                Text("Remove from Claudio leaves the background agent and its history in Claude Code; you can restore it from File › Removed & Archived Sessions. Removing it from Claude Code too runs `claude rm`, which also removes its worktree when that's safe, and deletes its history. That can't be undone.")
             } else {
-                Text("Remove from Claudio leaves the conversation's history in Claude Code. Removing it from Claude Code too deletes that history. This can't be undone.")
+                Text("Remove from Claudio leaves the conversation's history in Claude Code; you can restore it from File › Removed & Archived Sessions. Removing it from Claude Code too deletes that history. That can't be undone.")
             }
         }
     }

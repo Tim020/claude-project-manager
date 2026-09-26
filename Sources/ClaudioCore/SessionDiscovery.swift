@@ -405,7 +405,7 @@ extension Workspace {
     public mutating func importDiscovered(_ discovered: [DiscoveredSession], into projectID: UUID, skipping live: Set<UUID>) -> Int {
         guard project(projectID) != nil else { return 0 }
         var added = 0
-        for found in discovered where !isDeleted(claudeSessionID: found.claudeSessionID) {
+        for found in discovered where !isRemoved(claudeSessionID: found.claudeSessionID) {
             if let existing = session(claudeSessionID: found.claudeSessionID) {
                 syncTitle(existing.id, claudeTitle: found.customTitle)
                 guard !live.contains(existing.id), found.lastActivity >= existing.lastActivity else { continue }

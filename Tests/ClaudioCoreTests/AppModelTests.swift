@@ -331,23 +331,32 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testDeletedSessionIsNotImportedAgainFromItsHistory() async throws {
-        let (model, claudeID) = try await MainActor.run { () -> (AppModel, String) in
+    func testRemovedSessionStaysRemovedUntilRestored() async throws {
+        let (model, id, claudeID) = try await MainActor.run { () -> (AppModel, UUID, String) in
             let model = try makeModel()
             let p = model.addProject(path: projectPath)
             let s = try XCTUnwrap(model.workspace.sessions(in: .unfiled(projectID: p)).first)
             model.deleteSession(s.id, .claudioOnly)
-            return (model, try XCTUnwrap(s.claudeSessionID))
+            return (model, s.id, try XCTUnwrap(s.claudeSessionID))
         }
         await model.refreshAll()
-        try await MainActor.run {
+        let relaunched = try await MainActor.run { () -> AppModel in
             XCTAssertNil(model.workspace.session(claudeSessionID: claudeID))
             // Still gone after a relaunch.
             let data = try JSONEncoder().encode(store.state)
             let restored = try JSONDecoder().decode(PersistedState.self, from: data)
-            XCTAssertTrue(restored.workspace.isDeleted(claudeSessionID: claudeID))
+            XCTAssertTrue(restored.workspace.isRemoved(claudeSessionID: claudeID))
             let relaunched = try makeModel()
             XCTAssertNil(relaunched.workspace.session(claudeSessionID: claudeID))
+            relaunched.restoreSession(id)
+            return relaunched
+        }
+        await relaunched.lastTask?.value
+        await relaunched.refreshAll()
+        await MainActor.run {
+            XCTAssertEqual(relaunched.workspace.session(id)?.claudeSessionID, claudeID)
+            XCTAssertEqual(relaunched.workspace.sessions.filter { $0.claudeSessionID == claudeID }.count, 1)
+            XCTAssertTrue(relaunched.workspace.removedSessions.isEmpty)
         }
     }
 

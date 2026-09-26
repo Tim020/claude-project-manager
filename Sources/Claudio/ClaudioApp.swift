@@ -98,6 +98,7 @@ struct ClaudioApp: App {
                     .keyboardShortcut("o")
                 Button("Import Claude Code Projects…") { commands.showImportProjects = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Removed & Archived Sessions…") { commands.showRemovedSessions = true }
                 Button("Claude Code Setup…") { commands.showSetup = true }
             }
             CommandGroup(replacing: .saveItem) {
