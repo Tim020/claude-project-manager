@@ -62,12 +62,26 @@ public enum SessionChanges {
     /// Files larger than this are listed without a diff.
     public static let maxDiffBytes = 1_000_000
 
-    public static func compute(baselines: [SessionEditLog.Baseline], workingDirectory: String,
+    /// Only files in the session's folder (or its project's, apart from other
+    /// sessions' worktrees) count: not Claude Code's own files under
+    /// `~/.claude`, scratch files in /tmp, and so on.
+    public static func compute(baselines: [SessionEditLog.Baseline], workingDirectory: String, projectDirectory: String? = nil,
                                read: (String) -> String?) -> SessionChangesResult {
+        let work = standardized(workingDirectory)
+        let project = projectDirectory.map(standardized)
+        func isIncluded(_ path: String) -> Bool {
+            if isWithin(path, work) { return true }
+            guard let project, isWithin(path, project) else { return false }
+            // Another session's worktree inside the project.
+            return !isWithin(path, project + "/.claude/worktrees")
+        }
+
         var files: [FileChange] = []
         var diffs: [String: FileDiff] = [:]
         var absolute: [String: String] = [:]
-        for baseline in baselines {
+        for var baseline in baselines {
+            baseline.path = standardized(baseline.path)
+            guard isIncluded(baseline.path) else { continue }
             let current = read(baseline.path)
             let status: FileChangeStatus
             switch (baseline.original, current) {
@@ -78,7 +92,7 @@ public enum SessionChanges {
                 if old == new { continue }
                 status = .modified
             }
-            let path = relativePath(baseline.path, to: workingDirectory)
+            let path = relativePath(baseline.path, to: work)
             let tooLarge = (baseline.original?.utf8.count ?? 0) > maxDiffBytes || (current?.utf8.count ?? 0) > maxDiffBytes
             let diff = tooLarge ? FileDiff.binary : LineDiff.diff(old: baseline.original, new: current)
             files.append(FileChange(path: path, status: status, additions: diff.additions, deletions: diff.deletions, isBinary: diff.isBinary))
@@ -92,6 +106,15 @@ public enum SessionChanges {
     @Sendable public static func readFile(_ path: String) -> String? {
         guard let data = FileManager.default.contents(atPath: path) else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    static func standardized(_ path: String) -> String {
+        (path as NSString).standardizingPath
+    }
+
+    /// `path` is `directory` or inside it (not just sharing a prefix).
+    static func isWithin(_ path: String, _ directory: String) -> Bool {
+        path == directory || path.hasPrefix(directory.hasSuffix("/") ? directory : directory + "/")
     }
 
     static func relativePath(_ path: String, to directory: String) -> String {

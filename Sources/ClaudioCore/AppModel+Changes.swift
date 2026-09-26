@@ -150,10 +150,12 @@ extension AppModel {
         changesDirty.remove(sessionID)
 
         let directory = session.workingDirectory
+        let projectDirectory = state.workspace.project(session.projectID)?.path
         let files = session.claudeSessionID.map { discovery.editLogFiles(projectPath: directory, claudeSessionID: $0) } ?? []
         let cache = editLogCache
         let sessionResult = await Task.detached(priority: .utility) {
-            SessionChanges.compute(baselines: cache.baselines(files: files), workingDirectory: directory, read: SessionChanges.readFile)
+            SessionChanges.compute(baselines: cache.baselines(files: files), workingDirectory: directory,
+                                   projectDirectory: projectDirectory, read: SessionChanges.readFile)
         }.value
         var preferred: [PreferredBase] = []
         if let pullRequest = await pullRequest(forDirectory: directory) {

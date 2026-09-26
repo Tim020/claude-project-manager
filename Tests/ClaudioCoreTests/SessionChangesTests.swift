@@ -49,10 +49,11 @@ final class SessionChangesTests: XCTestCase {
             "/tmp/outside.txt": "y\n",
         ]
         let result = SessionChanges.compute(baselines: baselines, workingDirectory: dir, read: { disk[$0] })
-        XCTAssertEqual(result.changes.files.map(\.path), ["Sources/a.swift", "Sources/new.swift", "Sources/gone.swift", "/tmp/outside.txt"])
-        XCTAssertEqual(result.changes.files.map(\.status), [.modified, .added, .deleted, .modified])
-        XCTAssertEqual(result.changes.files.map(\.additions), [2, 2, 0, 1])
-        XCTAssertEqual(result.changes.files.map(\.deletions), [1, 0, 1, 1])
+        XCTAssertEqual(result.changes.files.map(\.path), ["Sources/a.swift", "Sources/new.swift", "Sources/gone.swift"],
+                       "unchanged, never-existing and outside-the-folder files are left out")
+        XCTAssertEqual(result.changes.files.map(\.status), [.modified, .added, .deleted])
+        XCTAssertEqual(result.changes.files.map(\.additions), [2, 2, 0])
+        XCTAssertEqual(result.changes.files.map(\.deletions), [1, 0, 1])
         XCTAssertEqual(result.diffs["Sources/a.swift"]?.additions, 2)
         XCTAssertEqual(result.absolutePaths["Sources/a.swift"], "\(dir)/Sources/a.swift")
     }
@@ -79,5 +80,31 @@ final class SessionChangesTests: XCTestCase {
                                             workingDirectory: dir, read: { _ in "b\u{0}" })
         XCTAssertEqual(result.changes.files.first?.isBinary, true)
         XCTAssertEqual(result.diffs["img.png"]?.isBinary, true)
+    }
+}
+
+final class SessionChangesScopeTests: XCTestCase {
+    func testOnlyFilesInTheSessionOrProjectFolderCount() {
+        let repo = "/Users/tim/Code/app"
+        let worktree = "/Users/tim/Code/app/.claude/worktrees/fix"
+        let paths = [
+            "\(worktree)/Sources/a.swift",                     // the session's worktree
+            "\(repo)/CLAUDE.md",                                // the project itself
+            "\(repo)/.claude/settings.json",                    // project config: real project files
+            "\(repo)/.claude/worktrees/other/b.swift",          // another session's worktree
+            "/Users/tim/.claude/plans/plan.md",                 // Claude Code's own files
+            "/tmp/scratch.py",                                  // scratch files
+            "/Users/tim/Code/app-other/c.swift",                // a sibling folder with a shared prefix
+        ]
+        let baselines = paths.map { SessionEditLog.Baseline(path: $0, original: "old\n") }
+        let result = SessionChanges.compute(baselines: baselines, workingDirectory: worktree, projectDirectory: repo,
+                                            read: { _ in "new\n" })
+        XCTAssertEqual(result.changes.files.map(\.path), ["Sources/a.swift", "/Users/tim/Code/app/CLAUDE.md", "/Users/tim/Code/app/.claude/settings.json"])
+    }
+
+    func testPathsAreComparedAfterStandardising() {
+        let result = SessionChanges.compute(baselines: [SessionEditLog.Baseline(path: "/Users/tim/Code/app/./src/../src/x.swift", original: "a\n")],
+                                            workingDirectory: "/Users/tim/Code/app/", projectDirectory: nil, read: { _ in "b\n" })
+        XCTAssertEqual(result.changes.files.map(\.path), ["src/x.swift"])
     }
 }
