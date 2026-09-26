@@ -10,7 +10,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
-    /// Give a background agent its own git worktree (when the project is a git repo).
+    /// Have a background agent work in its own git worktree (when the project
+    /// is a git repo) rather than in the project's checkout.
     public var useWorktree = true
 
     public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
@@ -447,6 +448,13 @@ public final class AppModel {
         state.settings.useBackgroundAgents && environment.backgroundAgentsAvailable
     }
 
+    /// Whether a new session with this first prompt runs as a background
+    /// agent; without a prompt it opens a terminal. The New Session sheet uses
+    /// this too, to show the matching options and permission default.
+    public func runsInBackground(prompt: String) -> Bool {
+        backgroundAgentsEnabled && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Reads one project in each protected location (Documents, Desktop…) so
     /// macOS asks for any access it needs at launch, not mid-action.
     public func preflightFolderAccess(probe: @escaping @Sendable (String) -> Void = FolderAccess.touch) async {
@@ -603,6 +611,65 @@ public final class AppModel {
     public func moveFolder(_ id: UUID, toProject projectID: UUID) {
         attempt { try state.workspace.moveFolder(id, toProject: projectID) }
         save()
+    }
+
+    /// Where something was dropped in the sidebar.
+    public enum SidebarDropTarget: Sendable {
+        case project(UUID)
+        case group(SessionGroup)
+        case session(UUID)
+    }
+
+    /// Handles sidebar drag and drop (payloads as `SidebarDragItem`s). A
+    /// session goes into the group, or just above the session, it's dropped on
+    /// (Unfiled for a project header). A folder goes just above the folder
+    /// it's dropped on (or the folder of the session it's dropped on), or last
+    /// when dropped on a project header or Unfiled (which always comes last).
+    /// A project dropped anywhere in another takes that project's place.
+    /// Returns whether anything moved.
+    @discardableResult
+    public func drop(_ payloads: [String], on target: SidebarDropTarget) -> Bool {
+        let before = state.workspace
+        for item in payloads.compactMap(SidebarDragItem.init(payload:)) {
+            switch (item, target) {
+            case (.session(let id), .project(let projectID)):
+                attempt { try state.workspace.moveSession(id, to: .unfiled(projectID: projectID)) }
+            case (.session(let id), .group(let group)):
+                attempt { try state.workspace.moveSession(id, to: group) }
+            case (.session(let id), .session(let targetID)):
+                guard id != targetID else { continue }
+                attempt { try state.workspace.moveSession(id, before: targetID) }
+            case (.folder(let id), .project(let projectID)), (.folder(let id), .group(.unfiled(let projectID))):
+                attempt { try state.workspace.moveFolder(id, before: nil, inProject: projectID) }
+            case (.folder(let id), .group(.folder(let targetID))):
+                guard let projectID = state.workspace.projectID(containingFolder: targetID) else { continue }
+                attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+            case (.folder(let id), .session(let sessionID)):
+                // Session rows fill an open folder, so go by the session's group.
+                guard let session = state.workspace.session(sessionID) else { continue }
+                if case .folder(let targetID)? = state.workspace.group(of: sessionID) {
+                    guard targetID != id else { continue }
+                    attempt { try state.workspace.moveFolder(id, before: targetID, inProject: session.projectID) }
+                } else {
+                    attempt { try state.workspace.moveFolder(id, before: nil, inProject: session.projectID) }
+                }
+            case (.project(let id), _):
+                guard let targetProject = projectID(of: target) else { continue }
+                state.workspace.moveProject(id, onto: targetProject)
+            }
+        }
+        guard state.workspace != before else { return false }
+        save()
+        return true
+    }
+
+    private func projectID(of target: SidebarDropTarget) -> UUID? {
+        switch target {
+        case .project(let id): return id
+        case .group(.unfiled(let id)): return id
+        case .group(.folder(let id)): return state.workspace.projectID(containingFolder: id)
+        case .session(let id): return state.workspace.session(id)?.projectID
+        }
     }
 
     public func archiveCompleted(in group: SessionGroup) {
@@ -904,7 +971,7 @@ public final class AppModel {
         let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
-        let background = backgroundAgentsEnabled && !prompt.isEmpty
+        let background = runsInBackground(prompt: prompt)
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
@@ -921,11 +988,9 @@ public final class AppModel {
         select(session.id)
         save()
         if background {
-            let worktree = request.useWorktree && isGitRepository(project.path)
-                ? Worktree.uniqueName(for: Worktree.name(for: session.name), existing: Worktree.existingNames(in: project.path))
-                : nil
+            let isolation: BackgroundIsolation? = isGitRepository(project.path) ? (request.useWorktree ? .worktree : .inPlace) : nil
             let id = session.id
-            enqueue { await self.dispatch(id, prompt: prompt, worktree: worktree) }
+            enqueue { await self.dispatch(id, prompt: prompt, isolation: isolation) }
         } else {
             start(session.id, prompt: prompt)
         }
@@ -1087,19 +1152,37 @@ public final class AppModel {
         state.workspace.updateSession(sessionID) { $0.status = .awaitingInput; $0.needsAction = text }
     }
 
-    private func dispatch(_ sessionID: UUID, prompt: String, worktree: String?) async {
+    private func dispatch(_ sessionID: UUID, prompt: String, isolation: BackgroundIsolation?) async {
         guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else {
             applyStatus(sessionID, .completed)
             return
         }
-        let result = await run(commands.dispatch(session: session, prompt: prompt, worktree: worktree))
+        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation))
         await linkDispatched(sessionID, result: result)
     }
 
     private func resumeInBackground(_ sessionID: UUID, prompt: String? = nil) async {
-        guard let session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
-        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: session.agentID != nil))
+        guard var session = state.workspace.session(sessionID), let commands = agentCommands(reportErrors: true) else { return }
+        let continuingAgent = session.agentID != nil
+        if !continuingAgent, let mode = AppModel.backgroundResumeMode(session.permissionMode, default: state.settings.defaultBackgroundPermissionMode) {
+            session.permissionMode = mode
+            state.workspace.updateSession(sessionID) { $0.permissionMode = mode }
+            save()
+            log.append(.info, "Running “\(session.name)” in the background with \(mode.label) permissions",
+                       detail: "It was set to Ask. Change it in Settings › New Sessions › Background Permissions.")
+        }
+        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent))
         await linkDispatched(sessionID, result: result)
+    }
+
+    /// The mode for a session becoming a background agent, or nil to keep its
+    /// own. One on Ask (every conversation found in the history, and terminal
+    /// sessions left on Ask) gets the background default, as a background
+    /// agent otherwise stops at every tool. This never grants more than Auto:
+    /// Bypass Permissions has to be chosen for the session itself.
+    static func backgroundResumeMode(_ current: PermissionMode, default preferred: PermissionMode) -> PermissionMode? {
+        guard current == .standard, preferred != .standard else { return nil }
+        return preferred == .bypassPermissions ? .auto : preferred
     }
 
     private func linkDispatched(_ sessionID: UUID, result: CommandResult) async {

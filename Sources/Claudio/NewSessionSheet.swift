@@ -26,6 +26,7 @@ struct NewSessionSheet: View {
     @State private var roleEdited = false
     @State private var modelID: String?
     @State private var permissionMode: PermissionMode = .standard
+    @State private var permissionEdited = false
     @State private var prompt = ""
     @State private var useWorktree = true
 
@@ -91,12 +92,14 @@ struct NewSessionSheet: View {
                         label("Worktree")
                         Toggle("Run in its own git worktree", isOn: $useWorktree)
                             .disabled(!isGitProject)
-                            .help(isGitProject ? "Creates .claude/worktrees/<name> so sessions don't conflict" : "This project isn't a git repository")
+                            .help(isGitProject
+                                  ? "The agent makes a worktree in .claude/worktrees before its first edit, so sessions don't conflict, and commits its work there. Off: it edits the project's checkout."
+                                  : "This project isn't a git repository")
                     }
                 }
                 GridRow {
                     label("Permissions")
-                    Picker("", selection: $permissionMode) {
+                    Picker("", selection: Binding(get: { permissionMode }, set: { permissionMode = $0; permissionEdited = true })) {
                         ForEach(PermissionMode.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
                     .labelsHidden()
@@ -133,10 +136,13 @@ struct NewSessionSheet: View {
         .background(DS.sidebar)
         .preferredColorScheme(.dark)
         .onAppear(perform: applyDefaults)
+        .onChange(of: backgroundMode) { _, background in
+            if !permissionEdited { permissionMode = model.settings.defaultPermissionMode(background: background) }
+        }
     }
 
     private var backgroundMode: Bool {
-        model.settings.useBackgroundAgents && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.runsInBackground(prompt: prompt)
     }
 
     private var isGitProject: Bool {
@@ -157,7 +163,7 @@ struct NewSessionSheet: View {
     private func applyDefaults() {
         role = SessionRole.infer(fromName: name, roles: model.settings.roles)
         modelID = model.settings.defaultModel
-        permissionMode = model.settings.defaultPermissionMode
+        permissionMode = model.settings.defaultPermissionMode(background: backgroundMode)
         switch initialGroup {
         case .folder(let id)?:
             folderID = id

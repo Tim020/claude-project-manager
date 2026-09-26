@@ -253,6 +253,9 @@ final class PaneLayoutTests: XCTestCase {
         XCTAssertEqual(TabDragPayload.sessionID(from: id.uuidString), id, "sessions dragged from the sidebar")
         XCTAssertNil(UUID(uuidString: TabDragPayload.string(for: id)), "the sidebar ignores dragged tabs")
         XCTAssertNil(TabDragPayload.sessionID(from: "hello"))
+        XCTAssertNil(TabDragPayload.sessionID(from: SidebarDragItem.folder(id).payload), "folders dropped on a pane are ignored")
+        XCTAssertNil(TabDragPayload.sessionID(from: SidebarDragItem.project(id).payload), "and projects")
+        XCTAssertEqual(TabDragPayload.sessionID(from: SidebarDragItem.session(id).payload), id)
     }
 }
 

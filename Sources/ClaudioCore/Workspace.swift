@@ -325,6 +325,27 @@ public struct Workspace: Codable, Equatable, Sendable {
         }
     }
 
+    /// Puts a folder just before another, moving it (and its sessions) to
+    /// that folder's project if need be. With no target it goes last.
+    public mutating func moveFolder(_ id: UUID, before targetID: UUID?, inProject projectID: UUID) throws {
+        guard id != targetID else { return }
+        try moveFolder(id, toProject: projectID)
+        guard let p = projects.firstIndex(where: { $0.id == projectID }),
+              let f = projects[p].folders.firstIndex(where: { $0.id == id }) else { throw WorkspaceError.folderNotFound }
+        let folder = projects[p].folders.remove(at: f)
+        let index = targetID.flatMap { target in projects[p].folders.firstIndex { $0.id == target } } ?? projects[p].folders.count
+        projects[p].folders.insert(folder, at: index)
+    }
+
+    /// Moves a project into another's place in the sidebar: just after it when
+    /// dragged down, just before it when dragged up. So one drag can swap
+    /// neighbours or make a project first or last.
+    public mutating func moveProject(_ id: UUID, onto targetID: UUID) {
+        guard id != targetID, let from = projects.firstIndex(where: { $0.id == id }),
+              let to = projects.firstIndex(where: { $0.id == targetID }) else { return }
+        projects.insert(projects.remove(at: from), at: to)
+    }
+
     /// Archives the completed sessions in a group. Returns how many were archived.
     @discardableResult
     public mutating func archiveCompleted(in group: SessionGroup) -> Int {

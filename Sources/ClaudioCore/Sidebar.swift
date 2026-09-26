@@ -30,6 +30,34 @@ public struct SidebarProject: Identifiable, Equatable, Sendable {
     public var statusCounts: StatusCounts
 }
 
+/// What's being dragged in the sidebar, carried as a string. A session is its
+/// bare UUID (as it always has been); folders and projects are prefixed.
+public enum SidebarDragItem: Equatable, Sendable {
+    case session(UUID)
+    case folder(UUID)
+    case project(UUID)
+
+    public var payload: String {
+        switch self {
+        case .session(let id): return id.uuidString
+        case .folder(let id): return "folder:" + id.uuidString
+        case .project(let id): return "project:" + id.uuidString
+        }
+    }
+
+    public init?(payload: String) {
+        if let id = UUID(uuidString: payload) {
+            self = .session(id)
+        } else if payload.hasPrefix("folder:"), let id = UUID(uuidString: String(payload.dropFirst("folder:".count))) {
+            self = .folder(id)
+        } else if payload.hasPrefix("project:"), let id = UUID(uuidString: String(payload.dropFirst("project:".count))) {
+            self = .project(id)
+        } else {
+            return nil
+        }
+    }
+}
+
 /// Builds the Project → Folder → Session source list, applying the filter
 /// field and, optionally, a status filter and a recent-activity window.
 public enum Sidebar {

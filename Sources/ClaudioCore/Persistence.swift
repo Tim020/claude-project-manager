@@ -5,7 +5,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var claudePath: String?
     /// Model for new sessions; Claude Code's default when nil.
     public var defaultModel: String?
+    /// Permissions for new sessions run in a terminal (`claude` directly).
     public var defaultPermissionMode: PermissionMode
+    /// Permissions for new background agents, which work unattended.
+    public var defaultBackgroundPermissionMode = PermissionMode.auto
     /// Run new sessions as Claude Code background agents (`claude --bg`),
     /// attached in a terminal, instead of plain interactive processes.
     public var useBackgroundAgents: Bool
@@ -38,6 +41,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The cutoff for `activityWindowDays`, or nil for any time.
     public func activitySince(now: Date) -> Date? {
         activityWindowDays > 0 ? now.addingTimeInterval(-Double(activityWindowDays) * 86_400) : nil
+    }
+
+    /// The default for a new session: background agents have their own.
+    public func defaultPermissionMode(background: Bool) -> PermissionMode {
+        background ? defaultBackgroundPermissionMode : defaultPermissionMode
     }
 
     public static func cleanRoles(_ roles: [String]) -> [String] {
@@ -73,6 +81,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
+        defaultBackgroundPermissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .defaultBackgroundPermissionMode) ?? .auto
         showFilesInspector = try c.decodeIfPresent(Bool.self, forKey: .showFilesInspector) ?? false
         activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)
     }

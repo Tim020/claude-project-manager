@@ -107,6 +107,60 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.session(s.id)?.workingDirectory, "/tmp")
     }
 
+    func testMoveFolderBeforeAnotherReorders() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let a = try ws.createFolder(in: p, named: "A")
+        let b = try ws.createFolder(in: p, named: "B")
+        let c = try ws.createFolder(in: p, named: "C")
+        try ws.moveFolder(c, before: a, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["C", "A", "B"])
+        try ws.moveFolder(c, before: nil, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["A", "B", "C"])
+        try ws.moveFolder(b, before: b, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["A", "B", "C"], "dropping on itself changes nothing")
+    }
+
+    func testMoveFolderBeforeOneInAnotherProjectMovesItsSessions() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let moving = try ws.createFolder(in: p1, named: "Moving")
+        let target = try ws.createFolder(in: p2, named: "Target")
+        let s = makeSession("s", project: p1)
+        try ws.addSession(s, toFolder: moving)
+        try ws.moveFolder(moving, before: target, inProject: p2)
+        XCTAssertEqual(ws.project(p2)!.folders.map(\.name), ["Moving", "Target"])
+        XCTAssertTrue(ws.project(p1)!.folders.isEmpty)
+        XCTAssertEqual(ws.session(s.id)?.projectID, p2)
+    }
+
+    func testMoveFolderDownBeforeALaterOne() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let a = try ws.createFolder(in: p, named: "A")
+        _ = try ws.createFolder(in: p, named: "B")
+        let c = try ws.createFolder(in: p, named: "C")
+        try ws.moveFolder(a, before: c, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["B", "A", "C"])
+    }
+
+    /// A project takes the target's place: after it going down, before it going up.
+    func testMoveProjectOntoAnother() {
+        var ws = Workspace()
+        let a = ws.addProject(path: "/code/a")
+        let b = ws.addProject(path: "/code/b")
+        let c = ws.addProject(path: "/code/c")
+        ws.moveProject(a, onto: c)
+        XCTAssertEqual(ws.projects.map(\.id), [b, c, a], "one drag makes a project last")
+        ws.moveProject(a, onto: b)
+        XCTAssertEqual(ws.projects.map(\.id), [a, b, c], "and first")
+        ws.moveProject(a, onto: b)
+        XCTAssertEqual(ws.projects.map(\.id), [b, a, c], "neighbours swap")
+        ws.moveProject(a, onto: a)
+        XCTAssertEqual(ws.projects.map(\.id), [b, a, c])
+    }
+
     // MARK: Sessions
 
     func testAddSessionToFolderOfDifferentProjectThrows() throws {

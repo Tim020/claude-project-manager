@@ -305,7 +305,7 @@ private struct SessionSettings: View {
             .padding(16)
         }
 
-        SettingsGroup(title: "Defaults", footer: "You can change both for each session in the New Session sheet.") {
+        SettingsGroup(title: "Defaults", footer: "You can change these for each session in the New Session sheet.") {
             SettingsRow(title: "Model") {
                 Picker("Model", selection: settingBinding(model, \.defaultModel)) {
                     ForEach(ModelChoices.all, id: \.label) { choice in
@@ -315,8 +315,16 @@ private struct SessionSettings: View {
                 .labelsHidden()
                 .frame(width: 200)
             }
-            SettingsRow(title: "Permissions", subtitle: "Auto matches Claude Code's default for agents.", showsSeparator: false) {
-                Picker("Permissions", selection: settingBinding(model, \.defaultPermissionMode)) {
+            SettingsRow(title: "Background Permissions",
+                        subtitle: "For background agents, which work unattended. Auto matches Claude Code's default for agents.") {
+                Picker("Background Permissions", selection: settingBinding(model, \.defaultBackgroundPermissionMode)) {
+                    ForEach(PermissionMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .frame(width: 200)
+            }
+            SettingsRow(title: "Terminal Permissions", subtitle: "For sessions run directly in their tab.", showsSeparator: false) {
+                Picker("Terminal Permissions", selection: settingBinding(model, \.defaultPermissionMode)) {
                     ForEach(PermissionMode.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 .labelsHidden()
