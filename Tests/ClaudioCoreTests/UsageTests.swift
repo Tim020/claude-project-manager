@@ -141,12 +141,28 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(expired?.resetsAt)
     }
 
+    func testResetTimesASecondApartAreTheSameWindow() {
+        let now = Date(timeIntervalSince1970: 1_790_460_000)
+        // `/usage`'s report gives "03:49:59.519"; the status line 03:50:00.
+        let report = reading(fiveHour: (80, 1_790_480_999))
+        let staleStatusLine = reading(fiveHour: (40, 1_790_481_000))
+        XCTAssertEqual(report.merged(with: staleStatusLine, now: now).fiveHour?.usedPercentage, 80)
+        XCTAssertEqual(staleStatusLine.merged(with: report, now: now).fiveHour?.usedPercentage, 80)
+        // The next window is hours later, so it still replaces this one.
+        XCTAssertEqual(report.merged(with: reading(fiveHour: (2, 1_790_499_000)), now: now).fiveHour?.usedPercentage, 2)
+    }
+
     func testAWindowThatHasResetShowsNothingUsed() {
         let window = UsageWindow(usedPercentage: 73, resetsAt: Date(timeIntervalSince1970: 1_790_463_000))
         XCTAssertEqual(window.current(at: Date(timeIntervalSince1970: 1_790_462_000)), window)
         let reset = window.current(at: Date(timeIntervalSince1970: 1_790_463_100))
         XCTAssertEqual(reset.usedPercentage, 0)
         XCTAssertEqual(reset.resetLabel(now: Date()), "")
+
+        let snapshot = reading(fiveHour: (73, 1_790_463_000), week: (38, 1_790_571_600))
+        let current = snapshot.current(at: Date(timeIntervalSince1970: 1_790_463_100))
+        XCTAssertEqual(current.fiveHour?.usedPercentage, 0)
+        XCTAssertEqual(current.sevenDay, snapshot.sevenDay)
     }
 
     func testModelTakesTheHighestReadingAcrossSessions() throws {

@@ -34,6 +34,13 @@ public struct UsageWindow: Equatable, Sendable {
         isExpired(at: now) ? UsageWindow(usedPercentage: 0, resetsAt: nil) : self
     }
 
+    /// Sources round a window's reset time differently: the status line gives
+    /// whole seconds, `/usage`'s report "03:49:59.519". The next window can't
+    /// reset until 5 hours after this one, so a few minutes' slack is safe.
+    static let resetTolerance: TimeInterval = 10 * 60
+
+    static func isSameWindow(_ a: Date, _ b: Date) -> Bool { abs(a.timeIntervalSince(b)) < resetTolerance }
+
     /// Combines two readings of the same limit. Every session's status line
     /// reports the usage from its own last request, so an idle session keeps
     /// repeating an old figure, even one from a window that has since reset.
@@ -51,7 +58,7 @@ public struct UsageWindow: Equatable, Sendable {
         case (nil, _?):
             // The windows can't be compared, so trust the one with a timestamp.
             return incoming
-        case let (old?, new?) where old != new:
+        case let (old?, new?) where !isSameWindow(old, new):
             return new > old ? incoming : current
         default:
             // Same window: usage only grows, so the lower reading is the stale one.
@@ -77,6 +84,14 @@ public struct UsageSnapshot: Equatable, Sendable {
         let snapshot = UsageSnapshot(fiveHour: window("five_hour"), sevenDay: window("seven_day"),
                                      subscriptionType: value["subscription_type"]?.stringValue, updatedAt: updatedAt)
         return snapshot.fiveHour == nil && snapshot.sevenDay == nil ? nil : snapshot
+    }
+
+    /// The snapshot as it stands at `now` (see `UsageWindow.current(at:)`).
+    public func current(at now: Date) -> UsageSnapshot {
+        var snapshot = self
+        snapshot.fiveHour = fiveHour?.current(at: now)
+        snapshot.sevenDay = sevenDay?.current(at: now)
+        return snapshot
     }
 
     /// Adds a newer reading window by window (see `UsageWindow.merged`). A
