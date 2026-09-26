@@ -261,6 +261,15 @@ public final class AppModel {
 
     public var awaitingInputCount: Int { statusCounts.awaitingInput }
 
+    /// The sidebar footer's counts: what the text filter and recent-activity
+    /// window show, but not the status filter, since the footer's counts are
+    /// the status filter's buttons.
+    public var footerStatusCounts: StatusCounts {
+        Sidebar.build(state.workspace, filter: filterText, status: nil,
+                      activeSince: state.settings.activitySince(now: now()), alwaysShow: alwaysShownSessionIDs, home: home)
+            .reduce(StatusCounts()) { $0 + $1.statusCounts }
+    }
+
     /// Whether the session has a live terminal in the app.
     public func isRunning(_ sessionID: UUID) -> Bool {
         running.contains(sessionID)

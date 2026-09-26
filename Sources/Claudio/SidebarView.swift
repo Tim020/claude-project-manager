@@ -111,7 +111,7 @@ struct SidebarView: View {
 
     /// Status counts; click one to show only those sessions (again for all).
     private var footer: some View {
-        let counts = model.statusCounts
+        let counts = model.footerStatusCounts
         return HStack(spacing: 6) {
             ForEach(SessionStatus.allCases, id: \.self) { status in
                 let isActive = model.statusFilter == status

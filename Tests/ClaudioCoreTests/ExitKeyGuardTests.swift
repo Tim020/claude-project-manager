@@ -125,3 +125,34 @@ final class TerminalHintTests: XCTestCase {
         }
     }
 }
+
+final class FooterCountTests: XCTestCase {
+    func testFooterFollowsTextAndWindowButNotTheStatusFilter() throws {
+        let now = Date(timeIntervalSince1970: 1_790_352_000)
+        try MainActor.assumeIsolated {
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: "/code")
+            func add(_ name: String, _ status: SessionStatus, daysAgo: Double) throws {
+                let when = now.addingTimeInterval(-daysAgo * 86_400)
+                try state.workspace.addSession(Session(projectID: p, name: name, workingDirectory: "/code", status: status,
+                                                       createdAt: when, lastActivity: when))
+            }
+            try add("asks api", .awaitingInput, daysAgo: 1)
+            try add("done api", .completed, daysAgo: 2)
+            try add("old api", .completed, daysAgo: 30)
+            try add("asks ui", .awaitingInput, daysAgo: 1)
+            let store = MemoryStore()
+            store.state = state
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", now: { now }, home: "/")
+
+            XCTAssertEqual(model.footerStatusCounts, StatusCounts(awaitingInput: 2, completed: 1), "the 2-week window hides the old one")
+            model.toggleStatusFilter(.completed)
+            XCTAssertEqual(model.footerStatusCounts, StatusCounts(awaitingInput: 2, completed: 1), "the status filter doesn't change the footer")
+            model.filterText = "api"
+            XCTAssertEqual(model.footerStatusCounts, StatusCounts(awaitingInput: 1, completed: 1))
+            XCTAssertEqual(model.awaitingInputCount, 2, "the Dock badge still counts everything")
+        }
+    }
+}
