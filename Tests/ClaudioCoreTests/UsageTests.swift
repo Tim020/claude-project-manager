@@ -76,11 +76,93 @@ final class UsageTests: XCTestCase {
             let dir = try makeTemporaryDirectory()
             let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: dir),
                                  hookEventsURL: dir.appendingPathComponent("h.log"), usageURL: dir.appendingPathComponent("usage.json"),
-                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", now: { Date(timeIntervalSince1970: 1_790_340_000) }, home: "/")
             XCTAssertNil(model.usage)
             try statusLineInput.write(to: dir.appendingPathComponent("usage.json"), atomically: true, encoding: .utf8)
             model.pollUsage()
             XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 56.2)
+        }
+    }
+
+    // Readings recorded from several sessions' status lines at once: the idle
+    // ones kept reporting the figure from their last request.
+    private func reading(fiveHour: (Double, TimeInterval)?, week: (Double, TimeInterval)? = nil) -> UsageSnapshot {
+        func window(_ value: (Double, TimeInterval)?) -> UsageWindow? {
+            value.map { UsageWindow(usedPercentage: $0.0, resetsAt: Date(timeIntervalSince1970: $0.1)) }
+        }
+        return UsageSnapshot(fiveHour: window(fiveHour), sevenDay: window(week), subscriptionType: nil, updatedAt: Date())
+    }
+
+    func testAStaleLowerReadingDoesNotLowerTheWindow() {
+        let now = Date(timeIntervalSince1970: 1_790_460_000)
+        let active = reading(fiveHour: (73, 1_790_463_000), week: (38, 1_790_571_600))
+        let idle = reading(fiveHour: (40, 1_790_463_000), week: (33, 1_790_571_600))
+        let merged = active.merged(with: idle, now: now)
+        XCTAssertEqual(merged.fiveHour?.usedPercentage, 73)
+        XCTAssertEqual(merged.sevenDay?.usedPercentage, 38)
+        XCTAssertEqual(merged.merged(with: reading(fiveHour: (75, 1_790_463_000)), now: now).fiveHour?.usedPercentage, 75)
+    }
+
+    func testAReadingFromAWindowThatHasResetIsDropped() {
+        let now = Date(timeIntervalSince1970: 1_790_463_100)
+        let fresh = reading(fiveHour: (1, 1_790_481_000))
+        let stale = reading(fiveHour: (73, 1_790_463_000))
+        XCTAssertEqual(fresh.merged(with: stale, now: now).fiveHour?.usedPercentage, 1)
+        XCTAssertEqual(stale.merged(with: fresh, now: now).fiveHour?.usedPercentage, 1)
+        // Before the reset, a later window still wins over an earlier one.
+        XCTAssertEqual(fresh.merged(with: stale, now: Date(timeIntervalSince1970: 1_790_460_000)).fiveHour?.usedPercentage, 1)
+    }
+
+    func testAReadingWithoutAWindowKeepsTheCurrentOne() {
+        let now = Date(timeIntervalSince1970: 1_790_460_000)
+        let current = reading(fiveHour: (73, 1_790_463_000), week: (38, 1_790_571_600))
+        let merged = current.merged(with: reading(fiveHour: nil, week: (41, 1_790_571_600)), now: now)
+        XCTAssertEqual(merged.fiveHour?.usedPercentage, 73)
+        XCTAssertEqual(merged.sevenDay?.usedPercentage, 41)
+    }
+
+    func testUsageCommandReadingKeepsTheKnownResetTime() {
+        let now = Date(timeIntervalSince1970: 1_790_460_000)
+        let command = UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 74, resetsAt: nil, resetText: "11:50pm"),
+                                    sevenDay: nil, subscriptionType: "max", updatedAt: Date())
+        let merged = reading(fiveHour: (73, 1_790_463_000)).merged(with: command, now: now)
+        XCTAssertEqual(merged.fiveHour?.usedPercentage, 74)
+        XCTAssertEqual(merged.fiveHour?.resetsAt, Date(timeIntervalSince1970: 1_790_463_000))
+        XCTAssertEqual(merged.subscriptionType, "max")
+        // A timed reading replaces an untimed one, since they can't be compared.
+        XCTAssertEqual(command.merged(with: reading(fiveHour: (1, 1_790_481_000)), now: now).fiveHour?.usedPercentage, 1)
+    }
+
+    func testAWindowThatHasResetShowsNothingUsed() {
+        let window = UsageWindow(usedPercentage: 73, resetsAt: Date(timeIntervalSince1970: 1_790_463_000))
+        XCTAssertEqual(window.current(at: Date(timeIntervalSince1970: 1_790_462_000)), window)
+        let reset = window.current(at: Date(timeIntervalSince1970: 1_790_463_100))
+        XCTAssertEqual(reset.usedPercentage, 0)
+        XCTAssertEqual(reset.resetLabel(now: Date()), "")
+    }
+
+    func testModelTakesTheHighestReadingAcrossSessions() throws {
+        try MainActor.assumeIsolated {
+            let dir = try makeTemporaryDirectory()
+            let status = dir.appendingPathComponent("status")
+            try FileManager.default.createDirectory(at: status, withIntermediateDirectories: true)
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: dir),
+                                 hookEventsURL: dir.appendingPathComponent("h.log"), usageURL: dir.appendingPathComponent("usage.json"),
+                                 statusDirectory: status, locateClaude: { _ in nil }, shell: "/bin/sh",
+                                 now: { Date(timeIntervalSince1970: 1_790_460_000) }, home: "/")
+            func input(_ used: Int) -> String {
+                #"{"rate_limits":{"five_hour":{"used_percentage":\#(used),"resets_at":1790463000}}}"#
+            }
+            // The active session wrote the shared file, then an idle one overwrote it.
+            try input(73).write(to: status.appendingPathComponent("\(UUID().uuidString).json"), atomically: true, encoding: .utf8)
+            try input(40).write(to: status.appendingPathComponent("\(UUID().uuidString).json"), atomically: true, encoding: .utf8)
+            try input(40).write(to: dir.appendingPathComponent("usage.json"), atomically: true, encoding: .utf8)
+            model.pollUsage()
+            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 73)
+            // Another stale write to the shared file doesn't bring it back down.
+            try input(45).write(to: dir.appendingPathComponent("usage.json"), atomically: true, encoding: .utf8)
+            model.pollUsage()
+            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 73)
         }
     }
 }
