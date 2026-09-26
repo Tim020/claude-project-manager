@@ -232,6 +232,20 @@ public struct StatusCounts: Equatable, Sendable {
         self.completed = completed
     }
 
+    /// Counts the sessions' states.
+    public init(_ sessions: [Session]) {
+        self.init()
+        for session in sessions {
+            switch session.status {
+            case .working: working += 1
+            case .awaitingInput: awaitingInput += 1
+            case .completed: completed += 1
+            }
+        }
+    }
+
+    public var total: Int { working + awaitingInput + completed }
+
     public subscript(status: SessionStatus) -> Int {
         switch status {
         case .working: return working

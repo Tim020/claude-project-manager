@@ -52,6 +52,16 @@ final class ProjectStatusCountTests: XCTestCase {
         let code = try XCTUnwrap(tree.first { $0.id == p })
         XCTAssertEqual(code.statusCounts, StatusCounts(working: 1, awaitingInput: 1, completed: 1), "archived don't count; collapsed still counts")
         XCTAssertEqual(tree.first { $0.id == other }?.statusCounts, StatusCounts(working: 1))
+
+        // Folders count their own sessions, collapsed or filtered or not.
+        ws.toggleCollapsed(p)
+        ws.toggleCollapsed(.folder(f))
+        let folders = try XCTUnwrap(Sidebar.build(ws, filter: "", home: "/").first { $0.id == p }?.folders)
+        XCTAssertEqual(folders.first { $0.name == "F" }?.statusCounts, StatusCounts(working: 1))
+        XCTAssertEqual(folders.first { $0.isUnfiled }?.statusCounts, StatusCounts(awaitingInput: 1, completed: 1))
+        let filtered = Sidebar.build(ws, filter: "", status: .completed, home: "/").first { $0.id == p }?.folders
+        XCTAssertEqual(filtered?.first { $0.isUnfiled }?.statusCounts, StatusCounts(awaitingInput: 1, completed: 1),
+                       "a status filter hides sessions but not their counts")
     }
 }
 

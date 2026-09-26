@@ -10,6 +10,9 @@ public struct SidebarFolder: Identifiable, Equatable, Sendable {
     public var sessions: [Session]
     /// All visible sessions in the group, for the count badge.
     public var sessionCount: Int
+    /// Sessions in each state (not archived, whatever the filters), for the
+    /// folder's pills.
+    public var statusCounts = StatusCounts()
 }
 
 public struct SidebarProject: Identifiable, Equatable, Sendable {
@@ -67,6 +70,7 @@ public enum Sidebar {
             var folders: [SidebarFolder] = []
             for (group, name, isUnfiled) in groups {
                 var sessions = workspace.sessions(in: group)
+                let counts = StatusCounts(sessions)
                 if activeSince != nil && !sessions.isEmpty {
                     sessions = sessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
                     // Hide folders whose sessions are all old; keep ones that are simply empty.
@@ -88,7 +92,8 @@ public enum Sidebar {
                 }
                 let collapsed = workspace.isCollapsed(group)
                 folders.append(SidebarFolder(id: id, group: group, name: name, isUnfiled: isUnfiled, isCollapsed: collapsed,
-                                             sessions: collapsed && !filtering ? [] : sessions, sessionCount: sessions.count))
+                                             sessions: collapsed && !filtering ? [] : sessions, sessionCount: sessions.count,
+                                             statusCounts: counts))
             }
 
             if filtering && folders.isEmpty && (status != nil || !projectMatches) { return nil }

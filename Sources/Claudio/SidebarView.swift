@@ -366,10 +366,7 @@ private struct FolderSection: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
-            Text("\(folder.sessionCount)")
-                .font(DS.font(11, .semibold))
-                .foregroundStyle(DS.dim)
-                .help(folder.sessionCount == 1 ? "1 session" : "\(folder.sessionCount) sessions")
+            StatusCountPills(counts: folder.statusCounts)
         }
         .padding(.vertical, 5)
         .padding(.leading, SidebarIndent.folder)
