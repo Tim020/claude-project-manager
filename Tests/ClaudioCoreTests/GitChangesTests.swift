@@ -90,8 +90,10 @@ final class GitChangesIntegrationTests: XCTestCase {
         XCTAssertEqual(appDiff.lines.first { $0.kind == .added }?.text, "line five")
         let untracked = await GitChanges.diff(for: try XCTUnwrap(byPath["notes/todo.txt"]), in: result, runner: runner, git: git)
         XCTAssertEqual(untracked.additions, 3)
-        XCTAssertEqual(result.absolutePath(for: try XCTUnwrap(byPath["notes/todo.txt"])),
-                       dir.resolvingSymlinksInPath().appendingPathComponent("notes/todo.txt").path)
+        // git reports the real path (/private/var/… on macOS), so check it points at the file.
+        let absolute = result.absolutePath(for: try XCTUnwrap(byPath["notes/todo.txt"]))
+        XCTAssertTrue(absolute.hasSuffix("/repo/notes/todo.txt"), absolute)
+        XCTAssertEqual(try String(contentsOfFile: absolute, encoding: .utf8), "one\ntwo\nthree\n")
     }
 
     func testFromASubdirectoryAndWithoutChanges() async throws {
