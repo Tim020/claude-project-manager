@@ -135,6 +135,17 @@ final class SessionTerminalView: LocalProcessTerminalView {
 
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let input = Array(data)
+        // SwiftTerm's keyDown isn't open, so Shift+Enter is caught here, by the event that sent it.
+        if let event = NSApp.currentEvent, event.type == .keyDown {
+            let flags = event.modifierFlags
+            // Return, or Enter on the keypad.
+            if let newline = NewlineKey.replacement(for: input, isReturnKey: event.keyCode == 36 || event.keyCode == 76,
+                                                    shift: flags.contains(.shift), command: flags.contains(.command),
+                                                    control: flags.contains(.control), option: flags.contains(.option)) {
+                super.send(source: source, data: newline[...])
+                return
+            }
+        }
         if let key = ExitKeyGuard.exitKey(input) {
             let seconds = lastExitKey.flatMap { $0.key == key ? Date().timeIntervalSince($0.date) : nil }
             lastExitKey = (key, Date())

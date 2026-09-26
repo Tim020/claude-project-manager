@@ -70,6 +70,10 @@ struct ContentView: View {
             ImportProjectsSheet()
                 .environment(model)
         }
+        .sheet(isPresented: $commands.showRemovedSessions) {
+            RemovedSessionsSheet()
+                .environment(model)
+        }
         .sheet(isPresented: $commands.showSetup, onDismiss: offerFirstRunImport) {
             SetupSheet()
                 .environment(model)
@@ -218,6 +222,7 @@ func chooseProjectDirectory(model: AppModel) {
 final class UICommands {
     var newSessionTarget: NewSessionTarget?
     var showImportProjects = false
+    var showRemovedSessions = false
     /// The import sheet is offered automatically once, on a first launch.
     var offeredFirstRunImport = false
     /// The Claude Code setup sheet (launch check, banner, blocked actions).

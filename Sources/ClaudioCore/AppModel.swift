@@ -810,15 +810,64 @@ public final class AppModel {
         return choices
     }
 
-    public func deleteSession(_ id: UUID) {
+    /// Deletes the session from Claudio, and with `.everywhere` from Claude
+    /// Code too: its background agent (`claude rm`) and its history files.
+    public func deleteSession(_ id: UUID, _ scope: SessionDeletion) {
+        guard let session = state.workspace.session(id) else { return }
         detach(id)
-        if let agentID = state.workspace.session(id)?.agentID {
-            runAgentCommand { $0.remove(agentID: agentID) }
+        if scope == .everywhere {
+            if let agentID = session.agentID {
+                runAgentCommand { $0.remove(agentID: agentID) }
+            }
+            // After `claude rm`, so the agent can't write to them again.
+            if let claudeID = session.claudeSessionID {
+                let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+                enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
+            }
         }
+        log.append(.info, scope == .everywhere ? "Deleted “\(session.name)” from Claude Code and Claudio"
+                                              : "Removed “\(session.name)” from Claudio")
         exitCodes[id] = nil
         historyLines[id] = nil
-        state.workspace.removeSession(id)
+        switch scope {
+        case .claudioOnly: state.workspace.removeFromClaudio(id, at: now())
+        case .everywhere: state.workspace.deleteSession(id)
+        }
         save()
+    }
+
+    /// Brings back a session removed from Claudio, then refreshes it from
+    /// Claude Code (it may have moved on while it was removed).
+    public func restoreSession(_ id: UUID) {
+        guard let removed = state.workspace.removedSessions.first(where: { $0.id == id }),
+              attempt({ try state.workspace.restoreSession(id) }) != nil else { return }
+        log.append(.info, "Restored “\(removed.session.name)”")
+        save()
+        let projectID = removed.session.projectID
+        enqueue {
+            await self.refreshProjects([projectID])
+            await self.refreshAgents()
+        }
+    }
+
+    public func unarchive(_ id: UUID) {
+        guard let session = state.workspace.session(id), session.isArchived else { return }
+        state.workspace.unarchive(id)
+        log.append(.info, "Unarchived “\(session.name)”")
+        save()
+    }
+
+    private func removeHistory(of session: Session, claudeSessionID: String, projectPath: String) {
+        let items = discovery.historyItems(projectPath: projectPath, workingDirectory: session.workingDirectory,
+                                           claudeSessionID: claudeSessionID)
+        for item in items {
+            do {
+                try FileManager.default.removeItem(at: item)
+                log.append(.info, "Deleted Claude Code history", detail: PathDisplay.tilde(item.path, home: home))
+            } catch {
+                report("Couldn't delete \(PathDisplay.tilde(item.path, home: home)): \(AppModel.describe(error))")
+            }
+        }
     }
 
     /// Adds a session, selects it and opens its terminal (with the prompt, if any).
@@ -972,7 +1021,8 @@ public final class AppModel {
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
                 }
-            } else if let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
+            } else if !workspace.isRemoved(claudeSessionID: agent.sessionID, agentID: agent.id),
+                      let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
                 var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
                                       name: agent.name ?? agent.id, workingDirectory: agent.cwd, status: agent.sessionStatus,
                                       createdAt: agent.startedAt ?? now())
@@ -987,6 +1037,7 @@ public final class AppModel {
                 workspace.updateSession(session.id) { $0.agentID = nil }
             }
         }
+        workspace.forgetDeletedAgents(notIn: listedIDs)
         let byID = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         if agents != byID { agents = byID }
         if workspace != state.workspace {
