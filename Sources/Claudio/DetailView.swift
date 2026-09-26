@@ -3,8 +3,9 @@ import AppKit
 import ClaudioCore
 import SwiftUI
 
-/// Right-hand side: breadcrumb header, then the folder's open tabs (design 1a),
-/// optionally side by side in a grid of up to 2×2 (design 1b).
+/// Right-hand side: breadcrumb header for the selected session, then the open
+/// tabs in panes that can be docked side by side and above one another
+/// (`PaneTreeView`).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
@@ -16,14 +17,8 @@ struct DetailView: View {
             if let session = model.selectedSession, let crumb = model.breadcrumb {
                 VStack(spacing: 0) {
                     DetailHeader(session: session, breadcrumb: crumb)
-                    TabStrip(sessions: model.tabs, selectedID: session.id)
                     HStack(spacing: 0) {
-                        if model.settings.layout == .split && model.canSplit {
-                            SplitGrid(selectedID: session.id)
-                        } else {
-                            SessionPane(session: session, style: .full)
-                                .id(session.id)
-                        }
+                        PaneTreeView(node: model.panes.root)
                         // Files Changed inspector (design 4a), beside the terminal.
                         if model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
                             FilesInspector(session: session)
@@ -108,9 +103,6 @@ private struct DetailHeader: View {
             }
             StatusPill(status: session.status)
                 .help(SessionIndicators.statusHelp(session))
-            if model.canSplit {
-                LayoutToggle()
-            }
             FilesButton(session: session)
             pullRequestButton
             Menu {
@@ -224,62 +216,41 @@ struct WorktreeChip: View {
     }
 }
 
-/// Split / Tabs segmented switch from design 1b.
-private struct LayoutToggle: View {
+/// A pane's tabs. Drag a tab to reorder it, onto another pane's strip to move
+/// it there, or onto a pane's edge to dock it (see `PaneGroupView`).
+struct TabStrip: View {
     @Environment(AppModel.self) private var model
-
-    var body: some View {
-        HStack(spacing: 0) {
-            segment(.split, icon: "rectangle.split.2x1", label: "Split")
-            segment(.tabs, icon: "rectangle.stack", label: "Tabs")
-        }
-        .font(DS.font(12))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-    }
-
-    private func segment(_ layout: LayoutMode, icon: String, label: String) -> some View {
-        let active = model.settings.layout == layout
-        return Button { model.setLayout(layout) } label: {
-            HStack(spacing: 4) {
-                Image(systemName: icon).font(.system(size: 11))
-                Text(label)
-            }
-            .foregroundStyle(active ? DS.text : DS.muted)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 10)
-            .background(active ? DS.border : .clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(layout == .split ? "Show open tabs side by side (⌥⌘2)" : "Show one tab at a time (⌥⌘1)")
-    }
-}
-
-private struct TabStrip: View {
-    @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     @Environment(\.presentNewSession) private var presentNewSession
+    let group: PaneGroup
     let sessions: [Session]
-    let selectedID: UUID
+    let isFocusedPane: Bool
+    @State private var isDropTarget = false
+
+    private var selectedID: UUID? { group.selectedTabID }
 
     var body: some View {
         HStack(spacing: 2) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
-                        ForEach(sessions) { session in
-                            TabItem(session: session, isSelected: session.id == selectedID)
+                        ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                            TabItem(session: session, group: group, index: index,
+                                    isSelected: session.id == selectedID, isFocusedPane: isFocusedPane)
                                 .id(session.id)
                         }
                     }
                 }
                 .onChange(of: selectedID, initial: true) { _, id in
-                    withAnimation { proxy.scrollTo(id) }
+                    if let id { withAnimation { proxy.scrollTo(id) } }
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
             overflowMenu
-            Button { presentNewSession(model.selectedGroup) } label: {
+            Button {
+                model.focusPane(group.id)
+                presentNewSession(model.selectedGroup)
+            } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12))
                     .foregroundStyle(DS.dim)
@@ -295,8 +266,15 @@ private struct TabStrip: View {
                     .padding(.leading, 8)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, model.panes.isSplit ? 12 : 20)
+        .background(isDropTarget ? DS.selection.opacity(0.4) : .clear)
         .overlay(alignment: .bottom) { HorizontalRule() }
+        // Dropping on the strip's empty space adds the tab at the end.
+        .onDrop(of: paneDropTypes, isTargeted: $isDropTarget) { providers in
+            commands.draggedTabID = nil
+            loadSessionID(from: providers) { model.moveTab($0, toPane: group.id) }
+            return true
+        }
     }
 
     /// Every open tab, plus the folder's closed sessions to reopen.
@@ -316,8 +294,10 @@ private struct TabStrip: View {
                 }
             }
             Divider()
-            Button("Close Other Tabs") { model.closeOtherTabs(keeping: selectedID) }
-                .disabled(sessions.count < 2)
+            Button("Close Other Tabs") {
+                if let selectedID { model.closeOtherTabs(keeping: selectedID) }
+            }
+            .disabled(sessions.count < 2)
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
             Button("Close All Tabs") { model.closeAllTabs() }
         } label: {
@@ -335,9 +315,21 @@ private struct TabStrip: View {
 
 private struct TabItem: View {
     @Environment(AppModel.self) private var model
+    @Environment(UICommands.self) private var commands
     let session: Session
+    let group: PaneGroup
+    let index: Int
     let isSelected: Bool
+    let isFocusedPane: Bool
     @State private var hovering = false
+    @State private var isDropTarget = false
+
+    /// The shown tab of the focused pane is underlined in teal; other panes'
+    /// shown tabs more quietly.
+    private var underline: Color {
+        guard isSelected else { return .clear }
+        return isFocusedPane ? DS.teal : DS.dim
+    }
 
     var body: some View {
         HStack(spacing: 7) {
@@ -376,11 +368,34 @@ private struct TabItem: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(isSelected ? DS.teal : .clear).frame(height: 2)
+            Rectangle().fill(underline).frame(height: 2)
+        }
+        .overlay(alignment: .leading) {
+            // Dropping a tab here puts it just before this one.
+            if isDropTarget { Rectangle().fill(DS.blue).frame(width: 2) }
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.select(session.id) }
+        .onDrag {
+            commands.draggedTabID = session.id
+            return tabDragItem(session.id)
+        } preview: {
+            HStack(spacing: 6) {
+                StatusDot(status: session.status)
+                Text(session.name).font(DS.font(13)).foregroundStyle(DS.text)
+            }
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
+        }
+        .onDrop(of: paneDropTypes, isTargeted: $isDropTarget) { providers in
+            commands.draggedTabID = nil
+            loadSessionID(from: providers) { id in
+                guard id != session.id else { return }
+                model.moveTab(id, toPane: group.id, at: index)
+            }
+            return true
+        }
         .contextMenu {
             Button("Close Tab") { model.closeTab(session.id) }
             if model.isRunning(session.id) {
@@ -389,8 +404,13 @@ private struct TabItem: View {
             Divider()
             Menu("Role") { RoleMenuItems(session: session) }
             Divider()
+            Button("Split Right") { model.splitTab(session.id, to: .right, of: group.id) }
+                .disabled(group.tabIDs.count < 2)
+            Button("Split Down") { model.splitTab(session.id, to: .bottom, of: group.id) }
+                .disabled(group.tabIDs.count < 2)
+            Divider()
             Button("Close Other Tabs") { model.closeOtherTabs(keeping: session.id) }
-                .disabled(model.tabs.count < 2)
+                .disabled(group.tabIDs.count < 2)
             Button("Close Tabs to the Left") { model.closeTabs(leftOf: session.id) }
                 .disabled(model.workspace.tabIDs(leftOf: session.id).isEmpty)
             Button("Close Tabs to the Right") { model.closeTabs(rightOf: session.id) }
@@ -398,33 +418,6 @@ private struct TabItem: View {
             Divider()
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
             Button("Close All Tabs") { model.closeAllTabs() }
-        }
-    }
-}
-
-/// Open tabs side by side: at most 2×2, each pane at least the minimum size.
-/// When more tabs are open than fit, the selected and most recently used win.
-private struct SplitGrid: View {
-    @Environment(AppModel.self) private var model
-    let selectedID: UUID
-
-    var body: some View {
-        GeometryReader { geometry in
-            let grid = SplitLayout.grid(paneCount: model.tabs.count, width: geometry.size.width, height: geometry.size.height)
-            let panes = model.splitPanes(capacity: grid.capacity)
-            let rows = stride(from: 0, to: panes.count, by: grid.columns).map { Array(panes[$0..<min($0 + grid.columns, panes.count)]) }
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
-                    HStack(spacing: 0) {
-                        ForEach(Array(row.enumerated()), id: \.element.id) { index, session in
-                            SessionPane(session: session, style: .compact(isFocused: session.id == selectedID))
-                                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                            if index < row.count - 1 { VerticalRule() }
-                        }
-                    }
-                    if rowIndex < rows.count - 1 { HorizontalRule() }
-                }
-            }
         }
     }
 }
@@ -437,8 +430,8 @@ enum PaneStyle: Equatable {
 }
 
 /// One session: its live terminal while running (or after it exits, until
-/// resumed); otherwise its read-only history with a Resume bar. Split mode adds
-/// a compact header bar per pane.
+/// resumed); otherwise its read-only history with a Resume bar. With several
+/// panes it's compact, and only the focused pane's terminal takes the keyboard.
 struct SessionPane: View {
     @Environment(AppModel.self) private var model
     @Environment(TerminalRegistryBox.self) private var terminals
@@ -456,27 +449,6 @@ struct SessionPane: View {
         let running = model.isRunning(session.id)
         let exitCode = model.lastExitCode(session.id)
         VStack(spacing: 0) {
-            if case .compact(let focused) = style {
-                HStack(spacing: 8) {
-                    RoleChip(session: session, compact: true)
-                    Text(session.name)
-                        .font(DS.font(13.5, .bold))
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    if let context = model.context(for: session.id) {
-                        ContextMeter(context: context, compact: true)
-                    }
-                    StatusPill(status: session.status, fontSize: 11.5, verticalPadding: 1, horizontalPadding: 9)
-                        .help(SessionIndicators.statusHelp(session))
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .background(DS.input)
-                .overlay(alignment: .bottom) { Rectangle().fill(focused ? DS.blue : DS.border).frame(height: 1) }
-                .contentShape(Rectangle())
-                .onTapGesture { model.select(session.id) }
-            }
             if model.paneMode(for: session.id) == .changes {
                 // Changes view (design 4b); the terminal keeps running meanwhile.
                 ChangesView(session: session)

@@ -32,6 +32,8 @@ public struct MenuFlags: Equatable, Sendable {
     public var hasSelection = false
     public var canResumeSelected = false
     public var canStopSelected = false
+    /// The selected tab's pane has another tab, so it can move to a pane of its own.
+    public var canSplitSelected = false
     /// Claude Code can run (installed, signed in), or hasn't been checked yet.
     public var canRunSessions = true
 
@@ -62,7 +64,8 @@ public protocol TerminalControlling: AnyObject {
 @Observable
 public final class AppModel {
     public private(set) var state: PersistedState
-    public var selectedSessionID: UUID?
+    /// The session shown in the focused pane.
+    public var selectedSessionID: UUID? { state.workspace.panes.focusedTabID }
     public var filterText = ""
     /// What's known about the Claude Code CLI: installed, signed in, able to
     /// run background agents. Checked at launch and when Claudio comes back.
@@ -114,8 +117,6 @@ public final class AppModel {
     private var estimatedContexts: [UUID: ContextUsage] = [:]
     /// Sessions whose name still has to be written as their Claude Code title.
     @ObservationIgnored private var pendingTitlePushes = Set<UUID>()
-    /// Most recently selected first; decides which tabs get split panes.
-    private var recentSessionIDs: [UUID] = []
     /// Latest `claude agents` listing, by agent id.
     private var agents: [String: BackgroundAgent] = [:]
     /// Interactive `claude` processes running in terminals, by session id.
@@ -262,16 +263,12 @@ public final class AppModel {
         return state.workspace.sessions(in: group).filter { !state.workspace.isOpen($0.id) }
     }
 
-    /// Split view shows open tabs side by side, so it needs at least two.
-    public var canSplit: Bool {
-        tabs.count > 1
-    }
+    /// How the open tabs are arranged into panes.
+    public var panes: PaneLayout { state.workspace.panes }
 
-    /// The open tabs to show side by side, given how many panes fit.
-    public func splitPanes(capacity: Int) -> [Session] {
-        let open = tabs
-        let ids = SplitLayout.panes(open: open.map(\.id), selected: selectedSessionID, recent: recentSessionIDs, capacity: capacity)
-        return open.filter { ids.contains($0.id) }
+    /// A pane's tabs, in its order (archived sessions left out).
+    public func tabs(inPane group: PaneGroup) -> [Session] {
+        group.tabIDs.compactMap { state.workspace.session($0) }.filter { !$0.isArchived }
     }
 
     public var breadcrumb: Breadcrumb? {
@@ -487,10 +484,10 @@ public final class AppModel {
             importSessions(for: id)
             added.append(id)
         }
-        if selectedSessionID == nil {
-            selectedSessionID = state.workspace.sessions
-                .filter { added.contains($0.projectID) && !$0.isArchived }
-                .max { $0.lastActivity < $1.lastActivity }?.id
+        if selectedSessionID == nil, let newest = state.workspace.sessions
+            .filter({ added.contains($0.projectID) && !$0.isArchived })
+            .max(by: { $0.lastActivity < $1.lastActivity }) {
+            state.workspace.selectTab(newest.id)
         }
         save()
         return added.count
@@ -499,7 +496,6 @@ public final class AppModel {
     public func removeProject(_ id: UUID) {
         let ids = state.workspace.sessions.filter { $0.projectID == id }.map(\.id)
         ids.forEach(detach)
-        if let selected = selectedSessionID, ids.contains(selected) { selectedSessionID = nil }
         state.workspace.removeProject(id)
         save()
     }
@@ -609,42 +605,70 @@ public final class AppModel {
     }
 
     public func archiveCompleted(in group: SessionGroup) {
+        let archived = state.workspace.sessions(in: group).filter { $0.status == .completed }.map(\.id)
         state.workspace.archiveCompleted(in: group)
-        if let selected = selectedSessionID, state.workspace.session(selected)?.isArchived == true {
-            selectedSessionID = tabs.first?.id
-        }
+        // Archived sessions leave the panes.
+        archived.forEach { state.workspace.closeTab($0) }
         save()
     }
 
     // MARK: - Sessions
 
-    /// Selects a session and opens its tab.
+    /// Selects a session: shows its tab and focuses its pane, opening the tab
+    /// in the focused pane if it isn't open.
     public func select(_ sessionID: UUID?) {
-        selectedSessionID = sessionID
         guard let sessionID, state.workspace.session(sessionID) != nil else { return }
-        recentSessionIDs.removeAll { $0 == sessionID }
-        recentSessionIDs.insert(sessionID, at: 0)
         if !running.contains(sessionID) && isAgentAlive(sessionID) {
             // Reopening a live agent reattaches rather than showing the old terminal.
             exitCodes[sessionID] = nil
         }
-        if !state.workspace.isOpen(sessionID) {
-            state.workspace.openTab(sessionID)
-            save()
-        }
+        updatePanes { $0.selectTab(sessionID) }
+    }
+
+    /// Focuses a pane (e.g. when it's clicked), selecting the tab it shows.
+    public func focusPane(_ groupID: UUID) {
+        updatePanes { $0.focusPane(groupID) }
+    }
+
+    /// Moves a tab (from any pane, or a session from the sidebar) into a pane,
+    /// before `index` or at the end.
+    public func moveTab(_ sessionID: UUID, toPane groupID: UUID, at index: Int? = nil) {
+        guard state.workspace.session(sessionID) != nil else { return }
+        updatePanes { $0.moveTab(sessionID, toPane: groupID, at: index) }
+    }
+
+    /// Moves a tab (or a session from the sidebar) into a new pane docked to an
+    /// edge of a pane: side by side, or one above the other.
+    public func splitTab(_ sessionID: UUID, to edge: PaneEdge, of groupID: UUID) {
+        guard state.workspace.session(sessionID) != nil else { return }
+        updatePanes { $0.splitTab(sessionID, to: edge, of: groupID) }
+    }
+
+    /// Moves the selected tab into a new pane on one side of its own. Needs
+    /// another tab to leave behind.
+    public func splitSelectedTab(_ edge: PaneEdge) {
+        guard let id = selectedSessionID else { return }
+        splitTab(id, to: edge, of: state.workspace.panes.focusedGroupID)
+    }
+
+    /// Sets the shares of a split's panes once a divider has been dragged.
+    public func resizeSplit(_ splitID: UUID, fractions: [Double]) {
+        updatePanes { $0.resizeSplit(splitID, fractions: fractions) }
+    }
+
+    /// Changes the pane layout, saving only if it changed.
+    private func updatePanes(_ body: (inout Workspace) -> Void) {
+        var workspace = state.workspace
+        body(&workspace)
+        guard workspace != state.workspace else { return }
+        state.workspace = workspace
+        save()
     }
 
     /// Closes a tab. The session keeps running (its sidebar status still
     /// updates) unless `stop` is true.
     public func closeTab(_ sessionID: UUID, stop shouldStop: Bool = false) {
-        if selectedSessionID == sessionID {
-            let open = tabs
-            let index = open.firstIndex { $0.id == sessionID } ?? 0
-            let remaining = open.filter { $0.id != sessionID }
-            selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
-        }
         state.workspace.closeTab(sessionID)
-        recentSessionIDs.removeAll { $0 == sessionID }
         if shouldStop {
             stop(sessionID)
         } else if state.workspace.session(sessionID)?.agentID != nil {
@@ -653,10 +677,10 @@ public final class AppModel {
         save()
     }
 
+    /// Closes the other tabs in a tab's pane.
     public func closeOtherTabs(keeping sessionID: UUID) {
-        state.workspace.closeOtherTabs(keeping: sessionID)
-        if let selected = selectedSessionID, !state.workspace.isOpen(selected) { select(sessionID) }
-        save()
+        let others = (state.workspace.panes.group(containing: sessionID)?.tabIDs ?? []).filter { $0 != sessionID }
+        closeTabs(others, fallback: sessionID)
     }
 
     /// Closes the tabs left of `sessionID` (which stays open).
@@ -678,12 +702,12 @@ public final class AppModel {
     /// closes, `fallback` is selected instead.
     private func closeTabs(_ ids: [UUID], fallback: UUID?) {
         guard !ids.isEmpty else { return }
+        let selected = selectedSessionID
         for id in ids {
             state.workspace.closeTab(id)
-            recentSessionIDs.removeAll { $0 == id }
             if state.workspace.session(id)?.agentID != nil { detach(id) }
         }
-        if let selected = selectedSessionID, ids.contains(selected) { selectedSessionID = fallback }
+        if let selected, ids.contains(selected), let fallback { state.workspace.selectTab(fallback) }
         save()
     }
 
@@ -695,11 +719,7 @@ public final class AppModel {
 
     /// Closes every completed tab.
     public func closeCompletedTabs() {
-        let selected = selectedSessionID
         state.workspace.closeCompletedTabs()
-        if let selected, !state.workspace.isOpen(selected) {
-            selectedSessionID = tabs.first?.id
-        }
         save()
     }
 
@@ -791,17 +811,10 @@ public final class AppModel {
     }
 
     public func deleteSession(_ id: UUID) {
-        if selectedSessionID == id {
-            let siblings = tabs
-            let index = siblings.firstIndex { $0.id == id } ?? 0
-            let remaining = siblings.filter { $0.id != id }
-            selectedSessionID = remaining.isEmpty ? nil : remaining[max(0, min(index - 1, remaining.count - 1))].id
-        }
         detach(id)
         if let agentID = state.workspace.session(id)?.agentID {
             runAgentCommand { $0.remove(agentID: agentID) }
         }
-        recentSessionIDs.removeAll { $0 == id }
         exitCodes[id] = nil
         historyLines[id] = nil
         state.workspace.removeSession(id)
@@ -1301,11 +1314,9 @@ public final class AppModel {
         }
     }
 
-    /// Whether the session is on screen: the selected tab, or a split pane.
+    /// Whether the session is on screen: the tab shown in one of the panes.
     private func isVisible(_ sessionID: UUID) -> Bool {
-        if selectedSessionID == sessionID { return true }
-        guard state.settings.layout == .split, canSplit else { return false }
-        return splitPanes(capacity: SplitLayout.maxPanes).contains { $0.id == sessionID }
+        state.workspace.panes.visibleTabIDs.contains(sessionID)
     }
 
     /// Clicking a notification opens its session.
@@ -1324,6 +1335,7 @@ public final class AppModel {
             flags.hasSelection = true
             flags.canResumeSelected = !running.contains(id)
             flags.canStopSelected = running.contains(id) || isAgentAlive(id)
+            flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         }
         if flags != menuFlags { menuFlags = flags }
     }
@@ -1391,11 +1403,6 @@ public final class AppModel {
 
     public func setSidebarWidth(_ width: Double) {
         state.settings.sidebarWidth = AppSettings.clampSidebarWidth(width)
-        save()
-    }
-
-    public func setLayout(_ layout: LayoutMode) {
-        state.settings.layout = layout
         save()
     }
 

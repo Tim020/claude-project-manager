@@ -224,5 +224,9 @@ final class UICommands {
     var showSetup = false
     /// Problems the banner was dismissed for; it comes back when they change.
     var dismissedBannerProblems: [String]?
+    /// The tab being dragged, so a pane knows not to offer docking a tab
+    /// beside itself. Cleared on drop; a cancelled drag leaves it stale, which
+    /// only matters for that one-tab pane.
+    var draggedTabID: UUID?
 }
 #endif

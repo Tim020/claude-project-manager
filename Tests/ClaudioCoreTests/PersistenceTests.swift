@@ -19,7 +19,6 @@ final class PersistenceTests: XCTestCase {
                                                createdAt: Date(timeIntervalSince1970: 1_790_000_000.25)), toFolder: f)
         state.settings.claudePath = "/opt/claude"
         state.settings.defaultModel = "claude-opus-5-5"
-        state.settings.layout = .split
 
         try store.save(state)
         XCTAssertEqual(try store.load(), state)
@@ -37,7 +36,6 @@ final class PersistenceTests: XCTestCase {
         let state = try JSONFileStore.decoder.decode(PersistedState.self, from: Data(json.utf8))
         XCTAssertEqual(state.settings, AppSettings())
         XCTAssertEqual(state.settings.defaultPermissionMode, .auto)
-        XCTAssertEqual(state.settings.layout, .tabs)
     }
 
     func testSessionDecodesOlderFilesWithoutOptionalFields() throws {

@@ -119,7 +119,7 @@ final class GlobalTabsTests: XCTestCase {
         ws.openTab(b.id)
         XCTAssertEqual(ws.openTabSessions.map(\.name), ["b", "a"], "tab order is the order they were opened")
         ws.closeOtherTabs(keeping: a.id)
-        XCTAssertEqual(ws.openTabSessions.map(\.name), ["a"], "Close Others closes tabs from every folder")
+        XCTAssertEqual(ws.openTabSessions.map(\.name), ["a"], "Close Others closes the pane's tabs from every folder")
     }
 
     func testModelTabsAcrossFoldersAndSplit() throws {
@@ -136,11 +136,11 @@ final class GlobalTabsTests: XCTestCase {
             let loose = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "loose", role: .code, prompt: "", model: nil, permissionMode: .auto)))
             XCTAssertEqual(model.tabs.map(\.id), [inFolder, loose])
             XCTAssertTrue(model.tabsSpanFolders)
-            XCTAssertTrue(model.canSplit)
-            XCTAssertEqual(model.splitPanes(capacity: 4).map(\.id), [inFolder, loose])
+            model.splitTab(loose, to: .right, of: model.panes.focusedGroupID)
+            XCTAssertEqual(model.visibleSessionIDs, [inFolder, loose])
             model.closeTab(loose)
             XCTAssertEqual(model.selectedSessionID, inFolder)
-            XCTAssertFalse(model.canSplit)
+            XCTAssertFalse(model.panes.isSplit)
         }
     }
 }

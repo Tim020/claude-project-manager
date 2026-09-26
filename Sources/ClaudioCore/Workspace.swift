@@ -12,12 +12,16 @@ public struct Workspace: Codable, Equatable, Sendable {
     public private(set) var sessions: [Session]
     /// Open tabs, in the order they were opened (like a browser). Closing a
     /// tab never stops or removes the session.
-    public private(set) var openTabIDs: [UUID]
+    public private(set) var openTabIDs: [UUID] {
+        didSet { panes.reconcile(openTabIDs: openTabIDs) }
+    }
+    /// How the open tabs are arranged into panes; always holds exactly the open tabs.
+    public private(set) var panes: PaneLayout
 
     public var openSessionIDs: Set<UUID> { Set(openTabIDs) }
 
     enum CodingKeys: String, CodingKey {
-        case projects, sessions
+        case projects, sessions, panes
         case openTabIDs = "openSessionIDs"
     }
 
@@ -25,6 +29,8 @@ public struct Workspace: Codable, Equatable, Sendable {
         self.projects = projects
         self.sessions = sessions
         self.openTabIDs = openTabIDs
+        panes = PaneLayout(tabIDs: [])
+        panes.reconcile(openTabIDs: openTabIDs)
     }
 
     public init(from decoder: Decoder) throws {
@@ -32,6 +38,38 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
         openTabIDs = try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []
+        // A layout that doesn't decode just starts again as one pane.
+        panes = ((try? c.decodeIfPresent(PaneLayout.self, forKey: .panes)) ?? nil) ?? PaneLayout()
+        panes.reconcile(openTabIDs: openTabIDs)
+    }
+
+    // MARK: - Panes
+
+    /// Shows a tab in its pane and focuses that pane, opening the tab (in the
+    /// focused pane) if it isn't open.
+    public mutating func selectTab(_ sessionID: UUID) {
+        openTab(sessionID)
+        panes.select(sessionID)
+    }
+
+    public mutating func focusPane(_ groupID: UUID) {
+        panes.focus(groupID)
+    }
+
+    /// Moves a tab into a pane (opening it if needed), before `index` or at the end.
+    public mutating func moveTab(_ sessionID: UUID, toPane groupID: UUID, at index: Int? = nil) {
+        openTab(sessionID)
+        panes.move(sessionID, toGroup: groupID, at: index)
+    }
+
+    /// Moves a tab (opening it if needed) into a new pane docked to an edge of a pane.
+    public mutating func splitTab(_ sessionID: UUID, to edge: PaneEdge, of groupID: UUID) {
+        openTab(sessionID)
+        panes.split(sessionID, to: edge, of: groupID)
+    }
+
+    public mutating func resizeSplit(_ splitID: UUID, fractions: [Double]) {
+        panes.resize(splitID, fractions: fractions)
     }
 
     // MARK: - Tabs
@@ -65,21 +103,22 @@ public struct Workspace: Codable, Equatable, Sendable {
         openTabIDs.removeAll { $0 == sessionID }
     }
 
-    /// Closes every other tab, in any folder.
+    /// Closes the other tabs in a tab's pane.
     public mutating func closeOtherTabs(keeping sessionID: UUID) {
-        openTabIDs.removeAll { $0 != sessionID }
+        let others = Set(panes.group(containing: sessionID)?.tabIDs ?? []).subtracting([sessionID])
+        openTabIDs.removeAll { others.contains($0) }
     }
 
-    /// Open tabs before (left of) a tab, in tab order.
+    /// Tabs before (left of) a tab in its pane.
     public func tabIDs(leftOf sessionID: UUID) -> [UUID] {
-        guard let index = openTabIDs.firstIndex(of: sessionID) else { return [] }
-        return Array(openTabIDs[..<index])
+        guard let tabs = panes.group(containing: sessionID)?.tabIDs, let index = tabs.firstIndex(of: sessionID) else { return [] }
+        return Array(tabs[..<index])
     }
 
-    /// Open tabs after (right of) a tab, in tab order.
+    /// Tabs after (right of) a tab in its pane.
     public func tabIDs(rightOf sessionID: UUID) -> [UUID] {
-        guard let index = openTabIDs.firstIndex(of: sessionID) else { return [] }
-        return Array(openTabIDs[(index + 1)...])
+        guard let tabs = panes.group(containing: sessionID)?.tabIDs, let index = tabs.firstIndex(of: sessionID) else { return [] }
+        return Array(tabs[(index + 1)...])
     }
 
     public mutating func closeTabs(leftOf sessionID: UUID) {
