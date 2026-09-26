@@ -75,6 +75,35 @@ extension AppModel {
         (try? sessionChanges[sessionID]?.git?.get().baseName) ?? "main"
     }
 
+    /// Where the "vs" branch came from (pull request, project, default).
+    public func baseSource(for sessionID: UUID) -> BaseSource? {
+        try? sessionChanges[sessionID]?.git?.get().baseSource
+    }
+
+    /// Branches to offer as the project's comparison branch.
+    public func branches(for sessionID: UUID) async -> [String] {
+        guard let session = state.workspace.session(sessionID) else { return [] }
+        return await GitChanges.branches(directory: session.workingDirectory, runner: changesRunner, git: gitExecutable)
+    }
+
+    /// The session's pull request via `gh pr view`, cached for a few minutes.
+    /// Skipped when gh isn't installed or isn't signed in.
+    func pullRequest(forDirectory directory: String) async -> GitHubCLI.PullRequest? {
+        switch environment.githubCLI {
+        case .notInstalled, .signedOut: return nil
+        case .unchecked, .signedIn: break
+        }
+        guard let gh = locateGitHubCLI() else { return nil }
+        if let cached = pullRequestCache[directory], now().timeIntervalSince(cached.checked) < AppModel.pullRequestCacheInterval {
+            return cached.pullRequest
+        }
+        let output = await run(GitHubCLI.command(["pr", "view", "--json", "baseRefName,number"], in: directory, gh: gh),
+                               logOnlyChanges: true, changeKey: "gh-pr|\(directory)")
+        let pullRequest = output.exitCode == 0 ? GitHubCLI.parsePullRequest(output.output) : nil
+        pullRequestCache[directory] = (pullRequest, now())
+        return pullRequest
+    }
+
     /// Why "vs main" can't be shown, if it can't.
     public func baseUnavailableReason(for sessionID: UUID) -> String? {
         guard case .failure(let error)? = sessionChanges[sessionID]?.git else { return nil }
@@ -126,7 +155,14 @@ extension AppModel {
         let sessionResult = await Task.detached(priority: .utility) {
             SessionChanges.compute(baselines: cache.baselines(files: files), workingDirectory: directory, read: SessionChanges.readFile)
         }.value
-        let gitResult = await GitChanges.load(directory: directory, runner: changesRunner, git: gitExecutable)
+        var preferred: [PreferredBase] = []
+        if let pullRequest = await pullRequest(forDirectory: directory) {
+            preferred.append(PreferredBase(branch: pullRequest.base, source: .pullRequest(pullRequest.number)))
+        }
+        if let branch = state.workspace.project(session.projectID)?.comparisonBranch {
+            preferred.append(PreferredBase(branch: branch, source: .project))
+        }
+        let gitResult = await GitChanges.load(directory: directory, runner: changesRunner, git: gitExecutable, preferred: preferred)
 
         var updated = sessionChanges[sessionID] ?? SessionChangeState()
         if updated.git != gitResult { updated.gitDiffs = [:] }

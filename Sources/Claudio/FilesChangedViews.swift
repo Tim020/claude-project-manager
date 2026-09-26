@@ -89,14 +89,53 @@ struct ScopeToggle: View {
     let session: Session
     var fillWidth = true
 
+    @State private var branches: [String] = []
+
     var body: some View {
         HStack(spacing: 0) {
             segment("This Session", scope: .session, reason: nil)
             segment("vs \(model.baseName(for: session.id))", scope: .base, reason: model.baseUnavailableReason(for: session.id))
+            if model.baseUnavailableReason(for: session.id) != .some("This session's folder isn't in a git repository.") {
+                branchMenu
+            }
         }
         .font(DS.font(12))
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+        .task(id: session.id) { branches = await model.branches(for: session.id) }
+    }
+
+    /// Chooses the branch "vs" compares against, for the whole project. A
+    /// session's pull request base, when gh can find it, still comes first.
+    private var branchMenu: some View {
+        let chosen = model.workspace.project(session.projectID)?.comparisonBranch
+        return Menu {
+            if case .pullRequest(let number)? = model.baseSource(for: session.id) {
+                Text("Using pull request #\(number)'s base: \(model.baseName(for: session.id))")
+            }
+            Section("Compare this project against") {
+                Button { model.setComparisonBranch(nil, for: session.projectID) } label: {
+                    if chosen == nil { Label("Repository default", systemImage: "checkmark") } else { Text("Repository default") }
+                }
+                ForEach(branches, id: \.self) { branch in
+                    Button { model.setComparisonBranch(branch, for: session.projectID) } label: {
+                        if chosen == branch { Label(branch, systemImage: "checkmark") } else { Text(branch) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.muted)
+                .padding(.horizontal, 6)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .overlay(alignment: .leading) { VerticalRule() }
+        .help("Choose the branch to compare against")
     }
 
     private func segment(_ title: String, scope: ChangesScope, reason: String?) -> some View {
@@ -114,7 +153,8 @@ struct ScopeToggle: View {
         .disabled(reason != nil)
         .help(reason ?? (scope == .session
             ? "Files this session's Edit and Write tool calls changed"
-            : "A git diff of this session's folder against \(model.baseName(for: session.id))"))
+            : "A git diff of this session's folder against \(model.baseName(for: session.id))"
+                + (model.baseSource(for: session.id).map { ": \($0.explanation)" } ?? "")))
     }
 }
 

@@ -337,6 +337,11 @@ public struct ProcessCommandRunner: CommandRunning {
         process.executableURL = URL(fileURLWithPath: command.executable)
         process.arguments = command.arguments
         process.environment = command.environment
+        // Tools like gh find the repository from the current directory.
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: command.workingDirectory, isDirectory: &isDirectory), isDirectory.boolValue {
+            process.currentDirectoryURL = URL(fileURLWithPath: command.workingDirectory)
+        }
         let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr

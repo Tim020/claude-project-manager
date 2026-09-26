@@ -50,6 +50,12 @@ public struct Workspace: Codable, Equatable, Sendable {
         sessions(in: group).filter { openTabIDs.contains($0.id) }
     }
 
+    /// Replaces a project's settings (matched by id).
+    public mutating func replaceProject(_ project: Project) {
+        guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+        projects[index] = project
+    }
+
     public mutating func openTab(_ sessionID: UUID) {
         guard session(sessionID) != nil, !openTabIDs.contains(sessionID) else { return }
         openTabIDs.append(sessionID)

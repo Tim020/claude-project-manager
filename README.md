@@ -26,7 +26,12 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Tabs or Split.** Sessions you open become tabs, across any folders and projects (like a browser); when they come from different folders each tab shows its folder. Split shows up to four open tabs side by side. Toggle in the header, or with ⌥⌘1 / ⌥⌘2. Close tabs with × or ⌘W; a closed tab's session keeps running. Right-click a tab for Close Other Tabs, Close Tabs to the Left / Right, Close Completed Tabs and Close All Tabs.
 - **Files Changed** (design 4a + 4b). Two scopes, switched in either view:
   - **This Session:** files the session's own Edit and Write tool calls changed (including its subagents'). Each file is compared from its state when the session first touched it to what's on disk now, so it works outside git.
-  - **vs main:** a git diff of the session's folder or worktree against where it branched from the main branch (`origin/HEAD`, else `main`/`master`), including uncommitted and untracked files.
+  - **vs main:** a git diff of the session's folder or worktree against where it branched from its base branch, including uncommitted and untracked files. The base is, in order:
+    1. the base branch of the session's open pull request, found with the GitHub CLI (`gh pr view`, cached for 5 minutes) when `gh` is installed and signed in;
+    2. the branch chosen for the project in the ▾ menu next to "vs";
+    3. the repository's default branch (`origin/HEAD`, else `main`/`master`).
+
+    The button shows the branch ("vs dev"), and its tooltip says where it came from.
 
   The header's **Files +a −d** button (⌥⌘F) opens an inspector beside the terminal. It groups files by folder, with coloured A/M/D/R letters, and clicking a file shows a preview of its diff with Open Full Diff, Open in Editor and Reveal in Finder. The **Terminal / Changes** switch in the tab strip (⌥⌘C) swaps the pane for the Changes view: a filterable file list and the selected file's full diff with line numbers. Lists refresh after each tool call, and every 15 seconds for the selected session.
 - **Context window.** Each session's header (and split pane) shows how full its context window is: teal, then orange from 60%, red from 85%. Sessions started or resumed in Claudio report it exactly through Claude Code's status line. For other sessions it's estimated from the token counts in their history, shown with a `~` and a fainter bar. History doesn't record the window size, so the estimate assumes 200k until usage passes that (or the model is a `[1m]` one).
@@ -61,6 +66,8 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - that Claude Code is installed and runs (`claude --version`)
   - that you're signed in (`claude auth status`)
   - that it supports background agents (`claude agents`)
+
+  The checklist also shows the GitHub CLI as an optional tool, with Install (Homebrew, or its download page) and Sign In (`gh auth login`). It's never counted as a problem.
 
   If something's wrong, a setup sheet lists each check with a fix: **Install** (Claude Code's install script), **Sign In** (`claude auth login`), **Update** (`claude update`) or **Choose…** (point Claudio at the executable). Fixes run in a terminal inside the sheet and everything is checked again when it exits. Other problems show as a banner at the bottom of the window. Without a working, signed-in Claude Code you can still browse sessions and history; starting or resuming a session opens the setup sheet instead. Without background agents, new sessions run directly in their tab. The same checklist is in Settings → General, and File → Claude Code Setup… opens the sheet. Account details from `claude auth status` aren't written to the Activity Log.
 - **Folder access up front.** macOS asks before an app reads Documents, Desktop, Downloads, iCloud Drive or another volume, and there's no way to request that ahead of time. So at launch Claudio reads one project in each of those places, and any prompts appear together at startup instead of in the middle of an action.

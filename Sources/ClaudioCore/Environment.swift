@@ -85,6 +85,16 @@ public struct ClaudeEnvironment: Equatable, Sendable {
     /// 2.0 and 1.x reject `--json`). Checked against each release on npm.
     public static let minimumVersion = ClaudeVersion(2, 1, 169)
 
+    /// The GitHub CLI: optional, so never a problem; used for pull request
+    /// base branches.
+    public enum GitHubCLIState: Equatable, Sendable {
+        case unchecked
+        case notInstalled
+        case signedOut(path: String)
+        case signedIn(path: String, account: String?)
+    }
+
+    public var githubCLI: GitHubCLIState = .unchecked
     public var install: Install = .unchecked
     public var signIn: SignIn = .unchecked
     public var agents: Agents = .unchecked
@@ -140,6 +150,7 @@ public struct ClaudeEnvironment: Equatable, Sendable {
 
 public enum EnvironmentFix: String, Sendable {
     case install, signIn, update, chooseExecutable
+    case installGitHubCLI, signInGitHubCLI
 }
 
 public enum EnvironmentProblem: Equatable, Sendable, Identifiable {

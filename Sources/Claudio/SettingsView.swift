@@ -154,7 +154,13 @@ private struct GeneralSettings: View {
             let checks = EnvironmentCheck.rows(for: model.environment, home: model.home)
             ForEach(checks) { check in
                 EnvironmentCheckRow(check: check, isChecking: model.isCheckingEnvironment) { fix in
-                    if fix == .chooseExecutable { choose() } else { runningFix = FixRequest(fix: fix) }
+                    if fix == .chooseExecutable {
+                        choose()
+                    } else if fix == .installGitHubCLI && model.fixLaunch(for: fix) == nil {
+                        NSWorkspace.shared.open(GitHubCLI.installURL)
+                    } else {
+                        runningFix = FixRequest(fix: fix)
+                    }
                 }
                 .padding(.horizontal, 2)
                 Rectangle().fill(SettingsStyle.separator).frame(height: 1).padding(.horizontal, 16)

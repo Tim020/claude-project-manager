@@ -55,6 +55,11 @@ These were verified against real CLI output, which is recorded in `Tests/Claudio
 - **`claude auth status --json`** exits 1 when signed out but still prints JSON with `loggedIn: false`. `claude auth login` signs in (Console / API-key sign-in is tracked in issue #1).
 - **Background agents live in `<repo>/.claude/worktrees/<name>`.** Their history directories are prefixed `<encoded repo>--claude-worktrees-`, and they're grouped under the repository's project.
 
+**Other tools.**
+- `git` is read-only here: it runs with `GIT_OPTIONAL_LOCKS=0`.
+- `gh` is optional. Its signed-out output was recorded from gh 2.63.2. The signed-in `auth status` wording is taken from known formats, not recorded, because this environment has no real token.
+- Files Changed's "vs" branch comes from, in order: the PR's base (`gh pr view --json baseRefName,number`, cached for 5 minutes), then `Project.comparisonBranch`, then `origin/HEAD` or `main`/`master` (`GitChanges.load(preferred:)`).
+
 To check CLI behaviour without touching the user's setup, install it in a container:
 
 ```sh

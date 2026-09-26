@@ -57,6 +57,22 @@ struct EnvironmentCheck: Identifiable {
                                          state: .unknown, fix: .signIn, fixTitle: "Sign In…"))
         }
 
+        switch environment.githubCLI {
+        case .unchecked:
+            break
+        case .notInstalled:
+            rows.append(EnvironmentCheck(id: "gh", title: "GitHub CLI (optional)",
+                                         detail: "With gh signed in, “vs” compares against your pull request's base branch.",
+                                         state: .unknown, fix: .installGitHubCLI, fixTitle: "Install…"))
+        case .signedOut:
+            rows.append(EnvironmentCheck(id: "gh", title: "GitHub CLI isn't signed in (optional)",
+                                         detail: "Sign in so “vs” can compare against your pull request's base branch.",
+                                         state: .unknown, fix: .signInGitHubCLI, fixTitle: "Sign In…"))
+        case .signedIn(_, let account):
+            rows.append(EnvironmentCheck(id: "gh", title: "GitHub CLI", detail: account.map { "Signed in as \($0)" } ?? "Signed in",
+                                         state: .ok, fix: nil, fixTitle: nil))
+        }
+
         switch environment.agents {
         case .unchecked:
             rows.append(EnvironmentCheck(id: "agents", title: "Background agents", detail: "Not checked yet", state: .unknown, fix: nil, fixTitle: nil))
@@ -221,7 +237,11 @@ struct SetupSheet: View {
             chooseExecutable()
             return
         }
-        guard let launch = model.fixLaunch(for: fix) else { return }
+        guard let launch = model.fixLaunch(for: fix) else {
+            // No Homebrew to install gh with: its download page instead.
+            if fix == .installGitHubCLI { NSWorkspace.shared.open(GitHubCLI.installURL) }
+            return
+        }
         exitCode = nil
         runID = UUID()
         running = launch

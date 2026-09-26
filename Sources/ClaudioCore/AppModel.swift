@@ -150,6 +150,10 @@ public final class AppModel {
     @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let runner: CommandRunning
     @ObservationIgnored private let locateClaude: (String?) -> String?
+    @ObservationIgnored let locateGitHubCLI: () -> String?
+    /// `gh pr view` results per folder (nil: no pull request), briefly cached.
+    @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
+    public static let pullRequestCacheInterval: TimeInterval = 300
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored private let shell: String
     @ObservationIgnored let now: () -> Date
@@ -164,6 +168,7 @@ public final class AppModel {
         runner: CommandRunning = ProcessCommandRunner(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
+        locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
         shell: String = ClaudeExecutableLocator.defaultShell(),
         now: @escaping () -> Date = Date.init,
@@ -180,6 +185,7 @@ public final class AppModel {
         self.runner = runner
         self.gitExecutable = git
         self.locateClaude = locateClaude
+        self.locateGitHubCLI = locateGitHubCLI
         self.isGitRepository = isGitRepository
         self.shell = shell
         self.now = now
@@ -357,6 +363,7 @@ public final class AppModel {
 
         var result = ClaudeEnvironment()
         result.checkedAt = now()
+        result.githubCLI = await checkGitHubCLI()
         guard let executable = locateClaude(state.settings.claudePath), let commands = agentCommands(reportErrors: false) else {
             result.install = .notFound
             publish(result)
@@ -399,6 +406,16 @@ public final class AppModel {
         if result != environment { environment = result }
     }
 
+    /// `gh auth status` (account names stay out of the log).
+    private func checkGitHubCLI() async -> ClaudeEnvironment.GitHubCLIState {
+        guard let gh = locateGitHubCLI() else { return .notInstalled }
+        let status = await run(GitHubCLI.command(["auth", "status"], in: home, gh: gh), hideOutput: true)
+        switch GitHubCLI.parseAuthStatus(status.output + "\n" + status.errorOutput) {
+        case .signedIn(let account): return .signedIn(path: gh, account: account)
+        case .signedOut: return .signedOut(path: gh)
+        }
+    }
+
     /// The command that fixes a problem, run in a terminal so its output
     /// and any prompts show. `chooseExecutable` is handled by the UI.
     public func fixLaunch(for fix: EnvironmentFix) -> TerminalLaunch? {
@@ -411,6 +428,15 @@ public final class AppModel {
             return agentCommands(reportErrors: false)?.signIn()
         case .chooseExecutable:
             return nil
+        case .installGitHubCLI:
+            // Homebrew if there is one; otherwise the UI opens cli.github.com.
+            guard ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].contains(where: FileManager.default.isExecutableFile(atPath:)) else { return nil }
+            return TerminalLaunch.script("brew install gh", workingDirectory: home, shell: shell)
+        case .signInGitHubCLI:
+            guard let gh = locateGitHubCLI() else { return nil }
+            var launch = TerminalLaunch.script("exec \(ShellQuote.quote(gh)) auth login", workingDirectory: home, shell: shell)
+            launch.label = "gh auth login"
+            return launch
         }
     }
 
@@ -718,6 +744,16 @@ public final class AppModel {
             if session.claudeTitle == session.name { pendingTitlePushes.remove(id); continue }
             pushTitle(id)
         }
+    }
+
+    /// Sets the branch "vs" compares against for a project's sessions without
+    /// a pull request (nil: the repository's default branch).
+    public func setComparisonBranch(_ branch: String?, for projectID: UUID) {
+        guard var project = state.workspace.project(projectID), project.comparisonBranch != branch else { return }
+        project.comparisonBranch = branch
+        state.workspace.replaceProject(project)
+        save()
+        for session in state.workspace.sessions where session.projectID == projectID { markChangesDirty(session.id) }
     }
 
     public func setRole(_ id: UUID, to role: SessionRole) {
@@ -1049,7 +1085,7 @@ public final class AppModel {
 
     /// Runs a CLI command off the main actor and records it in the log.
     /// Polling commands are only logged when their output changes or they fail.
-    private func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents",
+    func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents",
                      hideOutput: Bool = false) async -> CommandResult {
         let started = Date()
         let result = await runner.run(command)

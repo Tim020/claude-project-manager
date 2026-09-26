@@ -193,6 +193,9 @@ public struct Project: Identifiable, Codable, Equatable, Sendable {
     public var isCollapsed: Bool
     /// Whether the project's Unfiled group is collapsed in the sidebar.
     public var isUnfiledCollapsed: Bool
+    /// The branch "vs main" compares against when a session has no pull
+    /// request to say; nil for the repository's default branch.
+    public var comparisonBranch: String?
 
     public init(id: UUID = UUID(), name: String, path: String, folders: [Folder] = [], isCollapsed: Bool = false,
                 isUnfiledCollapsed: Bool = false) {
@@ -212,6 +215,7 @@ public struct Project: Identifiable, Codable, Equatable, Sendable {
                   folders: try c.decodeIfPresent([Folder].self, forKey: .folders) ?? [],
                   isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
                   isUnfiledCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isUnfiledCollapsed) ?? false)
+        comparisonBranch = try c.decodeIfPresent(String.self, forKey: .comparisonBranch)
     }
 }
 
