@@ -27,12 +27,97 @@ public struct UsageWindow: Equatable, Sendable {
     }
 }
 
+/// Usage credits ("extra usage"): pay-as-you-go spend that Claude Code draws
+/// on once a plan limit is reached, if the account has it turned on.
+public struct UsageCredits: Equatable, Sendable {
+    public var isEnabled: Bool
+    /// Amounts are in the currency's minor units (pence, cents), as reported.
+    public var monthlyLimit: Double?
+    public var usedCredits: Double?
+    /// Percentage of the monthly limit spent.
+    public var utilization: Double?
+    public var currency: String?
+
+    public init(isEnabled: Bool, monthlyLimit: Double?, usedCredits: Double?, utilization: Double?, currency: String?) {
+        self.isEnabled = isEnabled
+        self.monthlyLimit = monthlyLimit
+        self.usedCredits = usedCredits
+        self.utilization = utilization
+        self.currency = currency
+    }
+
+    private var usedPercentage: Double? {
+        if let utilization { return utilization }
+        guard let usedCredits, let monthlyLimit, monthlyLimit > 0 else { return nil }
+        return usedCredits / monthlyLimit * 100
+    }
+
+    public var fraction: Double { min(1, max(0, (usedPercentage ?? 0) / 100)) }
+
+    /// The monthly limit is spent, so nothing is left to fall back on.
+    public var isExhausted: Bool { (usedPercentage ?? 0) >= 100 }
+
+    /// "£12.50 of £50.00", or a percentage when there's no currency to format.
+    public func amountLabel(locale: Locale = .current) -> String {
+        guard let currency, let usedCredits else { return usedPercentage.map { "\(Int($0.rounded(.down)))% used" } ?? "" }
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        // Minor units per major unit follow the currency (2 digits for GBP, 0
+        // for JPY). Set explicitly: Linux Foundation keeps 2 for every currency.
+        let digits = UsageCredits.fractionDigits(currency)
+        formatter.minimumFractionDigits = digits
+        formatter.maximumFractionDigits = digits
+        let scale = pow(10, Double(digits))
+        func format(_ minor: Double) -> String {
+            formatter.string(from: NSNumber(value: minor / scale)) ?? "\(minor / scale) \(currency)"
+        }
+        guard let monthlyLimit else { return "\(format(usedCredits)) used" }
+        return "\(format(usedCredits)) of \(format(monthlyLimit))"
+    }
+
+    /// ISO 4217 minor-unit digits; most currencies have 2.
+    static func fractionDigits(_ currency: String) -> Int {
+        switch currency.uppercased() {
+        case "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF": return 0
+        case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND": return 3
+        default: return 2
+        }
+    }
+}
+
 /// Plan usage as Claude Code reports it to status line commands.
 public struct UsageSnapshot: Equatable, Sendable {
     public var fiveHour: UsageWindow?
     public var sevenDay: UsageWindow?
     public var subscriptionType: String?
     public var updatedAt: Date
+    /// Only `claude /usage` reports these; status line input doesn't.
+    public var credits: UsageCredits? = nil
+    /// `claude /usage` said "You are currently using your overages". Only a
+    /// positive signal: in `-p` mode it hasn't asked the API, so it can say
+    /// "subscription" while credits are in use.
+    public var reportsUsingCredits = false
+
+    /// A plan window is full, so Claude Code is either on credits or blocked.
+    public var isAtPlanLimit: Bool {
+        [fiveHour, sevenDay].contains { ($0?.usedPercentage ?? 0) >= 100 }
+    }
+
+    /// Claude Code is drawing on usage credits instead of the plan's limits.
+    /// Worked out from the windows because the status line, which updates
+    /// them live, has no overage field.
+    public var isUsingCredits: Bool {
+        guard let credits, credits.isEnabled, !credits.isExhausted else { return false }
+        return isAtPlanLimit || reportsUsingCredits
+    }
+
+    /// A plan limit is reached and the month's usage credits are spent too.
+    public var isOutOfCredits: Bool {
+        guard let credits, credits.isEnabled else { return false }
+        return isAtPlanLimit && credits.isExhausted
+    }
 
     /// Parses a status line input (`rate_limits.five_hour` / `seven_day`).
     public static func parse(_ data: Data, updatedAt: Date) -> UsageSnapshot? {
@@ -65,7 +150,68 @@ extension UsageSnapshot {
             let window = UsageWindow(usedPercentage: percent, resetsAt: nil, resetText: reset)
             if line[titleRange] == "Current session" { snapshot.fiveHour = window } else { snapshot.sevenDay = window }
         }
+        snapshot.reportsUsingCredits = output.contains("currently using your overages")
         return snapshot.fiveHour == nil && snapshot.sevenDay == nil ? nil : snapshot
+    }
+
+    /// Parses `claude -p /usage --output-format stream-json --verbose`. Its
+    /// `usage_report` has exact reset times and usage credits, which the text
+    /// doesn't show. Falls back to the text when there's no report.
+    public static func parseUsageStream(_ output: String, updatedAt: Date) -> UsageSnapshot? {
+        var report: JSONValue?
+        var text: String?
+        for line in output.split(separator: "\n") {
+            guard line.hasPrefix("{"), let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else { continue }
+            if let value = event["usage_report"], value["rate_limits"] != nil { report = value }
+            if event["type"]?.stringValue == "result", let result = event["result"]?.stringValue { text = result }
+        }
+        guard let report else { return text.flatMap { parseUsageCommand($0, updatedAt: updatedAt) } }
+
+        var snapshot = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: updatedAt)
+        let limits = report["rate_limits"]
+        for limit in limits?["limits"]?.arrayValue ?? [] {
+            guard let percent = limit["percent"]?.doubleValue else { continue }
+            let window = UsageWindow(usedPercentage: percent, resetsAt: limit["resets_at"]?.stringValue.flatMap(parseResetDate))
+            switch limit["kind"]?.stringValue {
+            case "session": snapshot.fiveHour = window
+            case "weekly_all": snapshot.sevenDay = window
+            default: break
+            }
+        }
+        if let extra = limits?["extra_usage"], let enabled = extra["is_enabled"]?.boolValue {
+            snapshot.credits = UsageCredits(isEnabled: enabled, monthlyLimit: extra["monthly_limit"]?.doubleValue,
+                                            usedCredits: extra["used_credits"]?.doubleValue,
+                                            utilization: extra["utilization"]?.doubleValue,
+                                            currency: extra["currency"]?.stringValue)
+        }
+        snapshot.reportsUsingCredits = text?.contains("currently using your overages") == true
+        if snapshot.fiveHour == nil && snapshot.sevenDay == nil {
+            guard var fallback = text.flatMap({ parseUsageCommand($0, updatedAt: updatedAt) }) else { return nil }
+            fallback.credits = snapshot.credits
+            return fallback
+        }
+        return snapshot
+    }
+
+    /// The human-readable `/usage` text inside stream-json output, for the
+    /// Activity Log: the report itself has account details (credit spend).
+    public static func usageText(fromStream output: String) -> String {
+        for line in output.split(separator: "\n") where line.hasPrefix("{") {
+            if let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+               event["type"]?.stringValue == "result", let result = event["result"]?.stringValue {
+                return result
+            }
+        }
+        return ""
+    }
+
+    /// "2026-09-27T03:49:59.519416+00:00". Fractional seconds are dropped:
+    /// Linux Foundation's ISO 8601 parsing doesn't take microseconds.
+    static func parseResetDate(_ text: String) -> Date? {
+        let whole = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: whole)
     }
 }
 

@@ -671,7 +671,13 @@ private struct UsageSection: View {
                         .kerning(0.6)
                         .foregroundStyle(DS.dim)
                     Spacer()
-                    if let plan = usage?.subscriptionType {
+                    if let usage, usage.isUsingCredits {
+                        badge("USING CREDITS", DS.orange)
+                            .help("A plan limit is reached, so Claude Code is drawing on your usage credits")
+                    } else if let usage, usage.isOutOfCredits {
+                        badge("OUT OF CREDITS", DS.red)
+                            .help("A plan limit is reached and this month's usage credits are spent")
+                    } else if let plan = usage?.subscriptionType {
                         Text(plan.capitalized)
                             .font(DS.font(11, .semibold))
                             .foregroundStyle(DS.dim)
@@ -680,6 +686,9 @@ private struct UsageSection: View {
                 if let usage, usage.fiveHour != nil || usage.sevenDay != nil {
                     if let window = usage.fiveHour { row("Session", window, now: context.date) }
                     if let window = usage.sevenDay { row("Week", window, now: context.date) }
+                    if let credits = usage.credits, credits.isEnabled {
+                        creditsRow(credits, inUse: usage.isUsingCredits)
+                    }
                 } else {
                     Text("Checking plan usage… (needs a Claude plan sign-in)")
                         .font(DS.font(11.5))
@@ -716,6 +725,41 @@ private struct UsageSection: View {
             }
             .frame(height: 4)
         }
+    }
+
+    private func badge(_ text: String, _ color: Color) -> some View {
+        Text(text)
+            .font(DS.font(9.5, .extraBold))
+            .kerning(0.4)
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(color.opacity(0.15)))
+    }
+
+    /// This month's usage credit spend. Muted until Claude Code is drawing on it.
+    private func creditsRow(_ credits: UsageCredits, inUse: Bool) -> some View {
+        let color: Color = credits.isExhausted ? DS.red : inUse ? DS.orange : DS.dim
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text("Credits")
+                    .font(DS.font(12, .semibold))
+                    .foregroundStyle(DS.muted)
+                Spacer(minLength: 4)
+                Text(credits.amountLabel())
+                    .font(DS.font(11.5, inUse ? .bold : .regular))
+                    .foregroundStyle(inUse || credits.isExhausted ? color : DS.dim)
+                    .lineLimit(1)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(DS.border)
+                    Capsule().fill(color).frame(width: geometry.size.width * credits.fraction)
+                }
+            }
+            .frame(height: 4)
+        }
+        .help("Usage credits spent this month. Claude Code uses them once a plan limit is reached.")
     }
 
     private func color(_ window: UsageWindow) -> Color {

@@ -40,7 +40,7 @@ swift run Claudio                             # run from the package (no notific
 2. **`claude agents --json --all`** (every 3 s), applied by `apply(_:)`. A session stays linked to the agent it's attached to; only unclaimed sessions are matched by conversation id.
 3. **History files** in `~/.claude/projects/<cwd with non-alphanumerics → '-'>/<sessionId>.jsonl`, read by `SessionDiscovery` in the background (cached by mtime and size) every 30 s. They give titles, summaries, PR links, context estimates and imported sessions. They must never override the status of a session that's live (a terminal here, or a running agent). See `liveSessionIDs`.
 
-The status line (`StatusLineCapture`) records `rate_limits` and `context_window` per session. Plan usage is also read at launch with `claude -p /usage`, which makes no model call.
+The status line (`StatusLineCapture`) records `rate_limits` and `context_window` per session. Plan usage is also read at launch with `claude -p /usage --output-format stream-json --verbose`, which makes no model call. Its assistant event carries a `usage_report` with `limits[]` (exact `resets_at`) and `extra_usage` (usage credits, in minor units); the plain text has neither. The status line has no credits or overage flag, so "using credits" is worked out from a window at 100% plus credits enabled (`UsageSnapshot.isUsingCredits`). In `-p` mode the text's "using your overages" header isn't reliable, because it hasn't asked the API.
 
 **Observation churn.** Polling runs constantly, so mutate a copy and assign only when it differs; don't write to observed state on every tick. The menu bar reads only `menuFlags`, to stop menus redrawing.
 

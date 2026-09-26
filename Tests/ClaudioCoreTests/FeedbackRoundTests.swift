@@ -28,7 +28,7 @@ final class UsageCommandTests: XCTestCase {
     func testUsageCommand() {
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/h")
         let command = commands.usage()
-        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--no-session-persistence"])
+        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
         XCTAssertEqual(command.arguments.first, "-c", "no login shell for a periodic check")
     }
 }
@@ -91,7 +91,7 @@ final class SessionStatusCaptureTests: XCTestCase {
 
     func testModelRefreshesUsageFromTheUsageCommand() async throws {
         let runner = FakeRunner()
-        runner.usageOutput = "Current session: 12% used · resets 5pm\nCurrent week (all models): 3% used\n"
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
         let model = try await MainActor.run {
             AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                      hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
@@ -99,8 +99,9 @@ final class SessionStatusCaptureTests: XCTestCase {
         }
         await model.refreshUsage()
         await MainActor.run {
-            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 12)
-            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 3)
+            XCTAssertEqual(model.usage?.fiveHour?.usedPercentage, 5)
+            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42)
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250)
         }
     }
 }

@@ -220,8 +220,10 @@ public struct AgentCommands: Sendable {
     /// Polled every few seconds, so it skips the login shell (sourcing shell
     /// profiles each time is slow); PATH still includes claude's directory.
     /// Plan usage without a model call (`/usage` runs locally in print mode).
+    /// Stream JSON carries a `usage_report` with usage credits and exact reset
+    /// times; the plain text has neither.
     public func usage() -> TerminalLaunch {
-        command(["-p", "/usage", "--no-session-persistence"], in: home, login: false)
+        command(["-p", "/usage", "--output-format", "stream-json", "--verbose", "--no-session-persistence"], in: home, login: false)
     }
 
     /// `claude --version`: "2.1.283 (Claude Code)".

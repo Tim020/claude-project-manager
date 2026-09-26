@@ -84,3 +84,95 @@ final class UsageTests: XCTestCase {
         }
     }
 }
+
+/// `claude -p /usage --output-format stream-json --verbose`, recorded from
+/// 2.1.283 (ids and credit amounts changed, hook and behaviour lines trimmed).
+final class UsageCreditsTests: XCTestCase {
+    let now = Date(timeIntervalSince1970: 1_790_380_000)
+
+    func testParsesTheUsageReport() throws {
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(try Fixtures.string("usage-stream.jsonl"), updatedAt: now))
+        XCTAssertEqual(usage.fiveHour?.usedPercentage, 5)
+        XCTAssertEqual(usage.fiveHour?.resetsAt, Date(timeIntervalSince1970: 1_790_480_999), "2026-09-27T03:49:59Z")
+        XCTAssertEqual(usage.sevenDay?.usedPercentage, 42)
+        XCTAssertEqual(usage.sevenDay?.resetsAt, Date(timeIntervalSince1970: 1_790_571_599))
+        XCTAssertEqual(usage.credits, UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP"))
+        XCTAssertFalse(usage.reportsUsingCredits)
+        XCTAssertFalse(usage.isUsingCredits, "no plan limit is reached")
+        XCTAssertEqual(usage.updatedAt, now)
+    }
+
+    func testFallsBackToTheTextWithoutAReport() throws {
+        let text = "You are currently using your overages to power your Claude Code usage. We will automatically switch you back to your subscription rate limits when they reset\n\nCurrent session: 100% used · resets 5pm"
+        let data = try JSONEncoder().encode(JSONValue.object(["type": .string("result"), "result": .string(text)]))
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(String(decoding: data, as: UTF8.self), updatedAt: now))
+        XCTAssertEqual(usage.fiveHour?.usedPercentage, 100)
+        XCTAssertTrue(usage.reportsUsingCredits)
+        XCTAssertNil(usage.credits)
+        XCTAssertFalse(usage.isUsingCredits, "credits aren't known to be enabled")
+        XCTAssertNil(UsageSnapshot.parseUsageStream("Current session: 5% used", updatedAt: now), "plain text isn't stream JSON")
+    }
+
+    func testUsingCreditsOnceAPlanLimitIsReached() {
+        let enabled = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
+        func snapshot(week: Double, credits: UsageCredits?) -> UsageSnapshot {
+            UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 30, resetsAt: nil),
+                          sevenDay: UsageWindow(usedPercentage: week, resetsAt: nil), subscriptionType: nil, updatedAt: now, credits: credits)
+        }
+        XCTAssertTrue(snapshot(week: 100, credits: enabled).isUsingCredits)
+        XCTAssertFalse(snapshot(week: 99, credits: enabled).isUsingCredits)
+        XCTAssertFalse(snapshot(week: 100, credits: nil).isUsingCredits)
+        var disabled = enabled
+        disabled.isEnabled = false
+        XCTAssertFalse(snapshot(week: 100, credits: disabled).isUsingCredits)
+        XCTAssertFalse(snapshot(week: 100, credits: disabled).isOutOfCredits)
+
+        let spent = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 5000, utilization: 100, currency: "GBP")
+        XCTAssertFalse(snapshot(week: 100, credits: spent).isUsingCredits)
+        XCTAssertTrue(snapshot(week: 100, credits: spent).isOutOfCredits)
+        XCTAssertFalse(snapshot(week: 50, credits: spent).isOutOfCredits, "the plan still has room")
+
+        var reported = snapshot(week: 50, credits: enabled)
+        reported.reportsUsingCredits = true
+        XCTAssertTrue(reported.isUsingCredits)
+    }
+
+    func testCreditAmounts() {
+        let gbp = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
+        XCTAssertEqual(gbp.amountLabel(locale: Locale(identifier: "en_GB")), "£12.50 of £50.00")
+        XCTAssertEqual(gbp.fraction, 0.25)
+        let yen = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1200, utilization: nil, currency: "JPY")
+        XCTAssertTrue(yen.amountLabel(locale: Locale(identifier: "en_US")).contains("1,200"), "JPY has no minor unit")
+        XCTAssertEqual(yen.fraction, 0.24, accuracy: 0.0001)
+        XCTAssertEqual(UsageCredits(isEnabled: true, monthlyLimit: nil, usedCredits: nil, utilization: 40, currency: nil).amountLabel(), "40% used")
+    }
+
+    func testStatusLineUpdatesKeepCredits() async throws {
+        let dir = try makeTemporaryDirectory()
+        let usageFile = dir.appendingPathComponent("usage.json")
+        let runner = FakeRunner()
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
+        // `/usage` ran long ago, so the status line file (dated now) is newer.
+        let model = await MainActor.run {
+            AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: dir),
+                     hookEventsURL: dir.appendingPathComponent("h.log"), usageURL: usageFile, runner: runner,
+                     locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh",
+                     now: { Date(timeIntervalSince1970: 1_000_000_000) }, home: "/")
+        }
+        await model.refreshUsage()
+        try await MainActor.run {
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250)
+            XCTAssertFalse(model.usage?.isUsingCredits ?? true)
+
+            try #"{"rate_limits":{"seven_day":{"used_percentage":100,"resets_at":1790571600}}}"#.write(to: usageFile, atomically: true, encoding: .utf8)
+            model.pollUsage()
+            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 100)
+            XCTAssertEqual(model.usage?.credits?.usedCredits, 1250, "the status line has no credits")
+            XCTAssertTrue(model.usage?.isUsingCredits ?? false)
+
+            let logged = model.log.entries.compactMap(\.detail).joined()
+            XCTAssertTrue(logged.contains("Current week (all models): 42% used"))
+            XCTAssertFalse(logged.contains("used_credits"), "credit spend stays out of the Activity Log")
+        }
+    }
+}

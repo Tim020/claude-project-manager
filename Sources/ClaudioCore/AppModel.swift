@@ -1236,16 +1236,18 @@ public final class AppModel {
 
     /// Runs a CLI command off the main actor and records it in the log.
     /// Polling commands are only logged when their output changes or they fail.
+    /// `loggedOutput` picks what of stdout is logged and compared.
     func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents",
-                     hideOutput: Bool = false) async -> CommandResult {
+             hideOutput: Bool = false, loggedOutput: (String) -> String = { $0 }) async -> CommandResult {
         let started = Date()
         let result = await runner.run(command)
-        let changed = lastOutputs[changeKey] != result.output
-        if logOnlyChanges { lastOutputs[changeKey] = result.output }
+        let output = loggedOutput(result.output)
+        let changed = lastOutputs[changeKey] != output
+        if logOnlyChanges { lastOutputs[changeKey] = output }
         if !logOnlyChanges || changed || result.exitCode != 0 {
             let milliseconds = Int(Date().timeIntervalSince(started) * 1000)
             var detail = "exit \(result.exitCode) · \(milliseconds) ms · in \(command.workingDirectory)"
-            for (label, text) in hideOutput ? [] : [("stdout", result.output), ("stderr", result.errorOutput)] {
+            for (label, text) in hideOutput ? [] : [("stdout", output), ("stderr", result.errorOutput)] {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { detail += "\n\(label):\n" + String(trimmed.prefix(4000)) }
             }
@@ -1508,8 +1510,11 @@ public final class AppModel {
     /// it works before any session has run.
     public func refreshUsage() async {
         guard environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
-        let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage")
-        if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageCommand(result.output, updatedAt: now()) {
+        // Log the text only: the stream's report includes credit spend, and
+        // its ids change every run.
+        let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage",
+                               loggedOutput: UsageSnapshot.usageText(fromStream:))
+        if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
             adopt(snapshot)
         }
     }
@@ -1518,6 +1523,8 @@ public final class AppModel {
         guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
         var merged = snapshot
         if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
+        // Status line input has no credits: keep the last `/usage` figures.
+        if merged.credits == nil { merged.credits = usage?.credits }
         usage = merged
     }
 
