@@ -229,5 +229,23 @@ final class UICommands {
     var showSetup = false
     /// Problems the banner was dismissed for; it comes back when they change.
     var dismissedBannerProblems: [String]?
+    /// The tab being dragged, so a pane knows not to offer docking a tab
+    /// beside itself. Cleared on drop; a cancelled drag leaves it stale, which
+    /// only matters for that one-tab pane.
+    var draggedTabID: UUID?
+    /// The pane a drag is over and where it would land. One for the whole
+    /// window, since panes aren't always told when a drag leaves them.
+    var dropTarget: PaneDropTarget?
+
+    /// A drag finished (dropped anywhere): no pane is a target any more.
+    func endDrag() {
+        draggedTabID = nil
+        dropTarget = nil
+    }
+}
+
+struct PaneDropTarget: Equatable {
+    var groupID: UUID
+    var zone: PaneDropZone
 }
 #endif

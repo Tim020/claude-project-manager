@@ -79,11 +79,9 @@ final class AppModelTests: XCTestCase {
             var state = PersistedState()
             let p = state.workspace.addProject(path: "/code/x")
             try state.workspace.addSession(Session(projectID: p, name: "was running", workingDirectory: "/code/x", status: .working))
-            state.settings.layout = .split
             store.state = state
             let model = try makeModel()
             XCTAssertEqual(model.workspace.projects.map(\.name), ["x"])
-            XCTAssertEqual(model.settings.layout, .split)
             XCTAssertEqual(model.workspace.sessions.first?.status, .completed)
         }
     }
@@ -460,29 +458,125 @@ final class AppModelTests: XCTestCase {
         }
     }
 
-    func testSplitNeedsTwoOpenTabsFromAnywhere() throws {
+    func testTabsDockIntoPanesFromAnywhere() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
             let a = try XCTUnwrap(model.createSession(request(project: p)))
-            XCTAssertFalse(model.canSplit, "one open tab")
             let f = try XCTUnwrap(model.createFolder(in: p))
             let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
-            model.setLayout(.split)
-            XCTAssertTrue(model.canSplit, "tabs from Unfiled and a folder can sit side by side")
-            XCTAssertEqual(model.splitPanes(capacity: 4).map(\.id), [a, b])
+            model.updateMenuFlags()
+            XCTAssertTrue(model.menuFlags.canSplitSelected)
+            model.splitSelectedTab(.right)
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [[a], [b]], "tabs from Unfiled and a folder can sit side by side")
+            XCTAssertEqual(model.selectedSessionID, b)
+            XCTAssertEqual(model.visibleSessionIDs, [a, b])
+            model.updateMenuFlags()
+            XCTAssertFalse(model.menuFlags.canSplitSelected, "a pane's only tab stays put")
         }
     }
 
-    func testSplitPanesPreferRecentlySelected() throws {
+    func testSelectingFocusesThePaneAndClosingTheLastTabClosesIt() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let ids = try (0..<3).map { _ in try XCTUnwrap(model.createSession(request(project: p))) }
+            model.splitTab(ids[0], to: .bottom, of: model.panes.focusedGroupID)
+            let bottom = model.panes.focusedGroupID
+            model.select(ids[1])
+            XCTAssertNotEqual(model.panes.focusedGroupID, bottom)
+            XCTAssertEqual(model.selectedSessionID, ids[1])
+            model.focusPane(bottom)
+            XCTAssertEqual(model.selectedSessionID, ids[0])
+            model.closeTab(ids[0])
+            XCTAssertFalse(model.panes.isSplit)
+            XCTAssertEqual(model.selectedSessionID, ids[1], "focus moves to the remaining pane")
+        }
+    }
+
+    func testDropsThatWouldChangeNothingJustShowTheTab() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let ids = try (0..<3).map { _ in try XCTUnwrap(model.createSession(request(project: p))) }
+            let pane = model.panes.focusedGroupID
+            model.select(ids[0])
+            model.dropTab(ids[0], on: pane, zone: .center)
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [ids], "let go over its own pane: not moved to the end")
+            model.dropTab(ids[2], on: pane, zone: .edge(.right))
+            let right = model.panes.focusedGroupID
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [[ids[0], ids[1]], [ids[2]]])
+            model.select(ids[0])
+            model.dropTab(ids[2], on: right, zone: .edge(.bottom))
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [[ids[0], ids[1]], [ids[2]]], "a pane's only tab on its own edge")
+            XCTAssertEqual(model.selectedSessionID, ids[2], "is shown instead")
+            model.dropTab(ids[1], on: right, zone: .center)
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [[ids[0]], [ids[2], ids[1]]])
+        }
+    }
+
+    func testClosedTabsAreForThePanesOwnFolder() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let f1 = try XCTUnwrap(model.createFolder(in: p))
+            let f2 = try XCTUnwrap(model.createFolder(in: p))
+            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f1)))
+            let closedA = try XCTUnwrap(model.createSession(request(project: p, folder: f1)))
+            let b = try XCTUnwrap(model.createSession(request(project: p, folder: f2)))
+            let closedB = try XCTUnwrap(model.createSession(request(project: p, folder: f2)))
+            model.closeTab(closedA)
+            model.closeTab(closedB)
+            model.splitTab(b, to: .right, of: model.panes.focusedGroupID)
+            let left = try XCTUnwrap(model.panes.group(containing: a))
+            XCTAssertEqual(model.selectedSessionID, b, "the right pane has focus")
+            XCTAssertEqual(model.closedTabs(besidePane: left).map(\.id), [closedA])
+            model.moveTab(closedA, toPane: left.id)
+            XCTAssertEqual(model.panes.group(containing: closedA)?.id, left.id, "reopened in the pane whose menu it came from")
+        }
+    }
+
+    func testFocusChangesAreNotSavedOnTheirOwn() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            let b = try XCTUnwrap(model.createSession(request(project: p)))
+            XCTAssertEqual(store.state.workspace.panes.focusedTabID, b, "opening a tab is saved")
+            model.select(a)
+            XCTAssertEqual(model.selectedSessionID, a)
+            XCTAssertEqual(store.state.workspace.panes.focusedTabID, b, "switching tabs isn't")
+        }
+    }
+
+    func testArchivingClosesTabs() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
             let p = model.addProject(path: "/code/app")
             let f = try XCTUnwrap(model.createFolder(in: p))
-            let ids = try (0..<5).map { _ in try XCTUnwrap(model.createSession(request(project: p, folder: f))) }
-            model.select(ids[0])
-            model.select(ids[3])
-            XCTAssertEqual(model.splitPanes(capacity: 2).map(\.id), [ids[0], ids[3]])
+            let a = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            let b = try XCTUnwrap(model.createSession(request(project: p, folder: f)))
+            model.terminalExited(a, exitCode: 0)
+            model.archiveCompleted(in: .folder(f))
+            XCTAssertFalse(model.workspace.isOpen(a))
+            XCTAssertEqual(model.panes.groups.map(\.tabIDs), [[b]])
+        }
+    }
+
+    func testDroppingASidebarSessionOpensItInThatPane() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            let b = try XCTUnwrap(model.createSession(request(project: p)))
+            let closed = try XCTUnwrap(model.createSession(request(project: p)))
+            model.closeTab(closed)
+            model.splitTab(b, to: .right, of: model.panes.focusedGroupID)
+            let left = try XCTUnwrap(model.panes.group(containing: a)).id
+            model.moveTab(closed, toPane: left)
+            XCTAssertEqual(model.panes.group(containing: closed)?.id, left)
+            XCTAssertTrue(model.workspace.isOpen(closed))
+            XCTAssertEqual(model.selectedSessionID, closed)
         }
     }
 
@@ -527,8 +621,12 @@ final class AppModelTests: XCTestCase {
     func testLayoutAndSettingsArePersisted() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
-            model.setLayout(.split)
-            XCTAssertEqual(store.state.settings.layout, .split)
+            let p = model.addProject(path: "/code/app")
+            let a = try XCTUnwrap(model.createSession(request(project: p)))
+            _ = try XCTUnwrap(model.createSession(request(project: p)))
+            model.splitTab(a, to: .left, of: model.panes.focusedGroupID)
+            XCTAssertEqual(store.state.workspace.panes, model.panes)
+            XCTAssertTrue(store.state.workspace.panes.isSplit)
             var settings = model.settings
             settings.defaultModel = "claude-opus-5-5"
             model.updateSettings(settings)
