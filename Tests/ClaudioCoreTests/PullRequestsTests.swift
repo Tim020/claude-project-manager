@@ -23,6 +23,40 @@ enum PullRequestFixtures {
 }
 
 final class PullRequestParsingTests: XCTestCase {
+    /// Recorded from gh on DigiScript #1427: a draft into dev, no reviews,
+    /// 27 passing checks and a skipped one, two with no workflow name.
+    func testRecordedPullRequest() throws {
+        let pr = try XCTUnwrap(GitHubCLI.parsePullRequestInfo(try Fixtures.string("gh-pr-view.json")))
+        XCTAssertEqual(pr.number, 1427)
+        XCTAssertEqual(pr.title, "Hold WS session state through a reconnect grace window (fixes #1419, #1424)")
+        XCTAssertEqual(pr.state, .draft)
+        XCTAssertEqual(pr.headBranch, "fix/ws-reconnect-session-reclaim")
+        XCTAssertEqual(pr.baseBranch, "dev")
+        XCTAssertEqual(pr.author, "Tim020")
+        XCTAssertEqual(pr.additions, 5048)
+        XCTAssertEqual(pr.deletions, 846)
+        XCTAssertNil(pr.mergedAt)
+        XCTAssertNotNil(pr.createdAt)
+        XCTAssertNotNil(pr.updatedAt)
+        XCTAssertEqual(pr.reviewDecision, PullRequestInfo.ReviewDecision.none)
+        XCTAssertEqual(pr.reviews, [])
+        XCTAssertEqual(pr.checks.count, 28)
+        XCTAssertEqual(pr.count(.passing), 27)
+        XCTAssertEqual(pr.count(.skipped), 1)
+        XCTAssertEqual(pr.checks.first?.name, "Build Server Executables / Build Frontend")
+        XCTAssertEqual(pr.checks.first?.duration, 39)
+        XCTAssertTrue(pr.checks.contains { $0.name == "SonarCloud Code Analysis" }, "no workflow name: just the check's")
+        XCTAssertEqual(pr.checkText, "27 passing")
+        XCTAssertEqual(pr.checkSummary, "All 27 checks passing")
+        XCTAssertEqual(pr.attention, .waiting, "a draft")
+        XCTAssertFalse(pr.needsAttention)
+    }
+
+    /// Recorded: five review threads on #1427, all resolved.
+    func testRecordedReviewThreadsAllResolved() throws {
+        XCTAssertEqual(GitHubCLI.parseReviewThreads(try Fixtures.string("gh-review-threads.json")), [])
+    }
+
     func testParsesAPullRequest() throws {
         let json = PullRequestFixtures.pr(1427, title: "Fix websocket close state", decision: "CHANGES_REQUESTED",
                                           checks: "[\(PullRequestFixtures.passing),\(PullRequestFixtures.failing),\(PullRequestFixtures.skipped)]",

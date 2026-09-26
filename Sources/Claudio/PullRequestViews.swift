@@ -638,6 +638,7 @@ private struct PullRequestCard: View {
     @Environment(AppModel.self) private var model
     let pullRequest: PullRequestInfo
     let projectID: UUID
+    @State private var showAllChecks = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -691,6 +692,18 @@ private struct PullRequestCard: View {
         }
     }
 
+    /// Failing and running checks first; beyond a few, the rest wait for
+    /// Show All (a repository can have dozens).
+    static let collapsedChecks = 6
+
+    private var shownChecks: [PullRequestInfo.Check] {
+        let order: [PullRequestInfo.CheckState] = [.failing, .running, .passing, .skipped]
+        let sorted = order.flatMap { state in pullRequest.checks.filter { $0.state == state } }
+        if showAllChecks { return sorted }
+        let pending = sorted.filter { $0.state == .failing || $0.state == .running }
+        return Array(sorted.prefix(max(PullRequestCard.collapsedChecks, pending.count)))
+    }
+
     private var checksColumn: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -700,7 +713,7 @@ private struct PullRequestCard: View {
                     .font(DS.font(12))
                     .foregroundStyle(DS.color(for: pullRequest.checkState))
             }
-            ForEach(Array(pullRequest.checks.enumerated()), id: \.offset) { _, check in
+            ForEach(Array(shownChecks.enumerated()), id: \.offset) { _, check in
                 HStack(spacing: 8) {
                     Image(systemName: DS.icon(for: check.state))
                         .font(.system(size: 13))
@@ -718,6 +731,11 @@ private struct PullRequestCard: View {
                 .contentShape(Rectangle())
                 .onTapGesture { if let url = check.url, !url.isEmpty { openOnGitHub(url) } }
                 .help(check.url?.isEmpty == false ? "Open the check's details on GitHub" : check.name)
+            }
+            if pullRequest.checks.count > PullRequestCard.collapsedChecks {
+                Button(showAllChecks ? "Show Fewer" : "Show All \(pullRequest.checks.count) Checks") { showAllChecks.toggle() }
+                    .buttonStyle(.link)
+                    .font(DS.font(12))
             }
         }
         .padding(.vertical, 14)
