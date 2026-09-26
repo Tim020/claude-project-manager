@@ -94,6 +94,8 @@ struct ContentView: View {
             }
             // Files Changed for every open tab, so switching tabs is instant.
             await model.preloadChanges()
+            // Pull request states for the sidebar (needs gh, checked above).
+            await model.refreshAllPullRequests()
         }
         .alert(copyTitle, isPresented: copyBinding) {
             Button("Resume a Copy") {
@@ -136,6 +138,10 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             // Also catch changes made outside tool calls (shell commands, your editor).
             if let id = model.selectedSessionID { Task { await model.refreshChanges(for: id) } }
+        }
+        .onReceive(Timer.publish(every: AppModel.pullRequestRefreshInterval, on: .main, in: .common).autoconnect()) { _ in
+            // Pull requests: checks and reviews change while you work.
+            Task { await model.refreshAllPullRequests() }
         }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             // Background agents: liveness, state and titles from `claude agents --json`.

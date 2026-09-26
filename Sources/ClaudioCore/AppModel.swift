@@ -157,6 +157,17 @@ public final class AppModel {
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
     @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
     public static let pullRequestCacheInterval: TimeInterval = 300
+    /// Each project's pull requests from GitHub (Pull Requests overviews).
+    public internal(set) var projectPullRequests: [UUID: ProjectPullRequests] = [:]
+    /// Unresolved review threads per pull request (by key), loaded when shown.
+    public internal(set) var reviewThreads: [String: [ReviewThread]] = [:]
+    @ObservationIgnored var reviewThreadsLoaded: [String: Date] = [:]
+    @ObservationIgnored var refreshingPullRequests = Set<UUID>()
+    public internal(set) var loadingPullRequests = Set<UUID>()
+    /// A project's or folder's pull requests, shown instead of the session.
+    public internal(set) var overview: Overview?
+    public var pullRequestFilter: PullRequestFilter = .needsAttention
+    public var includeUnlinkedPullRequests = true
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored private let shell: String
     @ObservationIgnored let now: () -> Date
@@ -621,6 +632,7 @@ public final class AppModel {
     /// Selects a session and opens its tab.
     public func select(_ sessionID: UUID?) {
         selectedSessionID = sessionID
+        overview = nil
         guard let sessionID, state.workspace.session(sessionID) != nil else { return }
         recentSessionIDs.removeAll { $0 == sessionID }
         recentSessionIDs.insert(sessionID, at: 0)
