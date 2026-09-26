@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Right-hand side: breadcrumb header for the selected session, then the open
 /// tabs in panes that can be docked side by side and above one another
-/// (`PaneTreeView`).
+/// (`PaneArea`).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
@@ -18,7 +18,7 @@ struct DetailView: View {
                 VStack(spacing: 0) {
                     DetailHeader(session: session, breadcrumb: crumb)
                     HStack(spacing: 0) {
-                        PaneTreeView(node: model.panes.root)
+                        PaneArea()
                         // Files Changed inspector (design 4a), beside the terminal.
                         if model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
                             FilesInspector(session: session)

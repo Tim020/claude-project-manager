@@ -329,6 +329,100 @@ public struct PaneLayout: Codable, Equatable, Sendable {
     }
 }
 
+/// A rectangle in the pane area, from its top left.
+public struct PaneRect: Equatable, Sendable {
+    public var x, y, width, height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    public var midX: Double { x + width / 2 }
+    public var midY: Double { y + height / 2 }
+}
+
+/// A draggable divider: between panes `index` and `index + 1` of a split.
+public struct PaneDividerHandle: Identifiable, Equatable, Sendable {
+    public let splitID: UUID
+    public let index: Int
+    public let axis: SplitAxis
+    public let rect: PaneRect
+    /// The split's shares when laid out, and the length they share (its size
+    /// along the axis, less dividers), to turn a drag into new shares.
+    public let fractions: [Double]
+    public let span: Double
+
+    public var id: String { "\(splitID)-\(index)" }
+
+    /// The shares after dragging this divider by `translation` points, keeping
+    /// both neighbours at least `minimum` points (or half their total, if less).
+    public func fractions(draggedBy translation: Double, minimum: Double) -> [Double] {
+        guard span > 0 else { return fractions }
+        let pair = fractions[index] + fractions[index + 1]
+        let floor = min(minimum / span, pair / 2)
+        let leading = min(max(fractions[index] + translation / span, floor), pair - floor)
+        var result = fractions
+        result[index] = leading
+        result[index + 1] = pair - leading
+        return result
+    }
+}
+
+/// Where every pane and divider goes. Panes are drawn flat from this (not
+/// nested), so a pane keeps its views, and its terminal, when the tree
+/// around it changes shape.
+public struct PaneFrames: Equatable, Sendable {
+    public var groups: [UUID: PaneRect] = [:]
+    public var dividers: [PaneDividerHandle] = []
+}
+
+extension PaneLayout {
+    /// The layout with a split's shares changed, e.g. to preview a divider drag.
+    public func resized(_ splitID: UUID, fractions: [Double]) -> PaneLayout {
+        var copy = self
+        copy.resize(splitID, fractions: fractions)
+        return copy
+    }
+
+    /// Frames for a pane area of the given size, with dividers `divider` thick.
+    public func frames(width: Double, height: Double, divider: Double) -> PaneFrames {
+        var frames = PaneFrames()
+        PaneLayout.place(root, in: PaneRect(x: 0, y: 0, width: width, height: height), divider: divider, into: &frames)
+        return frames
+    }
+
+    private static func place(_ node: PaneNode, in rect: PaneRect, divider: Double, into frames: inout PaneFrames) {
+        switch node {
+        case .group(let group):
+            frames.groups[group.id] = rect
+        case .split(let split):
+            let horizontal = split.axis == .horizontal
+            let length = horizontal ? rect.width : rect.height
+            let span = max(0, length - divider * Double(split.children.count - 1))
+            var offset = horizontal ? rect.x : rect.y
+            for (index, child) in split.children.enumerated() {
+                let size = span * split.fractions[index]
+                let childRect = horizontal
+                    ? PaneRect(x: offset, y: rect.y, width: size, height: rect.height)
+                    : PaneRect(x: rect.x, y: offset, width: rect.width, height: size)
+                place(child, in: childRect, divider: divider, into: &frames)
+                offset += size
+                if index < split.children.count - 1 {
+                    let handleRect = horizontal
+                        ? PaneRect(x: offset, y: rect.y, width: divider, height: rect.height)
+                        : PaneRect(x: rect.x, y: offset, width: rect.width, height: divider)
+                    frames.dividers.append(PaneDividerHandle(splitID: split.id, index: index, axis: split.axis, rect: handleRect,
+                                                             fractions: split.fractions, span: span))
+                    offset += divider
+                }
+            }
+        }
+    }
+}
+
 /// What a dragged tab carries. It's prefixed so the sidebar, which files
 /// sessions dropped on it as bare UUIDs, ignores tabs; panes take both.
 public enum TabDragPayload {

@@ -7,66 +7,44 @@ import UniformTypeIdentifiers
 /// The detail area's panes, like an IDE's editor groups: drag a tab (or a
 /// session from the sidebar) onto a pane's middle to add it there, or onto an
 /// edge to dock it beside or below, building any grid of rows and columns.
-struct PaneTreeView: View {
-    let node: PaneNode
-
-    var body: some View {
-        switch node {
-        case .group(let group): PaneGroupView(group: group)
-        case .split(let split): PaneSplitView(split: split)
-        }
-    }
-}
-
-/// Panes side by side or stacked, with draggable dividers between them.
-private struct PaneSplitView: View {
+///
+/// Panes are drawn side by side in one layer, keyed by pane, at frames worked
+/// out from the split tree. Nesting views to match the tree would rebuild a
+/// pane (and move its terminal) whenever the tree around it changed shape.
+struct PaneArea: View {
     @Environment(AppModel.self) private var model
-    let split: PaneSplit
-    /// Shares while a divider is being dragged; saved when the drag ends.
-    @State private var dragFractions: [Double]?
-    @State private var dragStart: [Double]?
-
-    private var isHorizontal: Bool { split.axis == .horizontal }
+    /// A divider being dragged: the split as it was when the drag started,
+    /// and its shares now. Saved when the drag ends.
+    @State private var drag: (handle: PaneDividerHandle, fractions: [Double])?
 
     var body: some View {
         GeometryReader { geometry in
-            let total = isHorizontal ? geometry.size.width : geometry.size.height
-            let available = max(0, total - PaneDivider.thickness * CGFloat(split.children.count - 1))
-            let fractions = dragFractions.flatMap { $0.count == split.children.count ? $0 : nil } ?? split.fractions
-            let stack = isHorizontal ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
-            stack {
-                ForEach(Array(split.children.enumerated()), id: \.element.id) { index, child in
-                    let length = available * fractions[index]
-                    PaneTreeView(node: child)
-                        .frame(width: isHorizontal ? length : nil, height: isHorizontal ? nil : length)
-                    if index < split.children.count - 1 {
-                        PaneDivider(axis: split.axis) { translation in
-                            resize(divider: index, by: translation, available: available)
-                        } onEnded: {
-                            if let dragFractions { model.resizeSplit(split.id, fractions: dragFractions) }
-                            dragFractions = nil
-                            dragStart = nil
-                        }
+            let layout = drag.map { model.panes.resized($0.handle.splitID, fractions: $0.fractions) } ?? model.panes
+            let frames = layout.frames(width: geometry.size.width, height: geometry.size.height,
+                                       divider: Double(PaneDivider.thickness))
+            ZStack(alignment: .topLeading) {
+                ForEach(layout.groups) { group in
+                    if let rect = frames.groups[group.id] {
+                        PaneGroupView(group: group)
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
                     }
                 }
+                ForEach(frames.dividers) { handle in
+                    PaneDivider(axis: handle.axis) { translation in
+                        let start = drag?.handle.id == handle.id ? drag!.handle : handle
+                        let minimum = handle.axis == .horizontal ? PaneDropZone.minPaneWidth : PaneDropZone.minPaneHeight
+                        drag = (start, start.fractions(draggedBy: Double(translation), minimum: minimum))
+                    } onEnded: {
+                        if let drag { model.resizeSplit(drag.handle.splitID, fractions: drag.fractions) }
+                        drag = nil
+                    }
+                    .frame(width: handle.rect.width, height: handle.rect.height)
+                    .position(x: handle.rect.midX, y: handle.rect.midY)
+                }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
-    }
-
-    /// Moves the divider after pane `index`, trading space between the two
-    /// panes beside it, neither going below the minimum pane size.
-    private func resize(divider index: Int, by translation: CGFloat, available: CGFloat) {
-        guard available > 0 else { return }
-        let start = dragStart ?? split.fractions
-        dragStart = start
-        let pair = start[index] + start[index + 1]
-        let minimum = isHorizontal ? PaneDropZone.minPaneWidth : PaneDropZone.minPaneHeight
-        let floor = min(minimum / available, pair / 2)
-        let leading = min(max(start[index] + translation / available, floor), pair - floor)
-        var fractions = start
-        fractions[index] = leading
-        fractions[index + 1] = pair - leading
-        dragFractions = fractions
     }
 }
 

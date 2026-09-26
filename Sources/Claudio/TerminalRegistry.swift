@@ -11,6 +11,8 @@ import SwiftUI
 final class TerminalRegistry: NSObject, TerminalControlling {
     private unowned let model: AppModel
     private var views: [UUID: LocalProcessTerminalView] = [:]
+    /// Containers showing each session, oldest first (see `TerminalContainer`).
+    private var containers: [UUID: [WeakContainer]] = [:]
 
     init(model: AppModel) {
         self.model = model
@@ -30,6 +32,36 @@ final class TerminalRegistry: NSObject, TerminalControlling {
                               currentDirectory: launch.workingDirectory)
         }
         return views[sessionID]
+    }
+
+    /// Puts a session's terminal in `container`, which becomes the one it
+    /// returns to (see `release`).
+    func claim(_ container: TerminalContainer) {
+        let id = container.sessionID
+        var list = containers[id, default: []].filter { $0.value != nil && $0.value !== container }
+        list.append(WeakContainer(value: container))
+        containers[id] = list
+        guard let terminal = terminal(for: id) else { return }
+        place(terminal, in: container)
+    }
+
+    /// A container left the window. If it held the terminal, the terminal
+    /// moves to the newest container for the session that's still showing.
+    func release(_ container: TerminalContainer) {
+        let id = container.sessionID
+        containers[id] = containers[id]?.filter { $0.value != nil && $0.value !== container }
+        guard let terminal = views[id], terminal.superview === container,
+              let next = containers[id]?.last(where: { $0.value?.window != nil })?.value else { return }
+        place(terminal, in: next)
+    }
+
+    private func place(_ terminal: NSView, in container: NSView) {
+        guard terminal.superview !== container else { return }
+        terminal.removeFromSuperview()
+        container.subviews.forEach { $0.removeFromSuperview() }
+        TerminalPane.pin(terminal, in: container)
+        terminal.needsLayout = true
+        terminal.needsDisplay = true
     }
 
     func hasTerminal(_ sessionID: UUID) -> Bool {
@@ -197,17 +229,48 @@ final class TerminalRegistryBox {
     init(_ registry: TerminalRegistry) { self.registry = registry }
 }
 
+private struct WeakContainer {
+    weak var value: TerminalContainer?
+}
+
+/// Holds a session's terminal in SwiftUI. When panes are rearranged SwiftUI
+/// can build a new container before removing the old one, or update the old
+/// one last, so a container takes the terminal whenever it joins a window or
+/// updates, and hands it on when it leaves; the terminal never ends up in a
+/// container that's gone.
+final class TerminalContainer: NSView {
+    let sessionID: UUID
+    private weak var registry: TerminalRegistry?
+
+    init(sessionID: UUID, registry: TerminalRegistry) {
+        self.sessionID = sessionID
+        self.registry = registry
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(hex: 0x222222).cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            registry?.release(self)
+        } else {
+            registry?.claim(self)
+        }
+    }
+}
+
 /// Hosts a session's terminal view inside SwiftUI.
 struct TerminalPane: NSViewRepresentable {
     let sessionID: UUID
     let registry: TerminalRegistry
     let isFocused: Bool
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(hex: 0x222222).cgColor
-        return container
+    func makeNSView(context: Context) -> TerminalContainer {
+        TerminalContainer(sessionID: sessionID, registry: registry)
     }
 
     /// Pins with constraints: the container can still be zero-sized, and a
@@ -223,13 +286,8 @@ struct TerminalPane: NSViewRepresentable {
         ])
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        guard let terminal = registry.terminal(for: sessionID) else { return }
-        if terminal.superview !== container {
-            terminal.removeFromSuperview()
-            container.subviews.forEach { $0.removeFromSuperview() }
-            TerminalPane.pin(terminal, in: container)
-        }
+    func updateNSView(_ container: TerminalContainer, context: Context) {
+        registry.claim(container)
         if isFocused {
             DispatchQueue.main.async { registry.focus(sessionID) }
         }

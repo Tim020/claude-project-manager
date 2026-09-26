@@ -150,6 +150,49 @@ final class PaneLayoutTests: XCTestCase {
         XCTAssertEqual(reset.fractions, [0.5, 0.5], "a mismatched list falls back to equal shares")
     }
 
+    func testFramesTileTheAreaWithDividers() throws {
+        var layout = layout(3)
+        let first = layout.focusedGroupID
+        layout.split(ids[1], to: .right, of: first)
+        let right = layout.focusedGroupID
+        layout.split(ids[2], to: .bottom, of: right)
+        let bottom = layout.focusedGroupID
+        // H[[0], V[[1], [2]]] in 1005×505 with 5pt dividers.
+        let frames = layout.frames(width: 1005, height: 505, divider: 5)
+        XCTAssertEqual(frames.groups[first], PaneRect(x: 0, y: 0, width: 500, height: 505))
+        XCTAssertEqual(frames.groups[right], PaneRect(x: 505, y: 0, width: 500, height: 250))
+        XCTAssertEqual(frames.groups[bottom], PaneRect(x: 505, y: 255, width: 500, height: 250))
+        XCTAssertEqual(frames.dividers.map(\.rect), [PaneRect(x: 500, y: 0, width: 5, height: 505),
+                                                     PaneRect(x: 505, y: 250, width: 500, height: 5)])
+        XCTAssertEqual(PaneLayout().frames(width: 800, height: 600, divider: 5).groups,
+                       [PaneLayout.initialGroupID: PaneRect(x: 0, y: 0, width: 800, height: 600)])
+    }
+
+    func testPaneKeepsItsIDWhenTheTreeAroundItChanges() {
+        // Panes are drawn by id, so the one that stays put must keep its id.
+        var layout = layout(2)
+        let first = layout.focusedGroupID
+        layout.split(ids[1], to: .right, of: first)
+        XCTAssertTrue(layout.groups.contains { $0.id == first })
+        layout.reconcile(openTabIDs: [ids[0]])
+        XCTAssertEqual(layout.groups.map(\.id), [first])
+    }
+
+    func testDraggingADividerKeepsTheMinimum() throws {
+        var layout = layout(2)
+        layout.split(ids[1], to: .right, of: layout.focusedGroupID)
+        let handle = try XCTUnwrap(layout.frames(width: 1005, height: 600, divider: 5).dividers.first)
+        let moved = handle.fractions(draggedBy: 100, minimum: 320)
+        XCTAssertEqual(moved[0], 0.6, accuracy: 1e-9)
+        XCTAssertEqual(moved[1], 0.4, accuracy: 1e-9)
+        let stopped = handle.fractions(draggedBy: 400, minimum: 320)
+        XCTAssertEqual(stopped[1], 0.32, accuracy: 1e-9, "stops at 320pt")
+        XCTAssertEqual(handle.fractions(draggedBy: -400, minimum: 700), [0.5, 0.5], "too small for the minimum: halves")
+        let resized = layout.resized(handle.splitID, fractions: [0.6, 0.4])
+        let width = try XCTUnwrap(resized.frames(width: 1005, height: 600, divider: 5).groups[layout.focusedGroupID]?.width)
+        XCTAssertEqual(width, 400, accuracy: 1e-9)
+    }
+
     func testDropZones() {
         XCTAssertEqual(PaneDropZone.zone(x: 500, y: 400, width: 1000, height: 800), .center)
         XCTAssertEqual(PaneDropZone.zone(x: 50, y: 400, width: 1000, height: 800), .edge(.left))
