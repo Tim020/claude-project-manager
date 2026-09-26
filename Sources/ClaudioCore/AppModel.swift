@@ -1498,9 +1498,12 @@ public final class AppModel {
                   statusModified[file.lastPathComponent] != modified
             else { continue }
             statusModified[file.lastPathComponent] = modified
-            if let data = try? Data(contentsOf: file), let context = ContextUsage.parse(data), contexts[id] != context {
+            guard let data = try? Data(contentsOf: file) else { continue }
+            if let context = ContextUsage.parse(data), contexts[id] != context {
                 contexts[id] = context
             }
+            // The shared usage file can be overwritten twice between polls.
+            if let snapshot = UsageSnapshot.parse(data, updatedAt: modified) { adopt(snapshot) }
         }
     }
 
@@ -1514,11 +1517,13 @@ public final class AppModel {
         }
     }
 
+    /// Merges a reading into `usage` window by window. Sessions report the
+    /// usage from their own last request, so the latest file written isn't
+    /// necessarily the latest figure.
     private func adopt(_ snapshot: UsageSnapshot) {
-        guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
-        var merged = snapshot
-        if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
-        usage = merged
+        let empty = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: snapshot.updatedAt)
+        let merged = (usage ?? empty).merged(with: snapshot, now: now())
+        if merged != usage { usage = merged }
     }
 
     // MARK: - Settings
