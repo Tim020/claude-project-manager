@@ -27,21 +27,27 @@ public struct FileChange: Equatable, Sendable, Identifiable {
     public var additions: Int
     public var deletions: Int
     public var isBinary: Bool
+    /// An untracked folder, listed as one entry (like `git status`) rather
+    /// than file by file; its contents aren't read. Its path ends in "/".
+    public var isUntrackedFolder: Bool
 
-    public init(path: String, oldPath: String? = nil, status: FileChangeStatus, additions: Int, deletions: Int, isBinary: Bool = false) {
+    public init(path: String, oldPath: String? = nil, status: FileChangeStatus, additions: Int, deletions: Int,
+                isBinary: Bool = false, isUntrackedFolder: Bool = false) {
         self.path = path
         self.oldPath = oldPath
         self.status = status
         self.additions = additions
         self.deletions = deletions
         self.isBinary = isBinary
+        self.isUntrackedFolder = isUntrackedFolder
     }
 
     public var id: String { path }
-    public var name: String { (path as NSString).lastPathComponent }
+    public var name: String { (path as NSString).lastPathComponent + (isUntrackedFolder ? "/" : "") }
     /// The containing directory, "" at the top level.
     public var directory: String {
-        let dir = (path as NSString).deletingLastPathComponent
+        let trimmed = isUntrackedFolder ? String(path.dropLast()) : path
+        let dir = (trimmed as NSString).deletingLastPathComponent
         return dir == "." ? "" : dir
     }
 }

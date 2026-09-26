@@ -73,6 +73,7 @@ final class GitChangesIntegrationTests: XCTestCase {
         // Uncommitted:
         try FileManager.default.removeItem(at: dir.appendingPathComponent("README.md"))
         try file(dir, "notes/todo.txt", "one\ntwo\nthree\n")
+        try file(dir, "todo.txt", "one\ntwo\nthree\n")
 
         let result = try await GitChanges.load(directory: dir.path, runner: runner, git: git).get()
         XCTAssertEqual(result.baseName, "main")
@@ -82,17 +83,18 @@ final class GitChangesIntegrationTests: XCTestCase {
         XCTAssertEqual(byPath["src/new_name.py"]?.status, .renamed)
         XCTAssertEqual(byPath["src/new_name.py"]?.oldPath, "src/old_name.py")
         XCTAssertEqual(byPath["README.md"]?.status, .deleted)
-        XCTAssertEqual(byPath["notes/todo.txt"]?.status, .added)
-        XCTAssertEqual(byPath["notes/todo.txt"]?.additions, 3)
+        XCTAssertEqual(byPath["notes/"]?.isUntrackedFolder, true, "a wholly untracked folder is one entry, as in git status")
+        XCTAssertEqual(byPath["todo.txt"]?.status, .added)
+        XCTAssertEqual(byPath["todo.txt"]?.additions, 3)
 
         let appDiff = await GitChanges.diff(for: try XCTUnwrap(byPath["src/app.py"]), in: result, runner: runner, git: git)
         XCTAssertEqual(appDiff.additions, 1)
         XCTAssertEqual(appDiff.lines.first { $0.kind == .added }?.text, "line five")
-        let untracked = await GitChanges.diff(for: try XCTUnwrap(byPath["notes/todo.txt"]), in: result, runner: runner, git: git)
+        let untracked = await GitChanges.diff(for: try XCTUnwrap(byPath["todo.txt"]), in: result, runner: runner, git: git)
         XCTAssertEqual(untracked.additions, 3)
         // git reports the real path (/private/var/… on macOS), so check it points at the file.
-        let absolute = result.absolutePath(for: try XCTUnwrap(byPath["notes/todo.txt"]))
-        XCTAssertTrue(absolute.hasSuffix("/repo/notes/todo.txt"), absolute)
+        let absolute = result.absolutePath(for: try XCTUnwrap(byPath["todo.txt"]))
+        XCTAssertTrue(absolute.hasSuffix("/repo/todo.txt"), absolute)
         XCTAssertEqual(try String(contentsOfFile: absolute, encoding: .utf8), "one\ntwo\nthree\n")
     }
 
@@ -115,5 +117,50 @@ final class GitChangesIntegrationTests: XCTestCase {
         try run(["branch", "-qm", "main", "trunk-only"], in: dir)
         let result = await GitChanges.load(directory: dir.path, runner: runner, git: git)
         XCTAssertEqual(result, .failure(.noBaseBranch))
+    }
+}
+
+/// Untracked folders are one entry, as `git status` shows them; ignored files
+/// never appear.
+final class UntrackedFolderTests: XCTestCase {
+    let runner = ProcessCommandRunner()
+    let git = GitChanges.defaultGit
+
+    func testUntrackedFolderIsOneEntryAndIgnoredFilesAreHidden() async throws {
+        guard FileManager.default.isExecutableFile(atPath: git) else { throw XCTSkip("git not installed") }
+        let dir = try makeTemporaryDirectory().appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        func run(_ args: [String]) throws {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: git)
+            p.arguments = ["-C", dir.path, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"] + args
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try p.run(); p.waitUntilExit()
+        }
+        func write(_ path: String, _ text: String) throws {
+            let url = dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try run(["init", "-q"])
+        try write(".gitignore", "build/\n")
+        try write("src/app.py", "x\n")
+        try run(["add", "."]); try run(["commit", "-qm", "base"]); try run(["checkout", "-qb", "work"])
+        // Left behind, not ignored (like a removed app's node_modules):
+        for i in 0..<50 { try write("electron/node_modules/pkg\(i)/index.js", "module.exports = \(i)\n") }
+        try write("electron/dist/main.js", "one\ntwo\n")
+        // Ignored:
+        try write("build/out.o", "binary")
+        // A new untracked file at the top level:
+        try write("notes.txt", "a\nb\n")
+
+        let result = try await GitChanges.load(directory: dir.path, runner: runner, git: git).get()
+        let byPath = Dictionary(uniqueKeysWithValues: result.changes.files.map { ($0.path, $0) })
+        XCTAssertEqual(Set(byPath.keys), ["electron/", "notes.txt"])
+        XCTAssertEqual(byPath["electron/"]?.isUntrackedFolder, true)
+        XCTAssertEqual(byPath["electron/"]?.additions, 0, "folder contents aren't read")
+        XCTAssertEqual(byPath["notes.txt"]?.additions, 2)
+        let folderDiff = await GitChanges.diff(for: try XCTUnwrap(byPath["electron/"]), in: result, runner: runner, git: git)
+        XCTAssertEqual(folderDiff, .empty)
     }
 }

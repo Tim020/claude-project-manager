@@ -80,6 +80,9 @@ public final class AppModel {
     public var changesScope: ChangesScope = .session
     public internal(set) var paneModes: [UUID: PaneMode] = [:]
     var selectedChanges: [UUID: String] = [:]
+    /// The "vs" branch a session is switching to, shown until it has loaded.
+    var pendingBaseNames: [UUID: String] = [:]
+    @ObservationIgnored var pendingBaseTokens: [UUID: UUID] = [:]
     var expandedChanges: [UUID: String] = [:]
     @ObservationIgnored var changesDirty = Set<UUID>()
     @ObservationIgnored var refreshingChanges = Set<UUID>()
@@ -753,7 +756,13 @@ public final class AppModel {
         project.comparisonBranch = branch
         state.workspace.replaceProject(project)
         save()
-        for session in state.workspace.sessions where session.projectID == projectID { markChangesDirty(session.id) }
+        for session in state.workspace.sessions where session.projectID == projectID {
+            markChangesDirty(session.id)
+            // An open pull request's base still wins, so nothing changes there.
+            if case .pullRequest? = (try? sessionChanges[session.id]?.git?.get())?.baseSource { continue }
+            pendingBaseNames[session.id] = branch ?? "default branch"
+            pendingBaseTokens[session.id] = UUID()
+        }
     }
 
     public func setRole(_ id: UUID, to role: SessionRole) {

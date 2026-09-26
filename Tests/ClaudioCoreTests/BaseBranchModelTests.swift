@@ -150,3 +150,58 @@ final class BaseBranchModelTests: XCTestCase {
         }
     }
 }
+
+final class BaseBranchLoadingTests: XCTestCase {
+    func testChoosingABranchShowsItAtOnceAndLoadsUntilRefreshed() async throws {
+        let git = GitChanges.defaultGit
+        guard FileManager.default.isExecutableFile(atPath: git) else { throw XCTSkip("git not installed") }
+        let repo = try makeTemporaryDirectory().appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        func run(_ args: [String]) throws {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: git)
+            p.arguments = ["-C", repo.path, "-c", "user.name=T", "-c", "user.email=t@e.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"] + args
+            p.standardOutput = Pipe(); p.standardError = Pipe()
+            try p.run(); p.waitUntilExit()
+        }
+        try run(["init", "-q"])
+        try "a\n".write(to: repo.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try run(["add", "."]); try run(["commit", "-qm", "base"]); try run(["branch", "dev"]); try run(["checkout", "-qb", "work"])
+
+        let runner = RoutingRunner()
+        runner.ghPullRequest = nil
+        let (model, project, id) = try await MainActor.run { () -> (AppModel, UUID, UUID) in
+            var state = PersistedState()
+            let p = state.workspace.addProject(path: repo.path)
+            let session = Session(projectID: p, name: "s", workingDirectory: repo.path)
+            try state.workspace.addSession(session)
+            let store = MemoryStore()
+            store.state = state
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner, git: git,
+                                 locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
+            return (model, p, session.id)
+        }
+        await MainActor.run { XCTAssertTrue(model.isLoadingChanges(id), "nothing loaded yet") }
+        await model.refreshChanges(for: id)
+        await MainActor.run {
+            XCTAssertFalse(model.isLoadingChanges(id))
+            XCTAssertEqual(model.baseName(for: id), "main")
+            model.setComparisonBranch("dev", for: project)
+            XCTAssertEqual(model.baseName(for: id), "dev", "the label changes straight away")
+            XCTAssertTrue(model.isLoadingChanges(id), "and the list shows it's loading")
+            model.changesScope = .session
+            XCTAssertFalse(model.showsChangesLoading(for: id), "This Session doesn't depend on the branch")
+            model.changesScope = .base
+            XCTAssertTrue(model.showsChangesLoading(for: id))
+        }
+        await model.refreshChanges(for: id)
+        await MainActor.run {
+            XCTAssertFalse(model.isLoadingChanges(id))
+            XCTAssertEqual(model.baseName(for: id), "dev")
+            XCTAssertEqual(model.baseSource(for: id), .project)
+            model.setComparisonBranch(nil, for: project)
+            XCTAssertEqual(model.baseName(for: id), "default branch", "not known until loaded")
+        }
+    }
+}

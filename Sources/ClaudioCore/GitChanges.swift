@@ -90,9 +90,16 @@ public enum GitChanges {
         let nameStatus = await runAtRoot(["diff", "-M", "-z", "--name-status", baseCommit])
         var files = parse(numstat: numstat.output, nameStatus: nameStatus.output)
 
-        let others = await runAtRoot(["ls-files", "--others", "--exclude-standard", "-z"])
+        // Untracked, not ignored. --directory lists a wholly untracked folder
+        // as one "dir/" entry, as git status does, instead of every file in it
+        // (a leftover node_modules can hold tens of thousands).
+        let others = await runAtRoot(["ls-files", "--others", "--exclude-standard", "--directory", "--no-empty-directory", "-z"])
         let untracked = others.output.split(separator: "\u{0}").map(String.init)
         for path in untracked {
+            if path.hasSuffix("/") {
+                files.append(FileChange(path: path, status: .added, additions: 0, deletions: 0, isUntrackedFolder: true))
+                continue
+            }
             let text = SessionChanges.readFile((root as NSString).appendingPathComponent(path))
             let diff = (text?.utf8.count ?? 0) > SessionChanges.maxDiffBytes ? FileDiff.binary : LineDiff.diff(old: nil, new: text)
             files.append(FileChange(path: path, status: .added, additions: diff.additions, deletions: 0, isBinary: diff.isBinary))
@@ -115,6 +122,7 @@ public enum GitChanges {
 
     /// One file's diff against the base (untracked files against nothing).
     public static func diff(for file: FileChange, in result: GitChangesResult, runner: CommandRunning, git: String = defaultGit) async -> FileDiff {
+        if file.isUntrackedFolder { return .empty }
         if result.untracked.contains(file.path) {
             let text = SessionChanges.readFile(result.absolutePath(for: file))
             return (text?.utf8.count ?? 0) > SessionChanges.maxDiffBytes ? .binary : LineDiff.diff(old: nil, new: text)

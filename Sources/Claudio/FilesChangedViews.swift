@@ -114,11 +114,11 @@ struct ScopeToggle: View {
                 Text("Using pull request #\(number)'s base: \(model.baseName(for: session.id))")
             }
             Section("Compare this project against") {
-                Button { model.setComparisonBranch(nil, for: session.projectID) } label: {
+                Button { choose(nil) } label: {
                     if chosen == nil { Label("Repository default", systemImage: "checkmark") } else { Text("Repository default") }
                 }
                 ForEach(branches, id: \.self) { branch in
-                    Button { model.setComparisonBranch(branch, for: session.projectID) } label: {
+                    Button { choose(branch) } label: {
                         if chosen == branch { Label(branch, systemImage: "checkmark") } else { Text(branch) }
                     }
                 }
@@ -136,6 +136,14 @@ struct ScopeToggle: View {
         .fixedSize()
         .overlay(alignment: .leading) { VerticalRule() }
         .help("Choose the branch to compare against")
+    }
+
+    /// Sets the project's branch and starts comparing at once (the label
+    /// switches immediately; the lists show a spinner until it's done).
+    private func choose(_ branch: String?) {
+        model.setComparisonBranch(branch, for: session.projectID)
+        model.changesScope = .base
+        Task { await model.refreshChanges(for: session.id) }
     }
 
     private func segment(_ title: String, scope: ChangesScope, reason: String?) -> some View {
@@ -170,7 +178,9 @@ struct FilesButton: View {
                 Text("Files")
                     .font(DS.font(12, .bold))
                     .foregroundStyle(DS.text)
-                if let changes, !changes.isEmpty {
+                if model.showsChangesLoading(for: session.id) {
+                    ProgressView().controlSize(.mini)
+                } else if let changes, !changes.isEmpty {
                     ChangeCounts(additions: changes.additions, deletions: changes.deletions)
                 }
             }
@@ -251,6 +261,39 @@ enum FileActions {
     }
 }
 
+/// Per-file "+a −d", or "folder" for an untracked folder.
+private struct FileCounts: View {
+    let file: FileChange
+    var size: CGFloat = 11.5
+
+    var body: some View {
+        if file.isUntrackedFolder {
+            Text("folder")
+                .font(DS.mono(size))
+                .foregroundStyle(DS.dim)
+        } else {
+            ChangeCounts(additions: file.additions, deletions: file.deletions, size: size, minDeletionWidth: size < 12 ? 26 : 0)
+        }
+    }
+}
+
+/// Shown while a change list loads, e.g. after choosing another "vs" branch.
+private struct ChangesLoading: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(model.changesScope == .base ? "Comparing against \(model.baseName(for: session.id))…" : "Looking for changes…")
+        }
+        .font(DS.font(12.5))
+        .foregroundStyle(DS.dim)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(20)
+    }
+}
+
 /// Loading, empty and unavailable states for a change list.
 private struct ChangesPlaceholder: View {
     @Environment(AppModel.self) private var model
@@ -317,7 +360,9 @@ struct FilesInspector: View {
             .padding(.bottom, 12)
             .overlay(alignment: .bottom) { HorizontalRule() }
 
-            if changes.isEmpty {
+            if model.showsChangesLoading(for: session.id) {
+                ChangesLoading(session: session)
+            } else if changes.isEmpty {
                 ChangesPlaceholder(session: session)
             } else {
                 ScrollView {
@@ -386,7 +431,7 @@ private struct InspectorRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
-                ChangeCounts(additions: file.additions, deletions: file.deletions, minDeletionWidth: 26)
+                FileCounts(file: file)
             }
             .padding(.vertical, 5)
             .padding(.horizontal, 8)
@@ -446,7 +491,9 @@ private struct DiffPreview: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(alignment: .bottom) { HorizontalRule() }
             }
-            if let diff {
+            if file.isUntrackedFolder {
+                note("An untracked folder. Like git status, Claudio lists it as one entry rather than every file in it.")
+            } else if let diff {
                 if diff.isBinary {
                     note("Binary file")
                 } else {
@@ -524,7 +571,9 @@ struct ChangesView: View {
         let changes = model.currentChanges(for: session.id) ?? .empty
         HStack(spacing: 0) {
             fileList(changes)
-            if let path = model.selectedChange(for: session.id), let file = changes.files.first(where: { $0.path == path }) {
+            if model.showsChangesLoading(for: session.id) {
+                ChangesLoading(session: session)
+            } else if let path = model.selectedChange(for: session.id), let file = changes.files.first(where: { $0.path == path }) {
                 FullDiff(session: session, file: file)
             } else {
                 ChangesPlaceholder(session: session)
@@ -556,6 +605,9 @@ struct ChangesView: View {
             .padding(.horizontal, 14)
             .overlay(alignment: .bottom) { HorizontalRule() }
 
+            if model.showsChangesLoading(for: session.id) {
+                ChangesLoading(session: session)
+            } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(files) { file in
@@ -577,7 +629,7 @@ struct ChangesView: View {
                                 }
                             }
                             Spacer(minLength: 4)
-                            ChangeCounts(additions: file.additions, deletions: file.deletions, minDeletionWidth: 26)
+                            FileCounts(file: file)
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 8)
@@ -595,6 +647,7 @@ struct ChangesView: View {
                     }
                 }
                 .padding(6)
+            }
             }
 
             HStack(spacing: 10) {
@@ -639,7 +692,7 @@ private struct FullDiff: View {
                     .truncationMode(.head)
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
-                ChangeCounts(additions: file.additions, deletions: file.deletions, size: 12)
+                FileCounts(file: file, size: 12)
                 Button { FileActions.open(path) } label: {
                     Text("Open in Editor")
                         .font(DS.font(12))
@@ -668,20 +721,26 @@ private struct FullDiff: View {
                     .overlay(alignment: .bottom) { HorizontalRule() }
             }
 
-            if let diff {
+            if file.isUntrackedFolder {
+                message("An untracked folder. Like git status, Claudio lists it as one entry rather than every file in it. Add it to .gitignore if it shouldn't be in the repository.")
+            } else if let diff {
                 if diff.isBinary {
                     message("Binary file: no text diff to show.")
                 } else if diff.lines.isEmpty {
                     message("No changes to show.")
                 } else {
-                    ScrollView([.vertical, .horizontal]) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(diff.lines.enumerated()), id: \.offset) { _, line in
-                                DiffRow(line: line)
+                    // Scrolls both ways: rows are left-aligned and at least as
+                    // wide as the view, so short diffs fill it and long lines scroll.
+                    GeometryReader { geometry in
+                        ScrollView([.vertical, .horizontal]) {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(diff.lines.enumerated()), id: \.offset) { _, line in
+                                    DiffRow(line: line, minWidth: geometry.size.width)
+                                }
                             }
+                            .padding(.vertical, 6)
+                            .textSelection(.enabled)
                         }
-                        .padding(.vertical, 6)
-                        .textSelection(.enabled)
                     }
                 }
             } else {
@@ -706,6 +765,7 @@ private struct FullDiff: View {
 
 private struct DiffRow: View {
     let line: DiffLine
+    let minWidth: CGFloat
 
     var body: some View {
         HStack(spacing: 0) {
@@ -723,11 +783,11 @@ private struct DiffRow: View {
             Text(line.text.isEmpty ? " " : line.text)
                 .foregroundStyle(foreground)
                 .fixedSize(horizontal: true, vertical: false)
-            Spacer(minLength: 0)
+                .padding(.trailing, 18)
         }
         .font(DS.mono(12.5))
         .padding(.vertical, 2)
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: minWidth, alignment: .leading)
         .background(background)
     }
 

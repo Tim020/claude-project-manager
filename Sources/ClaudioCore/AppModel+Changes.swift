@@ -70,9 +70,21 @@ extension AppModel {
         changes(for: sessionID, scope: changesScope)
     }
 
-    /// "main", "master"… for the "vs main" button.
+    /// "main", "dev"… for the "vs" button: a branch just chosen shows at once.
     public func baseName(for sessionID: UUID) -> String {
-        (try? sessionChanges[sessionID]?.git?.get().baseName) ?? "main"
+        pendingBaseNames[sessionID] ?? (try? sessionChanges[sessionID]?.git?.get().baseName) ?? "main"
+    }
+
+    /// Nothing loaded yet, or a newly chosen branch is still being compared:
+    /// the lists show a spinner rather than stale data.
+    public func isLoadingChanges(_ sessionID: UUID) -> Bool {
+        sessionChanges[sessionID] == nil || pendingBaseNames[sessionID] != nil
+    }
+
+    /// Whether the change lists should show a spinner: nothing loaded yet,
+    /// or "vs" is showing and a newly chosen branch is still being compared.
+    public func showsChangesLoading(for sessionID: UUID) -> Bool {
+        sessionChanges[sessionID] == nil || (changesScope == .base && pendingBaseNames[sessionID] != nil)
     }
 
     /// Where the "vs" branch came from (pull request, project, default).
@@ -142,11 +154,24 @@ extension AppModel {
 
     // MARK: Refreshing
 
-    /// Re-reads both scopes for a session. Skipped if a refresh is running.
+    /// Re-reads both scopes for a session. If a refresh is already running it
+    /// returns; one that finds the branch changed while it ran goes again.
     public func refreshChanges(for sessionID: UUID) async {
-        guard let session = state.workspace.session(sessionID), !refreshingChanges.contains(sessionID) else { return }
+        guard !refreshingChanges.contains(sessionID) else { return }
         refreshingChanges.insert(sessionID)
         defer { refreshingChanges.remove(sessionID) }
+        repeat {
+            let token = pendingBaseTokens[sessionID]
+            await loadChanges(for: sessionID)
+            guard pendingBaseTokens[sessionID] == token else { continue } // chosen mid-way: again
+            pendingBaseTokens[sessionID] = nil
+            pendingBaseNames[sessionID] = nil
+            break
+        } while true
+    }
+
+    private func loadChanges(for sessionID: UUID) async {
+        guard let session = state.workspace.session(sessionID) else { return }
         changesDirty.remove(sessionID)
 
         let directory = session.workingDirectory
