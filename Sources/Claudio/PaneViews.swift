@@ -47,6 +47,15 @@ struct PaneArea: View {
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
         .onChange(of: model.panes) { commands.dropTarget = nil }
+        // SwiftUI doesn't always say a drag has ended (cancelled over a pane,
+        // or let go somewhere that takes no drops), so while a pane is
+        // highlighted, check the mouse: once the button is up, the drag is over.
+        .task(id: commands.dropTarget == nil) {
+            guard commands.dropTarget != nil else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 { commands.endDrag() }
+            }
+        }
     }
 }
 
