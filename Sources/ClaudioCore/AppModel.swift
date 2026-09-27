@@ -153,6 +153,7 @@ public final class AppModel {
     @ObservationIgnored private let runner: CommandRunning
     /// `/usage` ran but gave no figures; logged once until it reads again.
     @ObservationIgnored private var usageUnreadable = false
+    @ObservationIgnored private var isRefreshingUsage = false
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored let locateGitHubCLI: () -> String?
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
@@ -1507,7 +1508,10 @@ public final class AppModel {
     public static let usageRefreshInterval: TimeInterval = 60
 
     public func refreshUsage() async {
-        guard environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
+        // At launch, coming to the front and the poll's first reading coincide.
+        guard !isRefreshingUsage, environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
+        isRefreshingUsage = true
+        defer { isRefreshingUsage = false }
         // Log the text only: the stream's report includes credit spend, and
         // its ids change every run. Output that isn't a report (an error, an
         // older CLI) is logged as it is.

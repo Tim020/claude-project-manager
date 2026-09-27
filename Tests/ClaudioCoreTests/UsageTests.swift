@@ -227,6 +227,23 @@ final class UsageCreditsTests: XCTestCase {
         }
     }
 
+    func testOverlappingRefreshesRunOneCommand() async throws {
+        let runner = FakeRunner()
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
+        let model = try await MainActor.run {
+            AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                     hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                     locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
+        }
+        // Launch: coming to the front and the poll's first reading at once.
+        async let poll: Void = model.refreshUsage()
+        async let activation: Void = model.refreshUsageIfDue()
+        _ = await (poll, activation)
+        XCTAssertEqual(runner.commands.filter { $0.contains("/usage") }.count, 1)
+        await model.refreshUsage()
+        XCTAssertEqual(runner.commands.filter { $0.contains("/usage") }.count, 2, "the guard is released afterwards")
+    }
+
     func testRefreshesOnActivationOnlyWhenDue() async throws {
         final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_790_380_000) }
         let clock = Clock()
