@@ -657,13 +657,16 @@ private struct DeleteSessionConfirmation: ViewModifier {
         }
     }
 }
-/// Plan usage from Claude Code (5-hour session and weekly limits), as
-/// reported to the status line of sessions Claudio launched.
+/// Plan usage from Claude Code (5-hour session and weekly limits, and usage
+/// credits), from `claude -p /usage`.
 private struct UsageSection: View {
     let usage: UsageSnapshot?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
+            // Windows that have reset since the last reading show as unused.
+            let usage = usage?.current(at: context.date)
+            let isStale = usage?.isStale(at: context.date, refreshInterval: AppModel.usageRefreshInterval) ?? false
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text("PLAN USAGE")
@@ -689,12 +692,18 @@ private struct UsageSection: View {
                     if let credits = usage.credits, credits.isEnabled {
                         creditsRow(credits, inUse: usage.isUsingCredits)
                     }
+                    if isStale {
+                        Text("As of \(usage.updatedAt.formatted(date: .omitted, time: .shortened)): couldn't update")
+                            .font(DS.font(11))
+                            .foregroundStyle(DS.dim)
+                    }
                 } else {
                     Text("Checking plan usage… (needs a Claude plan sign-in)")
                         .font(DS.font(11.5))
                         .foregroundStyle(DS.dim)
                 }
             }
+            .opacity(isStale ? 0.6 : 1)
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .overlay(alignment: .top) { HorizontalRule() }

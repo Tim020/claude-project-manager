@@ -28,7 +28,8 @@ final class UsageCommandTests: XCTestCase {
     func testUsageCommand() {
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/h")
         let command = commands.usage()
-        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
+        XCTAssertEqual(command.claudeArguments, ["-p", "/usage", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+                                                 "--settings", #"{"disableAllHooks":true}"#])
         XCTAssertEqual(command.arguments.first, "-c", "no login shell for a periodic check")
     }
 }

@@ -151,6 +151,8 @@ public final class AppModel {
     @ObservationIgnored private var statusModified: [String: Date] = [:]
     @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let runner: CommandRunning
+    /// `/usage` ran but gave no figures; logged once until it reads again.
+    @ObservationIgnored private var usageUnreadable = false
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored let locateGitHubCLI: () -> String?
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
@@ -404,6 +406,11 @@ public final class AppModel {
                        detail: problems.isEmpty ? result.version.map { "Version \($0)" } : problems.joined(separator: "\n"))
         }
         if result != environment { environment = result }
+        // `/usage` can answer before `claude auth status` at launch.
+        if var current = usage, case let plan = plan(keeping: current.subscriptionType), plan != current.subscriptionType {
+            current.subscriptionType = plan
+            usage = current
+        }
     }
 
     /// `gh auth status` (account names stay out of the log).
@@ -1462,8 +1469,8 @@ public final class AppModel {
 
     // MARK: - Usage
 
-    /// Status line settings for launched sessions: records plan usage for the
-    /// app and still runs the user's own status line.
+    /// Status line settings for launched sessions: records each session's
+    /// context window and still runs the user's own status line.
     private func statusLineCapture() -> StatusLineCapture? {
         guard let statusDirectory else { return nil }
         let userSettings = discovery.claudeHome.appendingPathComponent("settings.json")
@@ -1503,18 +1510,36 @@ public final class AppModel {
     public func refreshUsage() async {
         guard environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
         // Log the text only: the stream's report includes credit spend, and
-        // its ids change every run.
+        // its ids change every run. Output that isn't a report (an error, an
+        // older CLI) is logged as it is.
         let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage",
-                               loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? "" })
-        if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
+                               loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? ($0.contains(#""usage_report""#) ? "" : $0) })
+        guard result.exitCode == 0 else { return }
+        if let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
+            usageUnreadable = false
             adopt(snapshot)
+        } else if !usageUnreadable {
+            // Once per failure: `/usage` is the only source, so say why the
+            // figures stopped changing (e.g. a CLI update changed the format).
+            usageUnreadable = true
+            log.append(.error, "Couldn't read plan usage", detail: "claude -p /usage gave no usage figures. Plan usage keeps its last reading.")
         }
     }
 
     private func adopt(_ snapshot: UsageSnapshot) {
         var snapshot = snapshot
-        if case .signedIn(let status) = environment.signIn { snapshot.subscriptionType = status.plan }
+        snapshot.subscriptionType = plan(keeping: usage?.subscriptionType)
         if snapshot != usage { usage = snapshot }
+    }
+
+    /// The plan name ("pro", "max") from `claude auth status`. Until that has
+    /// answered, or when it can't, the last one known is kept.
+    private func plan(keeping last: String?) -> String? {
+        switch environment.signIn {
+        case .signedIn(let status): return status.plan ?? last
+        case .signedOut: return nil
+        case .unchecked, .unknown: return last
+        }
     }
 
     // MARK: - Settings

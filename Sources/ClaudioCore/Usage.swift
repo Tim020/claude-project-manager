@@ -25,6 +25,13 @@ public struct UsageWindow: Equatable, Sendable {
         if hours < 24 { return "resets in \(hours)h \(minutes % 60)m" }
         return "resets in \(hours / 24)d \(hours % 24)h"
     }
+
+    /// The window as it stands at `now`: once its reset time has passed,
+    /// nothing is used until the next reading.
+    public func current(at now: Date) -> UsageWindow {
+        guard let resetsAt, resetsAt <= now else { return self }
+        return UsageWindow(usedPercentage: 0, resetsAt: nil)
+    }
 }
 
 /// Usage credits ("extra usage"): pay-as-you-go spend that Claude Code draws
@@ -100,6 +107,21 @@ public struct UsageSnapshot: Equatable, Sendable {
     /// "subscription" while credits are in use.
     public var reportsUsingCredits = false
 
+    /// The snapshot as it stands at `now` (see `UsageWindow.current(at:)`),
+    /// so the bars and credit badges follow a reset between readings.
+    public func current(at now: Date) -> UsageSnapshot {
+        var snapshot = self
+        snapshot.fiveHour = fiveHour?.current(at: now)
+        snapshot.sevenDay = sevenDay?.current(at: now)
+        return snapshot
+    }
+
+    /// No reading has arrived for several polls (signed out, the CLI failing),
+    /// so the figures may be out of date.
+    public func isStale(at now: Date, refreshInterval: TimeInterval) -> Bool {
+        now.timeIntervalSince(updatedAt) > 3 * refreshInterval
+    }
+
     /// A plan window is full, so Claude Code is either on credits or blocked.
     public var isAtPlanLimit: Bool {
         [fiveHour, sevenDay].contains { ($0?.usedPercentage ?? 0) >= 100 }
@@ -161,6 +183,9 @@ extension UsageSnapshot {
         for limit in limits?["limits"]?.arrayValue ?? [] {
             guard let percent = limit["percent"]?.doubleValue else { continue }
             let window = UsageWindow(usedPercentage: percent, resetsAt: limit["resets_at"]?.stringValue.flatMap(parseResetDate))
+            // The other kind, `weekly_scoped`, is one model's weekly limit
+            // ("Current week (Sonnet)"). Reaching it blocks only that model,
+            // so it doesn't count towards being on credits, and isn't shown.
             switch limit["kind"]?.stringValue {
             case "session": snapshot.fiveHour = window
             case "weekly_all": snapshot.sevenDay = window

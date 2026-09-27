@@ -2,11 +2,6 @@ import XCTest
 @testable import ClaudioCore
 
 final class UsageTests: XCTestCase {
-    let statusLineInput = #"""
-    {"session_id":"x","model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},"subscription_type":"max","rate_limits_available":true,
-     "rate_limits":{"five_hour":{"used_percentage":56.2,"resets_at":1790352000},"seven_day":{"used_percentage":7,"resets_at":1790571600}}}
-    """#
-
     func testWindowLabels() {
         let now = Date(timeIntervalSince1970: 1_790_340_000)
         let window = UsageWindow(usedPercentage: 56.4, resetsAt: now.addingTimeInterval(2 * 3600 + 5 * 60))
@@ -35,6 +30,25 @@ final class UsageTests: XCTestCase {
         XCTAssertNil(value["statusLine"]?["refreshInterval"], "nothing to refresh while idle: usage comes from /usage")
         XCTAssertNotNil(value["hooks"])
         XCTAssertNil(try JSONDecoder().decode(JSONValue.self, from: Data(HookSettings.json(appSessionID: UUID(), eventsPath: "/x").utf8))["statusLine"])
+    }
+
+    func testAWindowPastItsResetShowsNothingUsed() {
+        let resets = Date(timeIntervalSince1970: 1_790_481_000)
+        let window = UsageWindow(usedPercentage: 100, resetsAt: resets)
+        XCTAssertEqual(window.current(at: resets.addingTimeInterval(-60)), window)
+        XCTAssertEqual(window.current(at: resets.addingTimeInterval(60)).usedPercentage, 0)
+        XCTAssertEqual(window.current(at: resets.addingTimeInterval(60)).resetLabel(now: resets), "", "not \"resets in 1m\" forever")
+
+        let credits = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1000, utilization: 20, currency: "GBP")
+        let full = UsageSnapshot(fiveHour: window, sevenDay: nil, subscriptionType: nil, updatedAt: resets, credits: credits)
+        XCTAssertTrue(full.current(at: resets.addingTimeInterval(-60)).isUsingCredits)
+        XCTAssertFalse(full.current(at: resets.addingTimeInterval(60)).isUsingCredits, "the badge follows the reset")
+    }
+
+    func testOldReadingsAreStale() {
+        let snapshot = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: Date(timeIntervalSince1970: 0))
+        XCTAssertFalse(snapshot.isStale(at: Date(timeIntervalSince1970: 179), refreshInterval: 60), "a missed poll or two is fine")
+        XCTAssertTrue(snapshot.isStale(at: Date(timeIntervalSince1970: 181), refreshInterval: 60))
     }
 }
 
@@ -136,5 +150,74 @@ final class UsageCreditsTests: XCTestCase {
         runner.usageOutput = ""
         await model.refreshUsage()
         await MainActor.run { XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 1) }
+    }
+
+    func testOverageTextNextToAReport() throws {
+        let stream = try Fixtures.string("usage-stream.jsonl")
+            .replacingOccurrences(of: "You are currently using your subscription", with: "You are currently using your overages")
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(stream, updatedAt: now))
+        XCTAssertEqual(usage.fiveHour?.usedPercentage, 5, "the report's windows are still used")
+        XCTAssertTrue(usage.reportsUsingCredits)
+        XCTAssertTrue(usage.isUsingCredits, "on credits with no window at 100%")
+    }
+
+    func testAReportWithoutUsableWindowsFallsBackToTheText() throws {
+        let fixture = try Fixtures.string("usage-stream.jsonl")
+        // Kinds this version doesn't know (another account type, or renamed).
+        let renamed = fixture.replacingOccurrences(of: #""kind":"session""#, with: #""kind":"session_v2""#)
+            .replacingOccurrences(of: #""kind":"weekly_all""#, with: #""kind":"weekly_v2""#)
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(renamed, updatedAt: now))
+        XCTAssertEqual(usage.fiveHour?.usedPercentage, 5)
+        XCTAssertEqual(usage.sevenDay?.usedPercentage, 42)
+        XCTAssertNil(usage.fiveHour?.resetsAt, "from the text")
+        XCTAssertEqual(usage.credits?.usedCredits, 2000, "credits still come from the report")
+
+        // `"rate_limits": null`
+        let noLimits = fixture.replacingOccurrences(of: #""rate_limits":{"limits":"#, with: #""rate_limits":null,"unused":{"limits":"#)
+        let fromText = try XCTUnwrap(UsageSnapshot.parseUsageStream(noLimits, updatedAt: now))
+        XCTAssertEqual(fromText.sevenDay?.usedPercentage, 42)
+        XCTAssertNil(fromText.credits)
+    }
+
+    func testPlanNameWhenUsageAnswersBeforeSignIn() async throws {
+        let runner = FakeRunner()
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
+        let model = try await MainActor.run {
+            AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                     hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                     locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
+        }
+        await model.refreshUsage()
+        await MainActor.run { XCTAssertNil(model.usage?.subscriptionType, "sign-in not checked yet") }
+        await model.checkEnvironment()
+        await MainActor.run { XCTAssertEqual(model.usage?.subscriptionType, "pro", "applied once sign-in is known") }
+        await model.refreshUsage()
+        await MainActor.run { XCTAssertEqual(model.usage?.subscriptionType, "pro") }
+    }
+
+    func testUnreadableUsageIsLoggedOnce() async throws {
+        let runner = FakeRunner()
+        runner.usageOutput = "Error: something went wrong\n"
+        let model = try await MainActor.run {
+            AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                     hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                     locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
+        }
+        await model.refreshUsage()
+        await model.refreshUsage()
+        try await MainActor.run {
+            XCTAssertNil(model.usage)
+            XCTAssertEqual(model.log.entries.filter { $0.title == "Couldn't read plan usage" }.count, 1)
+            let command = try XCTUnwrap(model.log.entries.first { $0.title.contains("/usage") })
+            XCTAssertTrue(command.detail?.contains("Error: something went wrong") ?? false, "output that isn't a report is logged as it is")
+        }
+        runner.usageOutput = try Fixtures.string("usage-stream.jsonl")
+        await model.refreshUsage()
+        runner.usageOutput = "Error: something went wrong\n"
+        await model.refreshUsage()
+        await MainActor.run {
+            XCTAssertEqual(model.log.entries.filter { $0.title == "Couldn't read plan usage" }.count, 2, "logged again after a good reading")
+            XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42, "the last reading is kept")
+        }
     }
 }
