@@ -148,12 +148,13 @@ public final class AppModel {
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
-    @ObservationIgnored private let usageURL: URL?
-    @ObservationIgnored private var usageModified: Date?
     @ObservationIgnored private let statusDirectory: URL?
     @ObservationIgnored private var statusModified: [String: Date] = [:]
     @ObservationIgnored private var hookTailer: HookEventTailer
     @ObservationIgnored private let runner: CommandRunning
+    /// `/usage` ran but gave no figures; logged once until it reads again.
+    @ObservationIgnored private var usageUnreadable = false
+    @ObservationIgnored private var isRefreshingUsage = false
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored let locateGitHubCLI: () -> String?
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
@@ -168,7 +169,6 @@ public final class AppModel {
         store: StateStore,
         discovery: SessionDiscovery,
         hookEventsURL: URL,
-        usageURL: URL? = nil,
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
         git: String = GitChanges.defaultGit,
@@ -184,7 +184,6 @@ public final class AppModel {
         self.store = store
         self.discovery = discovery
         self.hookEventsURL = hookEventsURL
-        self.usageURL = usageURL
         self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
@@ -202,7 +201,7 @@ public final class AppModel {
             errorMessage = "Couldn't load saved sessions: \(AppModel.describe(error))"
         }
         log.append(.info, "Claudio started", detail: errorMessage)
-        pollUsage()
+        pollStatusLines()
         // Nothing is running at launch, whatever was saved.
         for session in state.workspace.sessions where session.status == .working {
             state.workspace.updateSession(session.id) { $0.status = .completed }
@@ -406,6 +405,11 @@ public final class AppModel {
                        detail: problems.isEmpty ? result.version.map { "Version \($0)" } : problems.joined(separator: "\n"))
         }
         if result != environment { environment = result }
+        // `/usage` can answer before `claude auth status` at launch.
+        if var current = usage, case let plan = plan(keeping: current.subscriptionType), plan != current.subscriptionType {
+            current.subscriptionType = plan
+            usage = current
+        }
     }
 
     /// `gh auth status` (account names stay out of the log).
@@ -1272,16 +1276,18 @@ public final class AppModel {
 
     /// Runs a CLI command off the main actor and records it in the log.
     /// Polling commands are only logged when their output changes or they fail.
+    /// `loggedOutput` picks what of stdout is logged and compared.
     func run(_ command: TerminalLaunch, logOnlyChanges: Bool = false, changeKey: String = "agents",
-                     hideOutput: Bool = false) async -> CommandResult {
+             hideOutput: Bool = false, loggedOutput: (String) -> String = { $0 }) async -> CommandResult {
         let started = Date()
         let result = await runner.run(command)
-        let changed = lastOutputs[changeKey] != result.output
-        if logOnlyChanges { lastOutputs[changeKey] = result.output }
+        let output = loggedOutput(result.output)
+        let changed = lastOutputs[changeKey] != output
+        if logOnlyChanges { lastOutputs[changeKey] = output }
         if !logOnlyChanges || changed || result.exitCode != 0 {
             let milliseconds = Int(Date().timeIntervalSince(started) * 1000)
             var detail = "exit \(result.exitCode) · \(milliseconds) ms · in \(command.workingDirectory)"
-            for (label, text) in hideOutput ? [] : [("stdout", result.output), ("stderr", result.errorOutput)] {
+            for (label, text) in hideOutput ? [] : [("stdout", output), ("stderr", result.errorOutput)] {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { detail += "\n\(label):\n" + String(trimmed.prefix(4000)) }
             }
@@ -1499,31 +1505,22 @@ public final class AppModel {
 
     // MARK: - Usage
 
-    /// Status line settings for launched sessions: records plan usage for the
-    /// app and still runs the user's own status line.
+    /// Status line settings for launched sessions: records each session's
+    /// context window and still runs the user's own status line.
     private func statusLineCapture() -> StatusLineCapture? {
-        guard let usageURL else { return nil }
+        guard let statusDirectory else { return nil }
         let userSettings = discovery.claudeHome.appendingPathComponent("settings.json")
-        return StatusLineCapture(statusDirectory: statusDirectory?.path, usagePath: usageURL.path,
-                                 userStatusLine: UserStatusLine.load(from: userSettings))
+        return StatusLineCapture(statusDirectory: statusDirectory.path, userStatusLine: UserStatusLine.load(from: userSettings))
     }
 
     public func context(for sessionID: UUID) -> ContextUsage? {
         contexts[sessionID] ?? estimatedContexts[sessionID]
     }
 
-    /// Re-reads usage and per-session status files that sessions' status lines
-    /// have updated since the last poll.
-    public func pollUsage() {
+    /// Re-reads the per-session status files (context windows) that
+    /// sessions' status lines have updated since the last poll.
+    public func pollStatusLines() {
         let fileManager = FileManager.default
-        if let usageURL,
-           let modified = (try? fileManager.attributesOfItem(atPath: usageURL.path))?[.modificationDate] as? Date,
-           modified != usageModified {
-            usageModified = modified
-            if let data = try? Data(contentsOf: usageURL), let snapshot = UsageSnapshot.parse(data, updatedAt: modified) {
-                adopt(snapshot)
-            }
-        }
         guard let statusDirectory,
               let files = try? fileManager.contentsOfDirectory(at: statusDirectory, includingPropertiesForKeys: [.contentModificationDateKey])
         else { return }
@@ -1539,21 +1536,55 @@ public final class AppModel {
         }
     }
 
-    /// Asks Claude Code for plan usage (`claude -p /usage`); no model call, so
-    /// it works before any session has run.
+    /// Asks Claude Code for plan usage (`claude -p /usage`), the one source of
+    /// it. No model call, so it works before any session has run. Claude Code
+    /// caches the answer for 60 s, shared by every process, so a reading can
+    /// be up to a minute old. A failed read keeps the last figures.
+    public static let usageRefreshInterval: TimeInterval = 60
+
     public func refreshUsage() async {
-        guard environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
-        let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage")
-        if result.exitCode == 0, let snapshot = UsageSnapshot.parseUsageCommand(result.output, updatedAt: now()) {
+        // At launch, coming to the front and the poll's first reading coincide.
+        guard !isRefreshingUsage, environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
+        isRefreshingUsage = true
+        defer { isRefreshingUsage = false }
+        // Log the text only: the stream's report includes credit spend, and
+        // its ids change every run. Output that isn't a report (an error, an
+        // older CLI) is logged as it is.
+        let result = await run(commands.usage(), logOnlyChanges: true, changeKey: "usage",
+                               loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? ($0.contains(#""usage_report""#) ? "" : $0) })
+        guard result.exitCode == 0 else { return }
+        if let snapshot = UsageSnapshot.parseUsageStream(result.output, updatedAt: now()) {
+            usageUnreadable = false
             adopt(snapshot)
+        } else if !usageUnreadable {
+            // Once per failure: `/usage` is the only source, so say why the
+            // figures stopped changing (e.g. a CLI update changed the format).
+            usageUnreadable = true
+            log.append(.error, "Couldn't read plan usage", detail: "claude -p /usage gave no usage figures. Plan usage keeps its last reading.")
         }
     }
 
+    /// When Claudio comes to the front: macOS can hold back a background
+    /// app's polling, so read again if the last reading is out of date.
+    public func refreshUsageIfDue() async {
+        if let usage, now().timeIntervalSince(usage.updatedAt) < AppModel.usageRefreshInterval { return }
+        await refreshUsage()
+    }
+
     private func adopt(_ snapshot: UsageSnapshot) {
-        guard usage.map({ snapshot.updatedAt >= $0.updatedAt }) ?? true else { return }
-        var merged = snapshot
-        if merged.subscriptionType == nil { merged.subscriptionType = usage?.subscriptionType }
-        usage = merged
+        var snapshot = snapshot
+        snapshot.subscriptionType = plan(keeping: usage?.subscriptionType)
+        if snapshot != usage { usage = snapshot }
+    }
+
+    /// The plan name ("pro", "max") from `claude auth status`. Until that has
+    /// answered, or when it can't, the last one known is kept.
+    private func plan(keeping last: String?) -> String? {
+        switch environment.signIn {
+        case .signedIn(let status): return status.plan ?? last
+        case .signedOut: return nil
+        case .unchecked, .unknown: return last
+        }
     }
 
     // MARK: - Settings

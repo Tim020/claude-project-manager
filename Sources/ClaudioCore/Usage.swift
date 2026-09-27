@@ -25,25 +25,122 @@ public struct UsageWindow: Equatable, Sendable {
         if hours < 24 { return "resets in \(hours)h \(minutes % 60)m" }
         return "resets in \(hours / 24)d \(hours % 24)h"
     }
+
+    /// The window as it stands at `now`: once its reset time has passed,
+    /// nothing is used until the next reading.
+    public func current(at now: Date) -> UsageWindow {
+        guard let resetsAt, resetsAt <= now else { return self }
+        return UsageWindow(usedPercentage: 0, resetsAt: nil)
+    }
 }
 
-/// Plan usage as Claude Code reports it to status line commands.
+/// Usage credits ("extra usage"): pay-as-you-go spend that Claude Code draws
+/// on once a plan limit is reached, if the account has it turned on.
+public struct UsageCredits: Equatable, Sendable {
+    public var isEnabled: Bool
+    /// Amounts are in the currency's minor units (pence, cents), as reported.
+    public var monthlyLimit: Double?
+    public var usedCredits: Double?
+    /// Percentage of the monthly limit spent.
+    public var utilization: Double?
+    public var currency: String?
+
+    public init(isEnabled: Bool, monthlyLimit: Double?, usedCredits: Double?, utilization: Double?, currency: String?) {
+        self.isEnabled = isEnabled
+        self.monthlyLimit = monthlyLimit
+        self.usedCredits = usedCredits
+        self.utilization = utilization
+        self.currency = currency
+    }
+
+    private var usedPercentage: Double? {
+        if let utilization { return utilization }
+        guard let usedCredits, let monthlyLimit, monthlyLimit > 0 else { return nil }
+        return usedCredits / monthlyLimit * 100
+    }
+
+    public var fraction: Double { min(1, max(0, (usedPercentage ?? 0) / 100)) }
+
+    /// The monthly limit is spent, so nothing is left to fall back on.
+    public var isExhausted: Bool { (usedPercentage ?? 0) >= 100 }
+
+    /// "£12.50 of £50.00", or a percentage when there's no currency to format.
+    public func amountLabel(locale: Locale = .current) -> String {
+        guard let currency, let usedCredits else { return usedPercentage.map { "\(Int($0.rounded(.down)))% used" } ?? "" }
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        // Minor units per major unit follow the currency (2 digits for GBP, 0
+        // for JPY). Set explicitly: Linux Foundation keeps 2 for every currency.
+        let digits = UsageCredits.fractionDigits(currency)
+        formatter.minimumFractionDigits = digits
+        formatter.maximumFractionDigits = digits
+        let scale = pow(10, Double(digits))
+        func format(_ minor: Double) -> String {
+            formatter.string(from: NSNumber(value: minor / scale)) ?? "\(minor / scale) \(currency)"
+        }
+        guard let monthlyLimit else { return "\(format(usedCredits)) used" }
+        return "\(format(usedCredits)) of \(format(monthlyLimit))"
+    }
+
+    /// ISO 4217 minor-unit digits; most currencies have 2.
+    static func fractionDigits(_ currency: String) -> Int {
+        switch currency.uppercased() {
+        case "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF": return 0
+        case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND": return 3
+        default: return 2
+        }
+    }
+}
+
+/// Plan usage from `claude -p /usage`.
 public struct UsageSnapshot: Equatable, Sendable {
     public var fiveHour: UsageWindow?
     public var sevenDay: UsageWindow?
     public var subscriptionType: String?
     public var updatedAt: Date
+    /// Usage credits, from `/usage`'s report.
+    public var credits: UsageCredits? = nil
+    /// `claude /usage` said "You are currently using your overages". Only a
+    /// positive signal: in `-p` mode it hasn't asked the API, so it can say
+    /// "subscription" while credits are in use.
+    public var reportsUsingCredits = false
 
-    /// Parses a status line input (`rate_limits.five_hour` / `seven_day`).
-    public static func parse(_ data: Data, updatedAt: Date) -> UsageSnapshot? {
-        guard let value = try? JSONDecoder().decode(JSONValue.self, from: data), let limits = value["rate_limits"] else { return nil }
-        func window(_ key: String) -> UsageWindow? {
-            guard let used = limits[key]?["used_percentage"]?.doubleValue else { return nil }
-            return UsageWindow(usedPercentage: used, resetsAt: limits[key]?["resets_at"]?.doubleValue.map { Date(timeIntervalSince1970: $0) })
-        }
-        let snapshot = UsageSnapshot(fiveHour: window("five_hour"), sevenDay: window("seven_day"),
-                                     subscriptionType: value["subscription_type"]?.stringValue, updatedAt: updatedAt)
-        return snapshot.fiveHour == nil && snapshot.sevenDay == nil ? nil : snapshot
+    /// The snapshot as it stands at `now` (see `UsageWindow.current(at:)`),
+    /// so the bars and credit badges follow a reset between readings.
+    public func current(at now: Date) -> UsageSnapshot {
+        var snapshot = self
+        snapshot.fiveHour = fiveHour?.current(at: now)
+        snapshot.sevenDay = sevenDay?.current(at: now)
+        // The overage header described the state before the reset.
+        if snapshot.fiveHour != fiveHour || snapshot.sevenDay != sevenDay { snapshot.reportsUsingCredits = false }
+        return snapshot
+    }
+
+    /// No reading has arrived for several polls (signed out, the CLI failing),
+    /// so the figures may be out of date.
+    public func isStale(at now: Date, refreshInterval: TimeInterval) -> Bool {
+        now.timeIntervalSince(updatedAt) > 3 * refreshInterval
+    }
+
+    /// A plan window is full, so Claude Code is either on credits or blocked.
+    public var isAtPlanLimit: Bool {
+        [fiveHour, sevenDay].contains { ($0?.usedPercentage ?? 0) >= 100 }
+    }
+
+    /// Claude Code is drawing on usage credits instead of the plan's limits.
+    /// Worked out from the windows, because `/usage`'s overage header isn't
+    /// reliable in `-p` mode.
+    public var isUsingCredits: Bool {
+        guard let credits, credits.isEnabled, !credits.isExhausted else { return false }
+        return isAtPlanLimit || reportsUsingCredits
+    }
+
+    /// A plan limit is reached and the month's usage credits are spent too.
+    public var isOutOfCredits: Bool {
+        guard let credits, credits.isEnabled else { return false }
+        return isAtPlanLimit && credits.isExhausted
     }
 }
 
@@ -65,7 +162,80 @@ extension UsageSnapshot {
             let window = UsageWindow(usedPercentage: percent, resetsAt: nil, resetText: reset)
             if line[titleRange] == "Current session" { snapshot.fiveHour = window } else { snapshot.sevenDay = window }
         }
+        snapshot.reportsUsingCredits = output.contains("currently using your overages")
         return snapshot.fiveHour == nil && snapshot.sevenDay == nil ? nil : snapshot
+    }
+
+    /// Parses `claude -p /usage --output-format stream-json --verbose`. Its
+    /// `usage_report` has exact reset times and usage credits, which the text
+    /// doesn't show. Falls back to the text when there's no report.
+    public static func parseUsageStream(_ output: String, updatedAt: Date) -> UsageSnapshot? {
+        var report: JSONValue?
+        let text = usageText(fromStream: output)
+        for line in output.split(separator: "\n") where line.hasPrefix("{") {
+            if let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)),
+               let value = event["usage_report"], value["rate_limits"] != nil {
+                report = value
+            }
+        }
+        guard let report else { return text.flatMap { parseUsageCommand($0, updatedAt: updatedAt) } }
+
+        var snapshot = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: updatedAt)
+        let limits = report["rate_limits"]
+        for limit in limits?["limits"]?.arrayValue ?? [] {
+            guard let percent = limit["percent"]?.doubleValue else { continue }
+            let window = UsageWindow(usedPercentage: percent, resetsAt: limit["resets_at"]?.stringValue.flatMap(parseResetDate))
+            // The other kind, `weekly_scoped`, is one model's weekly limit
+            // ("Current week (Sonnet)"). Reaching it blocks only that model,
+            // so it doesn't count towards being on credits, and isn't shown.
+            switch limit["kind"]?.stringValue {
+            case "session": snapshot.fiveHour = window
+            case "weekly_all": snapshot.sevenDay = window
+            default: break
+            }
+        }
+        if let extra = limits?["extra_usage"], let enabled = extra["is_enabled"]?.boolValue {
+            snapshot.credits = UsageCredits(isEnabled: enabled, monthlyLimit: extra["monthly_limit"]?.doubleValue,
+                                            usedCredits: extra["used_credits"]?.doubleValue,
+                                            utilization: extra["utilization"]?.doubleValue,
+                                            currency: extra["currency"]?.stringValue)
+        }
+        snapshot.reportsUsingCredits = text?.contains("currently using your overages") == true
+        if snapshot.fiveHour == nil && snapshot.sevenDay == nil {
+            guard var fallback = text.flatMap({ parseUsageCommand($0, updatedAt: updatedAt) }) else { return nil }
+            fallback.credits = snapshot.credits
+            return fallback
+        }
+        return snapshot
+    }
+
+    /// The human-readable `/usage` text inside stream-json output: the result
+    /// event's `result`, else the assistant message's text. Also what the
+    /// Activity Log shows, since the report has account details (credit spend).
+    public static func usageText(fromStream output: String) -> String? {
+        var assistantText: String?
+        for line in output.split(separator: "\n") where line.hasPrefix("{") {
+            guard let event = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else { continue }
+            switch event["type"]?.stringValue {
+            case "result":
+                if let result = event["result"]?.stringValue, !result.isEmpty { return result }
+            case "assistant":
+                let parts = event["message"]?["content"]?.arrayValue?.compactMap { $0["text"]?.stringValue } ?? []
+                if !parts.isEmpty { assistantText = parts.joined(separator: "\n") }
+            default:
+                break
+            }
+        }
+        return assistantText
+    }
+
+    /// "2026-09-27T03:49:59.519416+00:00". Fractional seconds are dropped:
+    /// Linux Foundation's ISO 8601 parsing doesn't take microseconds.
+    static func parseResetDate(_ text: String) -> Date? {
+        let whole = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: whole)
     }
 }
 
@@ -142,33 +312,25 @@ public struct UserStatusLine: Equatable, Sendable {
 }
 
 /// A status line command for the sessions the app launches: it saves Claude
-/// Code's status line input (which includes plan usage) for the app, then runs
-/// the user's own status line command, if any, so their status line is unchanged.
+/// Code's status line input (for the session's context window), then runs the
+/// user's own status line command, if any, so their status line is unchanged.
+/// Plan usage comes from `claude -p /usage` instead: each session's input
+/// repeats the rate limits from its own last request, so idle ones are stale.
 public struct StatusLineCapture: Equatable, Sendable {
-    /// Where each session's latest status line input is kept (for its context
-    /// window), as `<directory>/<app session id>.json`.
-    public var statusDirectory: String?
-    public var usagePath: String
+    /// Where each session's latest status line input is kept, as
+    /// `<directory>/<app session id>.json`.
+    public var statusDirectory: String
     public var userStatusLine: UserStatusLine?
-    /// Re-run periodically so usage stays fresh while a session is idle.
-    public static let refreshInterval = 60
 
-    public init(statusDirectory: String? = nil, usagePath: String, userStatusLine: UserStatusLine?) {
+    public init(statusDirectory: String, userStatusLine: UserStatusLine?) {
         self.statusDirectory = statusDirectory
-        self.usagePath = usagePath
         self.userStatusLine = userStatusLine
     }
 
-    public var command: String { command(for: nil) }
-
-    public func command(for appSessionID: UUID?) -> String {
-        let path = ShellQuote.quote(usagePath)
-        var command = #"input=$(cat); printf '%s' "$input" > \#(path).$$ && mv -f \#(path).$$ \#(path); "#
-        if let statusDirectory, let appSessionID {
-            let directory = ShellQuote.quote(statusDirectory)
-            let file = ShellQuote.quote((statusDirectory as NSString).appendingPathComponent("\(appSessionID.uuidString).json"))
-            command += #"mkdir -p \#(directory) && printf '%s' "$input" > \#(file).$$ && mv -f \#(file).$$ \#(file); "#
-        }
+    public func command(for appSessionID: UUID) -> String {
+        let directory = ShellQuote.quote(statusDirectory)
+        let file = ShellQuote.quote((statusDirectory as NSString).appendingPathComponent("\(appSessionID.uuidString).json"))
+        var command = #"input=$(cat); mkdir -p \#(directory) && printf '%s' "$input" > \#(file).$$ && mv -f \#(file).$$ \#(file); "#
         if let user = userStatusLine {
             command += #"printf '%s' "$input" | sh -c \#(ShellQuote.quote(user.command))"#
         } else {
@@ -177,11 +339,10 @@ public struct StatusLineCapture: Equatable, Sendable {
         return command
     }
 
-    func settingsValue(for appSessionID: UUID?) -> JSONValue {
+    func settingsValue(for appSessionID: UUID) -> JSONValue {
         var object: [String: JSONValue] = [
             "type": .string("command"),
             "command": .string(command(for: appSessionID)),
-            "refreshInterval": .number(Double(StatusLineCapture.refreshInterval)),
         ]
         if let padding = userStatusLine?.padding { object["padding"] = .number(Double(padding)) }
         return .object(object)

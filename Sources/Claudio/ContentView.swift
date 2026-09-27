@@ -119,37 +119,43 @@ struct ContentView: View {
             model.appIsActive = true
             Task { await model.refreshAll() }
             Task { await model.checkEnvironment() }
+            Task { await model.refreshUsageIfDue() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             model.appIsActive = false
         }
         .onAppear { model.appIsActive = NSApp.isActive }
-        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
-            Task { await model.refreshAll() }
+        // Polling runs in `.task` loops, not `onReceive(Timer.publish(…))`:
+        // this body is re-evaluated whenever any session changes, and each
+        // re-evaluation would restart the timers (see `Polling.every`).
+        .task {
+            await Polling.every(30) { await model.refreshAll() }
         }
-        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
-            // Status updates from the Claude Code hooks of running sessions.
-            model.pollHookEvents()
-            model.pollUsage()
-            model.updateMenuFlags()
-            model.checkNotifications()
-            // Files Changed: reload visible sessions after their tool calls.
-            let visible = model.visibleSessionIDs
-            if !visible.isEmpty { Task { await model.refreshChangesIfNeeded(visible) } }
+        .task {
+            await Polling.every(0.5) {
+                // Status updates from the Claude Code hooks of running sessions.
+                model.pollHookEvents()
+                model.pollStatusLines()
+                model.updateMenuFlags()
+                model.checkNotifications()
+                // Files Changed: reload visible sessions after their tool calls.
+                let visible = model.visibleSessionIDs
+                if !visible.isEmpty { Task { await model.refreshChangesIfNeeded(visible) } }
+            }
         }
-        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
-            // Also catch changes made outside tool calls (shell commands, your editor).
-            if let id = model.selectedSessionID { Task { await model.refreshChanges(for: id) } }
+        .task {
+            await Polling.every(15) {
+                // Also catch changes made outside tool calls (shell commands, your editor).
+                if let id = model.selectedSessionID { await model.refreshChanges(for: id) }
+            }
         }
-        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+        .task {
             // Background agents: liveness, state and titles from `claude agents --json`.
-            Task { await model.refreshAgents() }
+            await Polling.every(3, startNow: true) { await model.refreshAgents() }
         }
-        .task { await model.refreshAgents() }
-        .task { await model.refreshUsage() }
-        .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in
+        .task {
             // Plan usage via `claude -p /usage` (no model call).
-            Task { await model.refreshUsage() }
+            await Polling.every(AppModel.usageRefreshInterval, startNow: true) { await model.refreshUsage() }
         }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
