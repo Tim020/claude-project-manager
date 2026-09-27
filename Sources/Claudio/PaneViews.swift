@@ -107,16 +107,22 @@ private struct PaneGroupView: View {
 
     var body: some View {
         let isFocused = model.panes.focusedGroupID == group.id
-        let tabs = model.tabs(inPane: group)
+        let tabs = model.paneTabs(inPane: group)
         VStack(spacing: 0) {
-            TabStrip(group: group, sessions: tabs, isFocusedPane: isFocused)
+            TabStrip(group: group, tabs: tabs, isFocusedPane: isFocused)
             GeometryReader { geometry in
                 ZStack {
-                    if let session = tabs.first(where: { $0.id == group.selectedTabID }) {
+                    switch tabs.first(where: { $0.id == group.selectedTabID }) {
+                    case .session(let session)?:
                         SessionPane(session: session, style: model.panes.isSplit ? .compact(isFocused: isFocused) : .full)
                             .id(session.id)
                             .simultaneousGesture(TapGesture().onEnded { model.focusPane(group.id) })
-                    } else {
+                    case .overview(let tab)?:
+                        // Pull Requests (design 5), in a pane like any tab.
+                        OverviewView(overview: tab.overview)
+                            .id(tab.id)
+                            .simultaneousGesture(TapGesture().onEnded { model.focusPane(group.id) })
+                    case nil:
                         DS.window
                     }
                     if let target = commands.dropTarget, target.groupID == group.id {

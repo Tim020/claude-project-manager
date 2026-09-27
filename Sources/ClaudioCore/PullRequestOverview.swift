@@ -1,10 +1,40 @@
 import Foundation
 
-/// What the detail area shows instead of a session: a project's pull
-/// requests, or one folder's.
-public enum Overview: Hashable, Sendable {
+/// A tab that shows pull requests rather than a session: a project's, or
+/// one folder's (or Unfiled's).
+public enum Overview: Hashable, Codable, Sendable {
     case project(UUID)
     case folder(SessionGroup)
+}
+
+/// What a pane's tab shows.
+public enum PaneTab: Equatable, Identifiable, Sendable {
+    case session(Session)
+    case overview(OverviewTab)
+
+    public var id: UUID {
+        switch self {
+        case .session(let session): return session.id
+        case .overview(let tab): return tab.id
+        }
+    }
+
+    public var session: Session? {
+        if case .session(let session) = self { return session }
+        return nil
+    }
+}
+
+/// An open overview tab. Its id is the tab's id in the panes, alongside
+/// session ids.
+public struct OverviewTab: Codable, Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public var overview: Overview
+
+    public init(id: UUID = UUID(), overview: Overview) {
+        self.id = id
+        self.overview = overview
+    }
 }
 
 /// The project overview's filter tabs.

@@ -224,7 +224,90 @@ func hasPullRequests(_ model: AppModel, projectID: UUID) -> Bool {
 
 // MARK: - Overviews
 
-/// The detail area for a project's or folder's pull requests.
+/// The detail header while an overview tab has focus (in place of a
+/// session's breadcrumbs): where it is, how fresh, and a way to GitHub.
+struct OverviewHeader: View {
+    @Environment(AppModel.self) private var model
+    let overview: Overview
+
+    var body: some View {
+        switch overview {
+        case .project(let projectID): projectHeader(projectID)
+        case .folder(let group): folderHeader(group)
+        }
+    }
+
+    private func projectHeader(_ projectID: UUID) -> some View {
+        let project = model.workspace.project(projectID)
+        let loaded = model.pullRequests(forProject: projectID)
+        return HStack(spacing: 10) {
+            Text(project?.name ?? "")
+                .font(DS.font(13))
+                .foregroundStyle(DS.muted)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(DS.dim)
+            Text("Pull Requests")
+                .font(DS.font(14, .bold))
+                .foregroundStyle(DS.text)
+            if let repository = loaded?.repository {
+                Text(repository.nameWithOwner)
+                    .font(DS.mono(11.5))
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 10)
+            PullRequestsFreshness(projectID: projectID)
+            if let repository = loaded?.repository {
+                Button("Open on GitHub") { openOnGitHub(repository.url + "/pulls") }
+                    .buttonStyle(OutlineButtonStyle())
+                    .help("Open the repository's pull requests in your browser")
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 52)
+        .background(DS.sidebar)
+        .overlay(alignment: .bottom) { HorizontalRule() }
+    }
+
+    private func folderHeader(_ group: SessionGroup) -> some View {
+        let projectID = model.workspace.projectID(of: group)
+        let isUnfiled: Bool = { if case .unfiled = group { return true } else { return false } }()
+        let sessions = model.workspace.sessions(in: group).count
+        let pullRequests = model.pullRequests(in: group).count
+        return HStack(spacing: 10) {
+            if let projectID, let project = model.workspace.project(projectID) {
+                Button { model.showOverview(.project(projectID)) } label: {
+                    Text(project.name).font(DS.font(13)).foregroundStyle(DS.muted)
+                }
+                .buttonStyle(.plain)
+                .help("All of \(project.name)'s pull requests")
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.dim)
+            }
+            Image(systemName: isUnfiled ? "tray" : "folder")
+                .font(.system(size: 14))
+                .foregroundStyle(isUnfiled ? DS.dim : DS.blue)
+            Text(model.workspace.name(of: group))
+                .font(DS.font(14, .bold, italic: isUnfiled))
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+            Text("\(sessions) \(sessions == 1 ? "session" : "sessions") · \(pullRequests) \(pullRequests == 1 ? "pull request" : "pull requests")")
+                .font(DS.font(12))
+                .foregroundStyle(DS.dim)
+                .lineLimit(1)
+            Spacer(minLength: 10)
+            if let projectID { PullRequestsFreshness(projectID: projectID) }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 52)
+        .background(DS.sidebar)
+        .overlay(alignment: .bottom) { Rectangle().fill(DS.blue).frame(height: 1.6) }
+    }
+}
+
+/// An overview tab's content, in its pane.
 struct OverviewView: View {
     let overview: Overview
 
@@ -243,40 +326,16 @@ struct ProjectPullRequestsView: View {
     let projectID: UUID
 
     static let columns: [CGFloat] = [80, 96, 128, 120, 84, 44]
+    /// Narrower than this (a docked pane), the table drops its Sessions,
+    /// Changes and Updated columns.
+    static let compactWidth: CGFloat = 760
+
+    @State private var width: CGFloat = 1000
+
+    private var compact: Bool { width < ProjectPullRequestsView.compactWidth }
 
     var body: some View {
-        let project = model.workspace.project(projectID)
-        let loaded = model.pullRequests(forProject: projectID)
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Text(project?.name ?? "")
-                    .font(DS.font(13))
-                    .foregroundStyle(DS.muted)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(DS.dim)
-                Text("Pull Requests")
-                    .font(DS.font(14, .bold))
-                    .foregroundStyle(DS.text)
-                if let repository = loaded?.repository {
-                    Text(repository.nameWithOwner)
-                        .font(DS.mono(11.5))
-                        .foregroundStyle(DS.dim)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 10)
-                PullRequestsFreshness(projectID: projectID)
-                if let repository = loaded?.repository {
-                    Button("Open on GitHub") { openOnGitHub(repository.url + "/pulls") }
-                        .buttonStyle(OutlineButtonStyle())
-                        .help("Open the repository's pull requests in your browser")
-                }
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 52)
-            .background(DS.sidebar)
-            .overlay(alignment: .bottom) { HorizontalRule() }
-
             if hasPullRequests(model, projectID: projectID) {
                 filterBar
                 columnHeader
@@ -286,7 +345,7 @@ struct ProjectPullRequestsView: View {
                         ForEach(groups) { group in
                             groupHeader(group)
                             ForEach(group.pullRequests) { pullRequest in
-                                ProjectPullRequestRow(pullRequest: pullRequest, projectID: projectID)
+                                ProjectPullRequestRow(pullRequest: pullRequest, projectID: projectID, compact: compact)
                             }
                         }
                         if groups.isEmpty {
@@ -302,6 +361,10 @@ struct ProjectPullRequestsView: View {
                 PullRequestsUnavailable(projectID: projectID)
             }
         }
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear { width = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, new in width = new }
+        })
         .task(id: projectID) { await model.refreshPullRequests(projectID) }
     }
 
@@ -356,9 +419,11 @@ struct ProjectPullRequestsView: View {
             ColumnCaption(text: "STATE").column(0)
             ColumnCaption(text: "CHECKS").column(1)
             ColumnCaption(text: "REVIEW").column(2)
-            ColumnCaption(text: "SESSIONS").column(3)
-            ColumnCaption(text: "CHANGES").column(4, alignment: .trailing)
-            ColumnCaption(text: "UPDATED").column(5, alignment: .trailing)
+            if !compact {
+                ColumnCaption(text: "SESSIONS").column(3)
+                ColumnCaption(text: "CHANGES").column(4, alignment: .trailing)
+                ColumnCaption(text: "UPDATED").column(5, alignment: .trailing)
+            }
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 20)
@@ -396,6 +461,7 @@ private struct ProjectPullRequestRow: View {
     @Environment(AppModel.self) private var model
     let pullRequest: PullRequestInfo
     let projectID: UUID
+    let compact: Bool
     @State private var hovering = false
 
     var body: some View {
@@ -434,14 +500,16 @@ private struct ProjectPullRequestRow: View {
                     .font(DS.font(12.5))
                     .lineLimit(2)
                     .column(2)
-                SessionChips(sessions: sessions)
-                    .column(3)
-                LineCounts(additions: pullRequest.additions, deletions: pullRequest.deletions)
-                    .column(4, alignment: .trailing)
-                Text(pullRequest.updatedAt.map { RelativeAge.string(from: $0, now: context.date) } ?? "")
-                    .font(DS.font(12))
-                    .foregroundStyle(DS.muted)
-                    .column(5, alignment: .trailing)
+                if !compact {
+                    SessionChips(sessions: sessions)
+                        .column(3)
+                    LineCounts(additions: pullRequest.additions, deletions: pullRequest.deletions)
+                        .column(4, alignment: .trailing)
+                    Text(pullRequest.updatedAt.map { RelativeAge.string(from: $0, now: context.date) } ?? "")
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.muted)
+                        .column(5, alignment: .trailing)
+                }
             }
         }
         .padding(.vertical, 8)
@@ -552,42 +620,16 @@ struct Checkbox: View {
 struct FolderPullRequestsView: View {
     @Environment(AppModel.self) private var model
     let group: SessionGroup
+    /// Narrower than this (a docked pane), each card's Checks, Review and
+    /// Sessions stack instead of sitting side by side.
+    static let stackedWidth: CGFloat = 720
+
+    @State private var width: CGFloat = 1000
 
     var body: some View {
         let projectID = model.workspace.projectID(of: group)
         let pullRequests = model.pullRequests(in: group)
-        let sessions = model.workspace.sessions(in: group)
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if let projectID, let project = model.workspace.project(projectID) {
-                    Button { model.showOverview(.project(projectID)) } label: {
-                        Text(project.name).font(DS.font(13)).foregroundStyle(DS.muted)
-                    }
-                    .buttonStyle(.plain)
-                    .help("All of \(project.name)'s pull requests")
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(DS.dim)
-                }
-                Image(systemName: isUnfiled ? "tray" : "folder")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isUnfiled ? DS.dim : DS.blue)
-                Text(model.workspace.name(of: group))
-                    .font(DS.font(14, .bold, italic: isUnfiled))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                Text(summary(sessions: sessions.count, pullRequests: pullRequests.count))
-                    .font(DS.font(12))
-                    .foregroundStyle(DS.dim)
-                    .lineLimit(1)
-                Spacer(minLength: 10)
-                if let projectID { PullRequestsFreshness(projectID: projectID) }
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 52)
-            .background(DS.sidebar)
-            .overlay(alignment: .bottom) { Rectangle().fill(DS.blue).frame(height: 1.6) }
-
             if let projectID, !hasPullRequests(model, projectID: projectID) {
                 PullRequestsUnavailable(projectID: projectID)
             } else if pullRequests.isEmpty {
@@ -608,7 +650,8 @@ struct FolderPullRequestsView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         ForEach(pullRequests) { pullRequest in
-                            PullRequestCard(pullRequest: pullRequest, projectID: projectID ?? UUID())
+                            PullRequestCard(pullRequest: pullRequest, projectID: projectID ?? UUID(),
+                                            stacked: width < FolderPullRequestsView.stackedWidth)
                             if let threads = model.reviewThreads[pullRequest.key], !threads.isEmpty {
                                 UnresolvedComments(threads: threads)
                             }
@@ -618,26 +661,23 @@ struct FolderPullRequestsView: View {
                 }
             }
         }
+        .background(GeometryReader { geometry in
+            Color.clear.onAppear { width = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, new in width = new }
+        })
         .task(id: group) {
             if let projectID { await model.refreshPullRequests(projectID) }
             await model.loadReviewThreads(for: model.pullRequests(in: group))
         }
     }
 
-    private var isUnfiled: Bool {
-        if case .unfiled = group { return true }
-        return false
-    }
-
-    private func summary(sessions: Int, pullRequests: Int) -> String {
-        "\(sessions) \(sessions == 1 ? "session" : "sessions") · \(pullRequests) \(pullRequests == 1 ? "pull request" : "pull requests")"
-    }
 }
 
 private struct PullRequestCard: View {
     @Environment(AppModel.self) private var model
     let pullRequest: PullRequestInfo
     let projectID: UUID
+    let stacked: Bool
     @State private var showAllChecks = false
 
     var body: some View {
@@ -679,14 +719,24 @@ private struct PullRequestCard: View {
                 .padding(.horizontal, 18)
                 .overlay(alignment: .bottom) { HorizontalRule() }
 
-                HStack(alignment: .top, spacing: 0) {
-                    checksColumn
-                    VerticalRule()
-                    reviewColumn(now: context.date)
-                    VerticalRule()
-                    sessionsColumn
+                if stacked {
+                    VStack(spacing: 0) {
+                        checksColumn
+                        HorizontalRule()
+                        reviewColumn(now: context.date)
+                        HorizontalRule()
+                        sessionsColumn
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 0) {
+                        checksColumn
+                        VerticalRule()
+                        reviewColumn(now: context.date)
+                        VerticalRule()
+                        sessionsColumn
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
             .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
         }
@@ -1153,7 +1203,7 @@ struct PullRequestsSidebarRow: View {
         let items = model.pullRequests(forProject: projectID)?.items ?? []
         let attention = items.filter(\.needsAttention).count
         let open = items.filter(\.isOpen).count
-        let selected = model.overview == .project(projectID)
+        let selected = model.selectedOverview == .project(projectID)
         HStack(spacing: 7) {
             Spacer().frame(width: 8)
             Image(systemName: "arrow.triangle.pull")

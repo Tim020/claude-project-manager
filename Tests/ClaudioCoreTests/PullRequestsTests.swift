@@ -187,6 +187,54 @@ final class PullRequestStatusTests: XCTestCase {
     }
 }
 
+final class OverviewTabTests: XCTestCase {
+    func testOpenReuseCloseAndPersist() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/repo")
+        let f = try ws.createFolder(in: p, named: "F")
+        let s = Session(projectID: p, name: "s", workingDirectory: "/repo")
+        try ws.addSession(s, toFolder: f)
+        ws.selectTab(s.id)
+
+        let projectTab = try XCTUnwrap(ws.openOverview(.project(p)))
+        let folderTab = try XCTUnwrap(ws.openOverview(.folder(.folder(f))))
+        XCTAssertEqual(ws.openOverview(.project(p)), projectTab, "one tab per overview")
+        XCTAssertEqual(ws.openTabIDs, [s.id, projectTab, folderTab])
+        XCTAssertEqual(ws.panes.focusedTabID, projectTab)
+        XCTAssertNil(ws.openOverview(.project(UUID())), "no such project")
+
+        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: JSONFileStore.encoder.encode(ws))
+        XCTAssertEqual(decoded.overviewTabs, ws.overviewTabs)
+        XCTAssertEqual(decoded.openTabIDs, ws.openTabIDs)
+
+        ws.closeTab(projectTab)
+        XCTAssertEqual(ws.overviewTabs.map(\.id), [folderTab], "a closed overview tab is forgotten")
+        ws.deleteFolder(f)
+        XCTAssertTrue(ws.overviewTabs.isEmpty)
+        XCTAssertEqual(ws.openTabIDs, [s.id])
+
+        ws.openOverview(.project(p))
+        ws.removeProject(p)
+        XCTAssertTrue(ws.overviewTabs.isEmpty)
+        XCTAssertTrue(ws.openTabIDs.isEmpty)
+    }
+
+    func testDecodingDropsOverviewsOfMissingFolders() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/repo")
+        let tab = try XCTUnwrap(ws.openOverview(.folder(.folder(UUID()))) ?? ws.openOverview(.project(p)))
+        var json = try JSONSerialization.jsonObject(with: JSONFileStore.encoder.encode(ws)) as! [String: Any]
+        let gone = OverviewTab(overview: .folder(.folder(UUID())))
+        var tabs = json["overviewTabs"] as! [Any]
+        tabs.append(try JSONSerialization.jsonObject(with: JSONFileStore.encoder.encode(gone)))
+        json["overviewTabs"] = tabs
+        json["openSessionIDs"] = [tab.uuidString, gone.id.uuidString]
+        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.openTabIDs, [tab])
+        XCTAssertEqual(decoded.overviewTabs.map(\.id), [tab])
+    }
+}
+
 final class PullRequestOverviewTests: XCTestCase {
     var workspace = Workspace()
     var project = UUID()
@@ -344,19 +392,47 @@ final class PullRequestModelTests: XCTestCase {
         XCTAssertTrue(runner.calls.isEmpty)
     }
 
-    func testOverviewClosesWhenASessionIsSelected() async throws {
+    func testOverviewsOpenAsTabsInTheFocusedPane() async throws {
         let (model, project, session) = try await MainActor.run { try makeModel(FakeGitHub()) }
         await MainActor.run {
-            model.showOverview(.project(project))
-            XCTAssertEqual(model.overview, .project(project))
             model.select(session)
-            XCTAssertNil(model.overview)
+            model.showOverview(.project(project))
+            let tab = try? XCTUnwrap(model.workspace.overviewTabs.first)
+            XCTAssertEqual(model.selectedOverview, .project(project))
+            XCTAssertEqual(model.panes.groups.count, 1)
+            XCTAssertEqual(model.paneTabs(inPane: model.panes.groups[0]).map(\.id), [session, tab!.id],
+                           "beside the session's tab, in the same pane")
+            XCTAssertNil(model.selectedSession)
+            XCTAssertEqual(model.selectedGroup, .unfiled(projectID: project), "New Session starts in the project")
 
+            // Selecting the session keeps the overview's tab; opening the
+            // overview again shows that tab rather than a second one.
+            model.select(session)
+            XCTAssertNil(model.selectedOverview)
+            model.showOverview(.project(project))
+            XCTAssertEqual(model.workspace.overviewTabs.count, 1)
+            XCTAssertEqual(model.selectedSessionID, tab!.id)
+
+            // It docks like any tab.
+            model.dropTab(tab!.id, on: model.panes.groups[0].id, zone: .edge(.right))
+            XCTAssertEqual(model.panes.groups.map { $0.tabIDs }, [[session], [tab!.id]])
+
+            model.closeAllTabs()
+            XCTAssertTrue(model.workspace.overviewTabs.isEmpty)
+            XCTAssertTrue(model.workspace.openTabIDs.isEmpty)
+        }
+    }
+
+    func testFolderOverviewTabClosesWithItsFolder() async throws {
+        let (model, project, session) = try await MainActor.run { try makeModel(FakeGitHub()) }
+        await MainActor.run {
             let folder = model.createFolder(in: project, containing: session)!
             model.showOverview(.folder(.folder(folder)))
-            XCTAssertEqual(model.activeOverview, .folder(.folder(folder)))
+            XCTAssertEqual(model.selectedOverview, .folder(.folder(folder)))
+            XCTAssertEqual(model.selectedGroup, .folder(folder))
             model.deleteFolder(folder)
-            XCTAssertNil(model.activeOverview, "the folder has gone")
+            XCTAssertTrue(model.workspace.overviewTabs.isEmpty)
+            XCTAssertNil(model.selectedOverview)
         }
     }
 

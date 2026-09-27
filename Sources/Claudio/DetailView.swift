@@ -3,9 +3,9 @@ import AppKit
 import ClaudioCore
 import SwiftUI
 
-/// Right-hand side: breadcrumb header for the selected session, then the open
-/// tabs in panes that can be docked side by side and above one another
-/// (`PaneArea`).
+/// Right-hand side: a header for the focused tab (a session's breadcrumbs,
+/// or an overview's), then the open tabs in panes that can be docked side by
+/// side and above one another (`PaneArea`).
 struct DetailView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
@@ -14,21 +14,27 @@ struct DetailView: View {
 
     var body: some View {
         Group {
-            if let overview = model.activeOverview {
-                OverviewView(overview: overview)
-            } else if let session = model.selectedSession, let crumb = model.breadcrumb {
+            if model.selectedSession != nil || model.selectedOverview != nil {
+                // One view tree whichever kind of tab has focus, so the panes
+                // (and their terminals) aren't rebuilt when focus moves.
                 VStack(spacing: 0) {
-                    DetailHeader(session: session, breadcrumb: crumb)
+                    if let session = model.selectedSession, let crumb = model.breadcrumb {
+                        DetailHeader(session: session, breadcrumb: crumb)
+                    } else if let overview = model.selectedOverview {
+                        OverviewHeader(overview: overview)
+                    }
                     HStack(spacing: 0) {
                         PaneArea()
                         // Files Changed inspector (design 4a), beside the terminal.
-                        if model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
+                        if let session = model.selectedSession, model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
                             FilesInspector(session: session)
                         }
                     }
                     .frame(maxHeight: .infinity)
                 }
-                .task(id: session.id) { await model.refreshChanges(for: session.id) }
+                .task(id: model.selectedSession?.id) {
+                    if let id = model.selectedSession?.id { await model.refreshChanges(for: id) }
+                }
             } else {
                 emptyState
             }
@@ -212,7 +218,7 @@ struct TabStrip: View {
     @Environment(UICommands.self) private var commands
     @Environment(\.presentNewSession) private var presentNewSession
     let group: PaneGroup
-    let sessions: [Session]
+    let tabs: [PaneTab]
     let isFocusedPane: Bool
     @State private var isDropTarget = false
 
@@ -223,10 +229,10 @@ struct TabStrip: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
-                        ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                            TabItem(session: session, group: group, index: index,
-                                    isSelected: session.id == selectedID, isFocusedPane: isFocusedPane)
-                                .id(session.id)
+                        ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                            TabItem(tab: tab, group: group, index: index,
+                                    isSelected: tab.id == selectedID, isFocusedPane: isFocusedPane)
+                                .id(tab.id)
                         }
                     }
                 }
@@ -250,7 +256,7 @@ struct TabStrip: View {
             .buttonStyle(.plain)
             .help("New Session in Folder")
             Spacer(minLength: 0)
-            if let selected = sessions.first(where: { $0.id == selectedID }) {
+            if let selected = tabs.first(where: { $0.id == selectedID })?.session {
                 PaneModeSwitch(session: selected)
                     .padding(.leading, 8)
             }
@@ -270,8 +276,8 @@ struct TabStrip: View {
     private var overflowMenu: some View {
         Menu {
             Section("Open") {
-                ForEach(sessions) { session in
-                    Button(session.name) { model.select(session.id) }
+                ForEach(tabs) { tab in
+                    Button(tabTitle(tab, model: model)) { model.select(tab.id) }
                 }
             }
             let closed = model.closedTabs(besidePane: group)
@@ -286,7 +292,7 @@ struct TabStrip: View {
             Button("Close Other Tabs") {
                 if let selectedID { model.closeOtherTabs(keeping: selectedID) }
             }
-            .disabled(sessions.count < 2)
+            .disabled(tabs.count < 2)
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
             Button("Close All Tabs") { model.closeAllTabs() }
         } label: {
@@ -302,10 +308,21 @@ struct TabStrip: View {
     }
 }
 
+/// A tab's name for menus: the session's, or "Pull Requests · DigiScript".
+@MainActor
+func tabTitle(_ tab: PaneTab, model: AppModel) -> String {
+    switch tab {
+    case .session(let session): return session.name
+    case .overview(let overview):
+        let title = model.title(of: overview.overview)
+        return "\(title.title) · \(title.place)"
+    }
+}
+
 private struct TabItem: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
-    let session: Session
+    let tab: PaneTab
     let group: PaneGroup
     let index: Int
     let isSelected: Bool
@@ -322,24 +339,8 @@ private struct TabItem: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            StatusDot(status: session.status, size: 7)
-                .help(SessionIndicators.statusHelp(session))
-            Text(session.name)
-                .lineLimit(1)
-            if !session.role.isNone {
-                Text(session.role.label)
-                    .font(DS.font(11))
-                    .foregroundStyle(DS.dim)
-                    .help("Role: \(session.role.rawValue)")
-            }
-            if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
-                // Tabs come from several folders: say where this one lives.
-                Text(model.workspace.name(of: group))
-                    .font(DS.font(11, italic: true))
-                    .foregroundStyle(DS.dim)
-                    .lineLimit(1)
-            }
-            Button { model.closeTab(session.id) } label: {
+            label
+            Button { model.closeTab(tab.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(hovering ? DS.text : DS.dim)
@@ -349,7 +350,7 @@ private struct TabItem: View {
             }
             .buttonStyle(.plain)
             .opacity(isSelected || hovering ? 1 : 0)
-            .help(model.isRunning(session.id) ? "Close Tab (keeps running)" : "Close Tab")
+            .help(model.isRunning(tab.id) ? "Close Tab (keeps running)" : "Close Tab")
         }
         .font(DS.font(13.5))
         .foregroundStyle(isSelected ? DS.text : DS.muted)
@@ -365,15 +366,15 @@ private struct TabItem: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { model.select(session.id) }
+        .onTapGesture { model.select(tab.id) }
         .onDrag {
             commands.endDrag()
-            commands.draggedTabID = session.id
-            return tabDragItem(session.id)
+            commands.draggedTabID = tab.id
+            return tabDragItem(tab.id)
         } preview: {
             HStack(spacing: 6) {
-                StatusDot(status: session.status)
-                Text(session.name).font(DS.font(13)).foregroundStyle(DS.text)
+                icon
+                Text(tabTitle(tab, model: model)).font(DS.font(13)).foregroundStyle(DS.text)
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 4).fill(DS.input))
@@ -381,33 +382,79 @@ private struct TabItem: View {
         .onDrop(of: paneDropTypes, isTargeted: $isDropTarget) { providers in
             commands.endDrag()
             loadSessionID(from: providers) { id in
-                guard id != session.id else { return }
+                guard id != tab.id else { return }
                 model.moveTab(id, toPane: group.id, at: index)
             }
             return true
         }
         .contextMenu {
-            Button("Close Tab") { model.closeTab(session.id) }
-            if model.isRunning(session.id) {
-                Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
+            Button("Close Tab") { model.closeTab(tab.id) }
+            if let session = tab.session {
+                if model.isRunning(session.id) {
+                    Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
+                }
+                Divider()
+                Menu("Role") { RoleMenuItems(session: session) }
             }
             Divider()
-            Menu("Role") { RoleMenuItems(session: session) }
-            Divider()
-            Button("Split Right") { model.splitTab(session.id, to: .right, of: group.id) }
+            Button("Split Right") { model.splitTab(tab.id, to: .right, of: group.id) }
                 .disabled(group.tabIDs.count < 2)
-            Button("Split Down") { model.splitTab(session.id, to: .bottom, of: group.id) }
+            Button("Split Down") { model.splitTab(tab.id, to: .bottom, of: group.id) }
                 .disabled(group.tabIDs.count < 2)
             Divider()
-            Button("Close Other Tabs") { model.closeOtherTabs(keeping: session.id) }
+            Button("Close Other Tabs") { model.closeOtherTabs(keeping: tab.id) }
                 .disabled(group.tabIDs.count < 2)
-            Button("Close Tabs to the Left") { model.closeTabs(leftOf: session.id) }
-                .disabled(model.workspace.tabIDs(leftOf: session.id).isEmpty)
-            Button("Close Tabs to the Right") { model.closeTabs(rightOf: session.id) }
-                .disabled(model.workspace.tabIDs(rightOf: session.id).isEmpty)
+            Button("Close Tabs to the Left") { model.closeTabs(leftOf: tab.id) }
+                .disabled(model.workspace.tabIDs(leftOf: tab.id).isEmpty)
+            Button("Close Tabs to the Right") { model.closeTabs(rightOf: tab.id) }
+                .disabled(model.workspace.tabIDs(rightOf: tab.id).isEmpty)
             Divider()
             Button("Close Completed Tabs") { model.closeCompletedTabs() }
             Button("Close All Tabs") { model.closeAllTabs() }
+        }
+    }
+
+    /// A session's status dot, or an overview's pull request icon.
+    @ViewBuilder private var icon: some View {
+        switch tab {
+        case .session(let session):
+            StatusDot(status: session.status, size: 7)
+                .help(SessionIndicators.statusHelp(session))
+        case .overview:
+            Image(systemName: "arrow.triangle.pull")
+                .font(.system(size: 11))
+                .foregroundStyle(DS.teal)
+        }
+    }
+
+    @ViewBuilder private var label: some View {
+        icon
+        switch tab {
+        case .session(let session):
+            Text(session.name)
+                .lineLimit(1)
+            if !session.role.isNone {
+                Text(session.role.label)
+                    .font(DS.font(11))
+                    .foregroundStyle(DS.dim)
+                    .help("Role: \(session.role.rawValue)")
+            }
+            if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
+                // Tabs come from several folders: say where this one lives.
+                Text(model.workspace.name(of: group))
+                    .font(DS.font(11, italic: true))
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
+        case .overview(let overview):
+            let title = model.title(of: overview.overview)
+            Text(title.title)
+                .lineLimit(1)
+            // Which project's or folder's pull requests.
+            Text(title.place)
+                .font(DS.font(11, italic: true))
+                .foregroundStyle(DS.dim)
+                .lineLimit(1)
         }
     }
 }

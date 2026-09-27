@@ -393,7 +393,7 @@ private struct FolderSection: View {
         .padding(.vertical, 5)
         .padding(.leading, SidebarIndent.folder)
         .padding(.trailing, 8)
-        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget || model.overview == .folder(folder.group) ? DS.selection : .clear))
+        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget || model.selectedOverview == .folder(folder.group) ? DS.selection : .clear))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
@@ -524,7 +524,7 @@ private struct SessionRow: View {
     @State private var confirmDelete = false
     @State private var isDropTarget = false
 
-    private var isSelected: Bool { model.selectedSessionID == session.id && model.overview == nil }
+    private var isSelected: Bool { model.selectedSessionID == session.id }
 
     var body: some View {
         HStack(spacing: 8) {

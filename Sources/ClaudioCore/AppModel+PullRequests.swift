@@ -22,27 +22,26 @@ extension AppModel {
 
     // MARK: Navigation
 
+    /// Opens an overview as a tab in the focused pane (or shows its tab where
+    /// it's open), and loads its pull requests.
     public func showOverview(_ overview: Overview) {
-        self.overview = overview
-        if let projectID = projectID(of: overview) {
-            Task { await refreshPullRequests(projectID) }
-        }
+        var opened: UUID?
+        updatePanes { opened = $0.openOverview(overview) }
+        guard opened != nil, let projectID = workspace.projectID(of: overview) else { return }
+        Task { await refreshPullRequests(projectID) }
     }
 
-    /// The overview, unless its project or folder has since gone.
-    public var activeOverview: Overview? {
-        guard let overview, let projectID = projectID(of: overview), workspace.project(projectID) != nil else { return nil }
-        return overview
+    /// The overview the focused tab shows, if it's an overview tab.
+    public var selectedOverview: Overview? {
+        selectedSessionID.flatMap { workspace.overviewTab($0)?.overview }
     }
 
-    public func closeOverview() {
-        overview = nil
-    }
-
-    public func projectID(of overview: Overview) -> UUID? {
+    /// An overview tab's title and the place it's for ("Pull Requests",
+    /// "DigiScript").
+    public func title(of overview: Overview) -> (title: String, place: String) {
         switch overview {
-        case .project(let id): return id
-        case .folder(let group): return workspace.projectID(of: group)
+        case .project(let id): return ("Pull Requests", workspace.project(id)?.name ?? "")
+        case .folder(let group): return ("Pull Requests", workspace.name(of: group))
         }
     }
 
