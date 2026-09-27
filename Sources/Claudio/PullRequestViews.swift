@@ -519,13 +519,13 @@ private struct ProjectPullRequestRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
-            if let group = PullRequestOverview.group(of: pullRequest, in: model.workspace, projectID: projectID) {
+            if let group = model.group(of: pullRequest, projectID: projectID) {
                 model.showOverview(.folder(group))
             } else {
                 openOnGitHub(pullRequest.url)
             }
         }
-        .help(PullRequestOverview.group(of: pullRequest, in: model.workspace, projectID: projectID) == nil
+        .help(model.group(of: pullRequest, projectID: projectID) == nil
               ? "No session in Claudio worked on #\(pullRequest.number). Click to open it on GitHub."
               : "Show #\(pullRequest.number) with its folder's sessions")
         .contextMenu {

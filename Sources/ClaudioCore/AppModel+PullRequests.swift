@@ -67,6 +67,12 @@ extension AppModel {
         PullRequestOverview.sessions(for: pullRequest, in: workspace, projectID: projectID, repository: repository(forProject: projectID))
     }
 
+    /// The folder a pull request belongs to: its opener's, else its first
+    /// reviewer's. Nil when no session acted on it.
+    public func group(of pullRequest: PullRequestInfo, projectID: UUID) -> SessionGroup? {
+        PullRequestOverview.group(of: pullRequest, in: workspace, projectID: projectID, repository: repository(forProject: projectID))
+    }
+
     /// What a session did to a pull request (opened or reviewed it).
     public func action(of session: Session, on pullRequest: PullRequestInfo) -> PullRequestLink.Action? {
         PullRequestOverview.action(of: session, on: pullRequest, repository: repository(forProject: session.projectID))
