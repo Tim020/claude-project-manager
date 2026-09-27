@@ -537,7 +537,9 @@ private struct SessionRow: View {
                 .truncationMode(.tail)
                 .help(session.needsAction ?? (session.summary.isEmpty ? session.name : session.summary))
             Spacer(minLength: 4)
-            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id)), id: \.symbol) { indicator in
+            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id),
+                                                 pullRequests: model.pullRequestLinks(ofSession: session.id).map(\.url)),
+                    id: \.symbol) { indicator in
                 HStack(spacing: 2) {
                     Image(systemName: indicator.symbol)
                         .font(.system(size: 10))
@@ -619,11 +621,12 @@ struct SessionMenu: View {
                 Button("New Folder") { model.createFolder(in: project.id, containing: session.id) }
             }
         }
-        if !session.pullRequestURLs.isEmpty {
+        let pullRequests = model.pullRequestLinks(ofSession: session.id)
+        if !pullRequests.isEmpty {
             Menu("Open Pull Request") {
-                ForEach(session.pullRequestURLs, id: \.self) { url in
-                    Button(PullRequestDetector.number(from: url).map { "#\($0)" } ?? url) {
-                        if let link = URL(string: url) { NSWorkspace.shared.open(link) }
+                ForEach(pullRequests, id: \.url) { pullRequest in
+                    Button("#\(pullRequest.number)") {
+                        if let link = URL(string: pullRequest.url) { NSWorkspace.shared.open(link) }
                     }
                 }
             }

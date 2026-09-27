@@ -97,37 +97,46 @@ public struct PullRequestGroup: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Ties pull requests to the sessions that mention them (`pullRequestURLs`).
+/// Ties pull requests to the sessions that opened or reviewed them
+/// (`Session.pullRequests`), within the project's repository ("owner/repo").
 public enum PullRequestOverview {
-    /// The project's (non-archived) sessions that mention the pull request.
-    /// Sessions that wrote code come before ones that reviewed it.
-    public static func sessions(for pullRequest: PullRequestInfo, in workspace: Workspace, projectID: UUID) -> [Session] {
-        let linked = workspace.sessions.filter { session in
-            session.projectID == projectID && !session.isArchived
-                && session.pullRequestURLs.contains { PullRequestKey.key($0) == pullRequest.key }
+    /// What a session did to a pull request, if anything.
+    public static func action(of session: Session, on pullRequest: PullRequestInfo, repository: String?) -> PullRequestLink.Action? {
+        let actions = session.pullRequests.filter { $0.key(in: repository) == pullRequest.key }.map(\.action)
+        if actions.contains(.opened) { return .opened }
+        return actions.first
+    }
+
+    /// The project's (non-archived) sessions that acted on the pull request:
+    /// the one that opened it first, then ones that reviewed it.
+    public static func sessions(for pullRequest: PullRequestInfo, in workspace: Workspace, projectID: UUID,
+                                repository: String?) -> [Session] {
+        let linked = workspace.sessions.compactMap { session -> (Session, PullRequestLink.Action)? in
+            guard session.projectID == projectID, !session.isArchived,
+                  let action = action(of: session, on: pullRequest, repository: repository) else { return nil }
+            return (session, action)
         }
-        return linked.filter { !isReviewer($0) } + linked.filter(isReviewer)
+        return linked.filter { $0.1 == .opened }.map(\.0) + linked.filter { $0.1 == .reviewed }.map(\.0)
     }
 
-    public static func isReviewer(_ session: Session) -> Bool {
-        session.role.rawValue.caseInsensitiveCompare(SessionRole.review.rawValue) == .orderedSame
-    }
-
-    /// Where a pull request belongs: the group of the first session that
-    /// mentions it (preferring one that wrote code).
-    public static func group(of pullRequest: PullRequestInfo, in workspace: Workspace, projectID: UUID) -> SessionGroup? {
-        sessions(for: pullRequest, in: workspace, projectID: projectID).first.flatMap { workspace.group(of: $0.id) }
+    /// Where a pull request belongs: the group of the session that opened it,
+    /// else of the first that reviewed it.
+    public static func group(of pullRequest: PullRequestInfo, in workspace: Workspace, projectID: UUID,
+                             repository: String?) -> SessionGroup? {
+        sessions(for: pullRequest, in: workspace, projectID: projectID, repository: repository).first
+            .flatMap { workspace.group(of: $0.id) }
     }
 
     /// Pull requests the filter matches (and, unless `includeUnlinked`, that
-    /// a session mentions), grouped by folder in sidebar order, then Unfiled,
+    /// a session acted on), grouped by folder in sidebar order, then Unfiled,
     /// then "No Session". Most recently updated first within each.
-    public static func groups(_ pullRequests: [PullRequestInfo], workspace: Workspace, projectID: UUID,
+    public static func groups(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                               filter: PullRequestFilter, includeUnlinked: Bool) -> [PullRequestGroup] {
-        guard let project = workspace.project(projectID) else { return [] }
+        guard let project = workspace.project(projectID), let known else { return [] }
+        let repository = known.repository?.nameWithOwner
         var byGroup: [SessionGroup?: [PullRequestInfo]] = [:]
-        for pullRequest in sorted(pullRequests) where filter.matches(pullRequest) {
-            let group = self.group(of: pullRequest, in: workspace, projectID: projectID)
+        for pullRequest in known.items.sortedByUpdate where filter.matches(pullRequest) {
+            let group = self.group(of: pullRequest, in: workspace, projectID: projectID, repository: repository)
             if group == nil && !includeUnlinked { continue }
             byGroup[group, default: []].append(pullRequest)
         }
@@ -141,30 +150,37 @@ public enum PullRequestOverview {
     }
 
     /// How many pull requests each filter tab would show.
-    public static func count(_ pullRequests: [PullRequestInfo], workspace: Workspace, projectID: UUID,
+    public static func count(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                              filter: PullRequestFilter, includeUnlinked: Bool) -> Int {
-        pullRequests.filter { filter.matches($0) && (includeUnlinked || group(of: $0, in: workspace, projectID: projectID) != nil) }.count
+        guard let known else { return 0 }
+        let repository = known.repository?.nameWithOwner
+        return known.items.filter { pullRequest in
+            filter.matches(pullRequest)
+                && (includeUnlinked || group(of: pullRequest, in: workspace, projectID: projectID, repository: repository) != nil)
+        }.count
     }
 
-    /// The pull requests a folder's sessions mention, open ones first.
+    /// The pull requests a folder's sessions opened (or reviewed, when no
+    /// session opened them), open ones first.
     public static func pullRequests(in group: SessionGroup, workspace: Workspace, known: ProjectPullRequests?) -> [PullRequestInfo] {
         guard let known, let projectID = workspace.projectID(of: group) else { return [] }
-        let items = known.items.filter { self.group(of: $0, in: workspace, projectID: projectID) == group }
+        let repository = known.repository?.nameWithOwner
+        let items = known.items.filter { self.group(of: $0, in: workspace, projectID: projectID, repository: repository) == group }
         return items.filter(\.isOpen).sortedByUpdate + items.filter { !$0.isOpen }.sortedByUpdate
     }
 
-    /// A session's pull requests, in the order it mentioned them, as far as
+    /// A session's pull requests, in the order it acted on them, as far as
     /// they've been loaded.
     public static func pullRequests(of session: Session, known: ProjectPullRequests?) -> [PullRequestInfo] {
         guard let known else { return [] }
+        let repository = known.repository?.nameWithOwner
         var seen = Set<String>()
-        return session.pullRequestURLs.compactMap { url in
-            guard let item = known.item(forURL: url), seen.insert(item.key).inserted else { return nil }
+        return session.pullRequests.compactMap { link in
+            guard let key = link.key(in: repository), let item = known.items.first(where: { $0.key == key }),
+                  seen.insert(key).inserted else { return nil }
             return item
         }
     }
-
-    static func sorted(_ items: [PullRequestInfo]) -> [PullRequestInfo] { items.sortedByUpdate }
 }
 
 extension Array where Element == PullRequestInfo {

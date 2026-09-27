@@ -42,6 +42,7 @@ public struct HookEvent: Equatable, Sendable {
     public var lastAssistantMessage: String?
     public var toolName: String?
     public var toolOutput: String?
+    public var toolInput: [String: JSONValue]?
     public var source: String?
     public var reason: String?
 
@@ -68,6 +69,7 @@ public enum HookEventParser {
         event.lastAssistantMessage = json["last_assistant_message"]?.stringValue
         event.toolName = json["tool_name"]?.stringValue
         event.toolOutput = json["tool_response"]?["stdout"]?.stringValue ?? json["tool_response"]?.stringValue
+        event.toolInput = json["tool_input"]?.objectValue
         event.source = json["source"]?.stringValue
         event.reason = json["reason"]?.stringValue
         return event
@@ -126,7 +128,10 @@ public enum HookReducer {
             session.status = .working
             session.needsAction = nil
             session.lastActivity = now
-            if let output = event.toolOutput { collectPullRequests(from: output, into: &session) }
+            if event.name == .postToolUse {
+                let links = PullRequestActivity.links(toolName: event.toolName, input: event.toolInput, output: event.toolOutput ?? "")
+                PullRequestLink.merge(links, into: &session.pullRequests)
+            }
         case .notification:
             let message = event.message ?? ""
             let isIdleReminder = event.notificationType == "idle_prompt"
@@ -139,7 +144,6 @@ public enum HookReducer {
             let text = event.lastAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !text.isEmpty {
                 session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength)
-                collectPullRequests(from: text, into: &session)
             }
             if text.hasSuffix("?") {
                 session.status = .awaitingInput
@@ -153,12 +157,6 @@ public enum HookReducer {
             if session.status == .working { session.status = .completed }
         case .other:
             break
-        }
-    }
-
-    static func collectPullRequests(from text: String, into session: inout Session) {
-        for url in PullRequestDetector.urls(in: text) where !session.pullRequestURLs.contains(url) {
-            session.pullRequestURLs.append(url)
         }
     }
 }

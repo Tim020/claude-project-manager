@@ -103,7 +103,7 @@ final class HookReducerTests: XCTestCase {
         }
         XCTAssertEqual(s.status, .completed)
         XCTAssertEqual(s.summary, "Opened https://github.com/Tim020/DigiScript/pull/1427 with the storage fix.")
-        XCTAssertEqual(s.pullRequestURLs, ["https://github.com/Tim020/DigiScript/pull/1427"])
+        XCTAssertEqual(s.pullRequests, [PullRequestLink("https://github.com/Tim020/DigiScript/pull/1427", .opened)], "from gh pr create")
         XCTAssertEqual(s.claudeSessionID, "11111111-2222-3333-4444-555555555555")
         XCTAssertTrue(s.hasConversation)
         XCTAssertNil(s.needsAction)

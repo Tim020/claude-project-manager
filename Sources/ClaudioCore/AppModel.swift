@@ -160,6 +160,9 @@ public final class AppModel {
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
     @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
     public static let pullRequestCacheInterval: TimeInterval = 300
+    /// Each project's GitHub repository ("owner/repo") from its `origin` remote.
+    public internal(set) var remoteRepositories: [UUID: String] = [:]
+    @ObservationIgnored var checkedRemotes = Set<UUID>()
     /// Each project's pull requests from GitHub (Pull Requests overviews).
     public internal(set) var projectPullRequests: [UUID: ProjectPullRequests] = [:]
     /// Unresolved review threads per pull request (by key), loaded when shown.

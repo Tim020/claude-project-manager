@@ -902,9 +902,10 @@ private struct PullRequestCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// "Opened this PR · <what the session last said>".
     private func did(_ session: Session) -> String {
-        if !session.summary.isEmpty { return session.summary }
-        return PullRequestOverview.isReviewer(session) ? "Reviewed this pull request" : "Worked on this pull request"
+        let action = model.action(of: session, on: pullRequest) == .opened ? "Opened this PR" : "Reviewed this PR"
+        return session.summary.isEmpty ? action : "\(action) · \(session.summary)"
     }
 }
 
@@ -997,7 +998,8 @@ struct SessionPullRequestButton: View {
 
     var body: some View {
         let known = model.pullRequests(ofSession: session.id)
-        if session.pullRequestURLs.isEmpty {
+        let links = model.pullRequestLinks(ofSession: session.id)
+        if links.isEmpty {
             Image(systemName: "arrow.triangle.pull")
                 .font(.system(size: 15))
                 .foregroundStyle(DS.dim.opacity(0.6))
@@ -1006,7 +1008,7 @@ struct SessionPullRequestButton: View {
             Button { showing.toggle() } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "arrow.triangle.pull").font(.system(size: 12))
-                    Text(label(known: known))
+                    Text(label(known: known, links: links))
                     if let first = known.first {
                         Circle().fill(DS.color(for: first.attention)).frame(width: 7, height: 7)
                     }
@@ -1028,11 +1030,9 @@ struct SessionPullRequestButton: View {
         }
     }
 
-    private func label(known: [PullRequestInfo]) -> String {
-        let count = session.pullRequestURLs.count
-        let first = known.first?.number ?? session.pullRequestURLs.first.flatMap(PullRequestDetector.number(from:))
-        guard let first else { return PullRequestDetector.countLabel(count) }
-        return count > 1 ? "#\(first) +\(count - 1)" : "#\(first)"
+    private func label(known: [PullRequestInfo], links: [SessionPullRequest]) -> String {
+        let first = known.first?.number ?? links[0].number
+        return links.count > 1 ? "#\(first) +\(links.count - 1)" : "#\(first)"
     }
 }
 
@@ -1044,7 +1044,9 @@ private struct SessionPullRequestPopover: View {
     var body: some View {
         let known = model.pullRequests(ofSession: session.id)
         let knownKeys = Set(known.map(\.key))
-        let unknown = session.pullRequestURLs.filter { url in PullRequestKey.key(url).map { !knownKeys.contains($0) } ?? true }
+        let unknown = model.pullRequestLinks(ofSession: session.id).filter { link in
+            PullRequestKey.key(link.url).map { !knownKeys.contains($0) } ?? true
+        }
         ScrollView {
             VStack(spacing: 0) {
                 if let problem = model.gitHubCLIProblem {
@@ -1058,13 +1060,13 @@ private struct SessionPullRequestPopover: View {
                 ForEach(known) { pullRequest in
                     PopoverPullRequest(session: session, pullRequest: pullRequest, close: close)
                 }
-                ForEach(unknown, id: \.self) { url in
+                ForEach(unknown, id: \.url) { link in
                     HStack {
-                        Text(PullRequestDetector.number(from: url).map { "#\($0)" } ?? url)
+                        Text("#\(link.number)")
                             .font(DS.font(14, .bold))
                             .foregroundStyle(DS.text)
                         Spacer()
-                        Button("Open on GitHub") { openOnGitHub(url) }
+                        Button("Open on GitHub") { openOnGitHub(link.url) }
                             .buttonStyle(OutlineButtonStyle())
                     }
                     .padding(16)
@@ -1154,7 +1156,7 @@ private struct PopoverPullRequest: View {
     }
 
     private var relation: String {
-        let verb = PullRequestOverview.isReviewer(session) ? "Reviewed in this session" : "Opened in this session"
+        let verb = model.action(of: session, on: pullRequest) == .opened ? "Opened in this session" : "Reviewed in this session"
         guard let created = pullRequest.createdAt else { return verb }
         return "\(verb) · \(RelativeAge.string(from: created, now: Date())) ago"
     }

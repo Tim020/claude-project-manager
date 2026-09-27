@@ -239,6 +239,7 @@ final class PullRequestOverviewTests: XCTestCase {
     var workspace = Workspace()
     var project = UUID()
     var folder = UUID()
+    let repository = GitHubCLI.Repository(nameWithOwner: "dreamteamprod/DigiScript", url: "https://github.com/dreamteamprod/DigiScript")
 
     func url(_ n: Int) -> String { "https://github.com/dreamteamprod/DigiScript/pull/\(n)" }
 
@@ -247,9 +248,15 @@ final class PullRequestOverviewTests: XCTestCase {
                         checks: failing ? [.init(name: "c", state: .failing)] : [])
     }
 
+    func known(_ items: [PullRequestInfo]) -> ProjectPullRequests {
+        ProjectPullRequests(repository: repository, items: items)
+    }
+
     @discardableResult
-    func session(_ name: String, role: SessionRole, prs: [Int], in folderID: UUID? = nil, archived: Bool = false) throws -> Session {
-        var session = Session(projectID: project, name: name, role: role, workingDirectory: "/repo", pullRequestURLs: prs.map(url))
+    func session(_ name: String, opened: [Int] = [], reviewed: [String] = [], in folderID: UUID? = nil,
+                 archived: Bool = false) throws -> Session {
+        let links = opened.map { PullRequestLink(url($0), .opened) } + reviewed.map { PullRequestLink($0, .reviewed) }
+        var session = Session(projectID: project, name: name, workingDirectory: "/repo", pullRequests: links)
         session.isArchived = archived
         try workspace.addSession(session, toFolder: folderID)
         return session
@@ -260,17 +267,22 @@ final class PullRequestOverviewTests: XCTestCase {
         folder = try workspace.createFolder(in: project, named: "Websocket Close State")
     }
 
-    func testGroupsByTheFolderOfTheSessionThatWroteIt() throws {
-        let review = try session("Review #1427", role: .review, prs: [1427, 1430], in: folder)
-        let code = try session("websocket close state", role: .code, prs: [1427], in: folder)
-        try session("pdf", role: .research, prs: [1418])
-        let items = [item(1427, failing: true, updated: 3), item(1430, updated: 2), item(1418, updated: 1), item(1500, updated: 4)]
+    func testGroupsByTheFolderOfTheSessionThatOpenedIt() throws {
+        // The reviewer comes first in the folder, but the opener decides.
+        let review = try session("Review #1427", reviewed: ["#1427", url(1430)], in: folder)
+        let code = try session("websocket close state", opened: [1427], in: folder)
+        try session("pdf", opened: [1418])
+        let items = known([item(1427, failing: true, updated: 3), item(1430, updated: 2), item(1418, updated: 1), item(1500, updated: 4)])
 
-        XCTAssertEqual(PullRequestOverview.sessions(for: items[0], in: workspace, projectID: project).map(\.id), [code.id, review.id],
-                       "the code session first, then its reviewer")
+        XCTAssertEqual(PullRequestOverview.sessions(for: items.items[0], in: workspace, projectID: project,
+                                                    repository: repository.nameWithOwner).map(\.id), [code.id, review.id],
+                       "the session that opened it, then its reviewer (\"#1427\" is this repository's)")
+        XCTAssertEqual(PullRequestOverview.action(of: review, on: items.items[0], repository: repository.nameWithOwner), .reviewed)
+        XCTAssertNil(PullRequestOverview.action(of: review, on: items.items[0], repository: nil), "#1427 can't be resolved")
         let groups = PullRequestOverview.groups(items, workspace: workspace, projectID: project, filter: .all, includeUnlinked: true)
         XCTAssertEqual(groups.map(\.name), ["Websocket Close State", "Unfiled", "No Session"])
-        XCTAssertEqual(groups.map { $0.pullRequests.map(\.number) }, [[1427, 1430], [1418], [1500]])
+        XCTAssertEqual(groups.map { $0.pullRequests.map(\.number) }, [[1427, 1430], [1418], [1500]],
+                       "reviewed but not opened here: the reviewer's folder")
 
         let linkedOnly = PullRequestOverview.groups(items, workspace: workspace, projectID: project, filter: .all, includeUnlinked: false)
         XCTAssertEqual(linkedOnly.map(\.name), ["Websocket Close State", "Unfiled"])
@@ -280,15 +292,15 @@ final class PullRequestOverviewTests: XCTestCase {
     }
 
     func testArchivedSessionsDontCount() throws {
-        try session("old", role: .code, prs: [1], in: folder, archived: true)
-        XCTAssertNil(PullRequestOverview.group(of: item(1), in: workspace, projectID: project))
+        try session("old", opened: [1], in: folder, archived: true)
+        XCTAssertNil(PullRequestOverview.group(of: item(1), in: workspace, projectID: project, repository: repository.nameWithOwner))
     }
 
     func testFolderListsOpenFirstAndSessionKeepsItsOrder() throws {
-        let code = try session("s", role: .code, prs: [3, 1, 2], in: folder)
-        let known = ProjectPullRequests(items: [item(1, .merged, updated: 9), item(2, updated: 1), item(3, updated: 5)])
-        XCTAssertEqual(PullRequestOverview.pullRequests(in: .folder(folder), workspace: workspace, known: known).map(\.number), [3, 2, 1])
-        XCTAssertEqual(PullRequestOverview.pullRequests(of: code, known: known).map(\.number), [3, 1, 2])
+        let code = try session("s", opened: [3, 1, 2], in: folder)
+        let loaded = known([item(1, .merged, updated: 9), item(2, updated: 1), item(3, updated: 5)])
+        XCTAssertEqual(PullRequestOverview.pullRequests(in: .folder(folder), workspace: workspace, known: loaded).map(\.number), [3, 2, 1])
+        XCTAssertEqual(PullRequestOverview.pullRequests(of: code, known: loaded).map(\.number), [3, 1, 2])
         XCTAssertEqual(PullRequestOverview.pullRequests(of: code, known: nil), [])
     }
 }
@@ -332,7 +344,8 @@ final class PullRequestModelTests: XCTestCase {
     @MainActor func makeModel(_ runner: FakeGitHub, sessionPRs: [String] = [], gh: String? = "/opt/homebrew/bin/gh") throws -> (AppModel, UUID, UUID) {
         var state = PersistedState()
         let project = state.workspace.addProject(path: "/repo")
-        let session = Session(projectID: project, name: "websocket close state", workingDirectory: "/repo", pullRequestURLs: sessionPRs)
+        let session = Session(projectID: project, name: "websocket close state", workingDirectory: "/repo",
+                              pullRequests: sessionPRs.map { PullRequestLink($0, .opened) })
         try state.workspace.addSession(session)
         let store = MemoryStore()
         store.state = state

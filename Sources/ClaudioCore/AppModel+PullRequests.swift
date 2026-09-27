@@ -64,25 +64,58 @@ extension AppModel {
     }
 
     public func sessions(for pullRequest: PullRequestInfo, projectID: UUID) -> [Session] {
-        PullRequestOverview.sessions(for: pullRequest, in: workspace, projectID: projectID)
+        PullRequestOverview.sessions(for: pullRequest, in: workspace, projectID: projectID, repository: repository(forProject: projectID))
+    }
+
+    /// What a session did to a pull request (opened or reviewed it).
+    public func action(of session: Session, on pullRequest: PullRequestInfo) -> PullRequestLink.Action? {
+        PullRequestOverview.action(of: session, on: pullRequest, repository: repository(forProject: session.projectID))
     }
 
     public func pullRequestGroups(projectID: UUID) -> [PullRequestGroup] {
-        PullRequestOverview.groups(projectPullRequests[projectID]?.items ?? [], workspace: workspace, projectID: projectID,
+        PullRequestOverview.groups(projectPullRequests[projectID], workspace: workspace, projectID: projectID,
                                    filter: pullRequestFilter, includeUnlinked: includeUnlinkedPullRequests)
     }
 
     public func pullRequestCount(projectID: UUID, filter: PullRequestFilter) -> Int {
-        PullRequestOverview.count(projectPullRequests[projectID]?.items ?? [], workspace: workspace, projectID: projectID,
+        PullRequestOverview.count(projectPullRequests[projectID], workspace: workspace, projectID: projectID,
                                   filter: filter, includeUnlinked: includeUnlinkedPullRequests)
     }
 
+    /// The project's GitHub repository ("owner/repo"): as gh reports it,
+    /// else from its `origin` remote. Nil when it isn't a GitHub repository
+    /// (or hasn't been looked up yet).
+    public func repository(forProject projectID: UUID) -> String? {
+        projectPullRequests[projectID]?.repository?.nameWithOwner ?? remoteRepositories[projectID]
+    }
+
+    /// The pull requests a session opened or reviewed in its project's
+    /// repository, with their URLs. Others (in other repositories) aren't
+    /// its project's, so they're left out; so is everything while the
+    /// repository isn't known.
+    public func pullRequestLinks(ofSession sessionID: UUID) -> [SessionPullRequest] {
+        guard let session = workspace.session(sessionID), let repository = repository(forProject: session.projectID) else { return [] }
+        let prefix = repository.lowercased() + "#"
+        var result: [SessionPullRequest] = []
+        for link in session.pullRequests {
+            guard let key = link.key(in: repository), key.hasPrefix(prefix),
+                  let url = link.url(in: repository), let number = Int(key.dropFirst(prefix.count)) else { continue }
+            // "#12" and its URL are the same pull request; opening beats reviewing.
+            if let index = result.firstIndex(where: { $0.number == number }) {
+                if link.action == .opened { result[index].action = .opened }
+            } else {
+                result.append(SessionPullRequest(url: url, number: number, action: link.action))
+            }
+        }
+        return result
+    }
+
     /// Whether the sidebar shows a project's Pull Requests row: when gh can
-    /// load them, or a session has mentioned one.
+    /// load them, or a session has opened or reviewed one.
     public func showsPullRequestsRow(projectID: UUID) -> Bool {
         if case .signedIn = environment.githubCLI { return true }
         if projectPullRequests[projectID]?.items.isEmpty == false { return true }
-        return workspace.sessions.contains { $0.projectID == projectID && !$0.isArchived && !$0.pullRequestURLs.isEmpty }
+        return workspace.sessions.contains { $0.projectID == projectID && !$0.isArchived && !pullRequestLinks(ofSession: $0.id).isEmpty }
     }
 
     // MARK: Loading
@@ -118,6 +151,8 @@ extension AppModel {
                 return
             }
             loaded.repository = repository
+            // Known from now on, for resolving sessions' "#123" links below.
+            projectPullRequests[projectID] = loaded
         }
 
         let fields = GitHubCLI.overviewFields
@@ -135,14 +170,15 @@ extension AppModel {
             items.append(item)
         }
 
-        // Pull requests sessions mention that neither list had (older, or
-        // in another repository).
-        let mentioned = workspace.sessions.filter { $0.projectID == projectID && !$0.isArchived }.flatMap(\.pullRequestURLs)
+        // Pull requests sessions opened or reviewed that neither list had
+        // (older ones). Only this repository's: others aren't the project's.
+        let linked = workspace.sessions.filter { $0.projectID == projectID && !$0.isArchived }
+            .flatMap { pullRequestLinks(ofSession: $0.id) }
         var missing: [String] = []
-        for url in mentioned {
-            guard let key = PullRequestKey.key(url), !keys.contains(key) else { continue }
+        for link in linked {
+            guard let key = PullRequestKey.key(link.url), !keys.contains(key) else { continue }
             keys.insert(key)
-            missing.append(url)
+            missing.append(link.url)
         }
         let previous = projectPullRequests[projectID]
         for url in missing.prefix(AppModel.extraPullRequestLimit) {
@@ -163,6 +199,7 @@ extension AppModel {
 
     /// Every project's pull requests (sidebar chips and counts).
     public func refreshAllPullRequests(force: Bool = false) async {
+        await loadRemoteRepositories()
         for project in workspace.projects where showsPullRequestsRow(projectID: project.id) {
             await refreshPullRequests(project.id, force: force)
         }
@@ -181,6 +218,20 @@ extension AppModel {
             let result = await run(GitHubCLI.command(args, in: home, gh: gh), logOnlyChanges: true, changeKey: "gh-threads|\(pullRequest.key)")
             if result.exitCode == 0, let threads = GitHubCLI.parseReviewThreads(result.output), reviewThreads[pullRequest.key] != threads {
                 reviewThreads[pullRequest.key] = threads
+            }
+        }
+    }
+
+    /// Each project's GitHub repository from its `origin` remote, once, so
+    /// sessions' pull requests can be told apart from other repositories'
+    /// even without gh.
+    func loadRemoteRepositories() async {
+        for project in workspace.projects where remoteRepositories[project.id] == nil && !checkedRemotes.contains(project.id) {
+            checkedRemotes.insert(project.id)
+            let result = await run(GitChanges.command(["remote", "get-url", "origin"], in: project.path, git: gitExecutable),
+                                   logOnlyChanges: true, changeKey: "git-remote|\(project.path)")
+            if result.exitCode == 0, let repository = GitRemote.repository(fromURL: result.output) {
+                remoteRepositories[project.id] = repository
             }
         }
     }

@@ -9,7 +9,7 @@ public struct DiscoveredSession: Equatable, Sendable {
     public var model: String?
     public var workingDirectory: String
     public var lastActivity: Date
-    public var pullRequestURLs: [String]
+    public var pullRequests: [PullRequestLink]
     public var status: SessionStatus
     /// Tokens in context after the latest reply (nil if unknown or just compacted).
     public var contextTokens: Int?
@@ -17,7 +17,7 @@ public struct DiscoveredSession: Equatable, Sendable {
     public var customTitle: String?
 
     public init(claudeSessionID: String, title: String, firstPrompt: String?, summary: String, model: String?,
-                workingDirectory: String, lastActivity: Date, pullRequestURLs: [String], status: SessionStatus,
+                workingDirectory: String, lastActivity: Date, pullRequests: [PullRequestLink], status: SessionStatus,
                 contextTokens: Int? = nil, customTitle: String? = nil) {
         self.claudeSessionID = claudeSessionID
         self.title = title
@@ -26,7 +26,7 @@ public struct DiscoveredSession: Equatable, Sendable {
         self.model = model
         self.workingDirectory = workingDirectory
         self.lastActivity = lastActivity
-        self.pullRequestURLs = pullRequestURLs
+        self.pullRequests = pullRequests
         self.status = status
         self.contextTokens = contextTokens
         self.customTitle = customTitle
@@ -37,7 +37,7 @@ public struct DiscoveredSession: Equatable, Sendable {
     public func makeSession(projectID: UUID) -> Session {
         var session = Session(projectID: projectID, claudeSessionID: claudeSessionID, hasConversation: true, name: title,
                               role: role, workingDirectory: workingDirectory, status: status, summary: summary, model: model,
-                              pullRequestURLs: pullRequestURLs, createdAt: lastActivity, lastActivity: lastActivity)
+                              pullRequests: pullRequests, createdAt: lastActivity, lastActivity: lastActivity)
         session.needsAction = status == .awaitingInput ? summary : nil
         return session
     }
@@ -279,13 +279,12 @@ public struct SessionDiscovery: Sendable {
         var model: String?
         var cwd: String?
         var latest: Date?
-        var pullRequests: [String] = []
+        var pullRequests: [PullRequestLink] = []
+        // Tool calls by id, to tell what a tool result came from.
+        var toolUses: [String: (name: String, input: [String: JSONValue])] = [:]
         var postTurnCategory: String?
         var contextTokens: Int?
 
-        func addPullRequests(_ text: String) {
-            for url in PullRequestDetector.urls(in: text) where !pullRequests.contains(url) { pullRequests.append(url) }
-        }
 
         for line in lines {
             guard let data = line.data(using: .utf8),
@@ -310,8 +309,12 @@ public struct SessionDiscovery: Sendable {
                     switch block {
                     case .text(let text):
                         if firstPrompt == nil { firstPrompt = TranscriptBuilder.cleanPrompt(text) }
-                    case .toolResult(_, let content, _):
-                        addPullRequests(content)
+                    case .toolResult(let id, let content, false):
+                        // Pull requests the call acted on (not any it printed).
+                        if let use = toolUses[id] {
+                            PullRequestLink.merge(PullRequestActivity.links(toolName: use.name, input: use.input, output: content),
+                                                  into: &pullRequests)
+                        }
                     default: break
                     }
                 }
@@ -322,11 +325,16 @@ public struct SessionDiscovery: Sendable {
                     let total = keys.compactMap { usage[$0]?.doubleValue }.reduce(0, +)
                     if total > 0 { contextTokens = Int(total) }
                 }
-                for case .text(let text) in blocks {
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
-                    lastAssistantText = trimmed
-                    addPullRequests(trimmed)
+                for block in blocks {
+                    switch block {
+                    case .text(let text):
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty { lastAssistantText = trimmed }
+                    case .toolUse(let id, let name, let input):
+                        toolUses[id] = (name, input)
+                    default:
+                        break
+                    }
                 }
             default:
                 break
@@ -351,7 +359,7 @@ public struct SessionDiscovery: Sendable {
             model: model,
             workingDirectory: cwd ?? defaultWorkingDirectory,
             lastActivity: latest ?? fallbackDate,
-            pullRequestURLs: pullRequests,
+            pullRequests: pullRequests,
             status: status,
             contextTokens: contextTokens,
             customTitle: customTitle)
@@ -416,9 +424,7 @@ extension Workspace {
                     session.lastActivity = found.lastActivity
                     session.hasConversation = true
                     if let model = found.model { session.model = model }
-                    for url in found.pullRequestURLs where !session.pullRequestURLs.contains(url) {
-                        session.pullRequestURLs.append(url)
-                    }
+                    PullRequestLink.merge(found.pullRequests, into: &session.pullRequests)
                 }
             } else {
                 try? addSession(found.makeSession(projectID: projectID))
