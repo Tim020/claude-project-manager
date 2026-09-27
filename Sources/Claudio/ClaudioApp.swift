@@ -112,10 +112,13 @@ struct ClaudioApp: App {
                 Button("Refresh Sessions") { Task { await model.refreshAll() } }
                     .keyboardShortcut("r")
                 Divider()
-                Button("Tabs") { model.setLayout(.tabs) }
-                    .keyboardShortcut("1", modifiers: [.command, .option])
-                Button("Split") { model.setLayout(.split) }
-                    .keyboardShortcut("2", modifiers: [.command, .option])
+                // Tabs can also be dragged onto any pane's edge.
+                Button("Split Right") { model.splitSelectedTab(.right) }
+                    .keyboardShortcut("\\")
+                    .disabled(!model.menuFlags.canSplitSelected)
+                Button("Split Down") { model.splitSelectedTab(.bottom) }
+                    .keyboardShortcut("\\", modifiers: [.command, .shift])
+                    .disabled(!model.menuFlags.canSplitSelected)
                 Divider()
                 Button("Files Changed Inspector") { model.toggleFilesInspector() }
                     .keyboardShortcut("f", modifiers: [.command, .option])

@@ -147,8 +147,8 @@ final class VisibleSessionTests: XCTestCase {
             model.select(a.id)
             model.select(b.id)
             XCTAssertEqual(model.visibleSessionIDs, [b.id])
-            model.setLayout(.split)
-            XCTAssertEqual(Set(model.visibleSessionIDs), [a.id, b.id])
+            model.splitTab(a.id, to: .right, of: model.panes.focusedGroupID)
+            XCTAssertEqual(model.visibleSessionIDs, [b.id, a.id], "each pane's shown tab")
         }
     }
 }

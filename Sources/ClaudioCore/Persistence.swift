@@ -1,12 +1,5 @@
 import Foundation
 
-/// How a folder's sessions are shown: one at a time with tabs (1a), or side by
-/// side (1b).
-public enum LayoutMode: String, Codable, CaseIterable, Sendable {
-    case tabs
-    case split
-}
-
 public struct AppSettings: Codable, Equatable, Sendable {
     /// Explicit path to the `claude` binary; located automatically when nil.
     public var claudePath: String?
@@ -16,7 +9,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var defaultPermissionMode: PermissionMode
     /// Permissions for new background agents, which work unattended.
     public var defaultBackgroundPermissionMode = PermissionMode.auto
-    public var layout: LayoutMode
     /// Run new sessions as Claude Code background agents (`claude --bg`),
     /// attached in a terminal, instead of plain interactive processes.
     public var useBackgroundAgents: Bool
@@ -69,12 +61,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .auto,
-                layout: LayoutMode = .tabs, useBackgroundAgents: Bool = true, sidebarWidth: Double = 290,
+                useBackgroundAgents: Bool = true, sidebarWidth: Double = 290,
                 roles: [String] = SessionRole.defaultNames) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
-        self.layout = layout
         self.useBackgroundAgents = useBackgroundAgents
         self.sidebarWidth = AppSettings.clampSidebarWidth(sidebarWidth)
         self.roles = AppSettings.cleanRoles(roles)
@@ -86,7 +77,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
             claudePath: try c.decodeIfPresent(String.self, forKey: .claudePath),
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
             defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .auto,
-            layout: try c.decodeIfPresent(LayoutMode.self, forKey: .layout) ?? .tabs,
             useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)

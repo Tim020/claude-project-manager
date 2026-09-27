@@ -72,6 +72,29 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    func testEveryPanesShownTabCountsAsVisible() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, b) = try makeModel()
+            model.select(a)
+            model.select(b)
+            model.splitTab(b, to: .right, of: model.panes.focusedGroupID)
+            model.select(b)
+            model.appIsActive = true
+            model.applyStatus(a, .awaitingInput)
+            model.checkNotifications()
+            XCTAssertTrue(notifier.posted.isEmpty, "shown in a pane without focus")
+
+            // Put both in one pane again: a is now behind b.
+            model.moveTab(a, toPane: model.panes.focusedGroupID)
+            model.select(b)
+            model.applyStatus(a, .working)
+            model.checkNotifications()
+            model.applyStatus(a, .awaitingInput)
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.sessionID), [a], "a tab behind another is notified")
+        }
+    }
+
     func testVisibleSessionInTheFrontIsNotNotified() throws {
         try MainActor.assumeIsolated {
             let (model, a, b) = try makeModel()

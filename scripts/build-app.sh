@@ -76,6 +76,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.tim020.claudio.tab</string>
+      <key>UTTypeDescription</key><string>Claudio Tab</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    </dict>
+  </array>
   <key>NSDocumentsFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are in your Documents folder.</string>
   <key>NSDesktopFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are on your Desktop.</string>
   <key>NSDownloadsFolderUsageDescription</key><string>Claudio runs Claude Code sessions in your projects, and some of them are in your Downloads folder.</string>

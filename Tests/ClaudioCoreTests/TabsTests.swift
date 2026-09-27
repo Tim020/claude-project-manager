@@ -96,37 +96,3 @@ final class WorkspaceTabTests: XCTestCase {
         XCTAssertTrue(old.openSessionIDs.isEmpty)
     }
 }
-
-final class SplitLayoutTests: XCTestCase {
-    let ids = (0..<6).map { _ in UUID() }
-
-    func testGridFitsPanesAboveMinimumSize() {
-        XCTAssertEqual(SplitLayout.grid(paneCount: 2, width: 1000, height: 600), .init(columns: 2, rows: 1))
-        XCTAssertEqual(SplitLayout.grid(paneCount: 4, width: 1000, height: 700), .init(columns: 2, rows: 2))
-        XCTAssertEqual(SplitLayout.grid(paneCount: 3, width: 1000, height: 700), .init(columns: 2, rows: 2))
-        XCTAssertEqual(SplitLayout.grid(paneCount: 4, width: 1000, height: 500), .init(columns: 2, rows: 1), "too short for two rows")
-        XCTAssertEqual(SplitLayout.grid(paneCount: 3, width: 700, height: 900), .init(columns: 1, rows: 2), "too narrow for two columns")
-        XCTAssertEqual(SplitLayout.grid(paneCount: 1, width: 300, height: 200), .init(columns: 1, rows: 1))
-        XCTAssertEqual(SplitLayout.grid(paneCount: 0, width: 1000, height: 700), .init(columns: 1, rows: 1))
-    }
-
-    func testCapacityIsCapped() {
-        XCTAssertEqual(SplitLayout.grid(paneCount: 9, width: 4000, height: 3000).capacity, SplitLayout.maxPanes)
-    }
-
-    func testPanesKeepTabOrderWhenAllFit() {
-        let panes = SplitLayout.panes(open: Array(ids.prefix(3)), selected: ids[2], recent: [ids[2], ids[0]], capacity: 4)
-        XCTAssertEqual(panes, Array(ids.prefix(3)))
-    }
-
-    func testOverflowKeepsSelectedAndMostRecentInTabOrder() {
-        let open = Array(ids.prefix(6))
-        let panes = SplitLayout.panes(open: open, selected: ids[5], recent: [ids[5], ids[1], ids[3], ids[0], ids[2]], capacity: 3)
-        XCTAssertEqual(panes, [ids[1], ids[3], ids[5]])
-    }
-
-    func testOverflowFillsWithTabOrderWhenHistoryIsShort() {
-        let panes = SplitLayout.panes(open: Array(ids.prefix(5)), selected: ids[4], recent: [], capacity: 2)
-        XCTAssertEqual(panes, [ids[0], ids[4]])
-    }
-}

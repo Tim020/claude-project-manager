@@ -248,10 +248,9 @@ extension AppModel {
         }
     }
 
-    /// Sessions on screen: the selected tab, or the split panes.
+    /// Sessions on screen: the tab each pane shows.
     public var visibleSessionIDs: [UUID] {
-        guard let selected = selectedSessionID else { return [] }
-        return state.settings.layout == .split && canSplit ? tabs.map(\.id) : [selected]
+        state.workspace.panes.visibleTabIDs
     }
 
     func markChangesDirty(_ sessionID: UUID) {
