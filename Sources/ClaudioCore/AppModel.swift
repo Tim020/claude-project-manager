@@ -1525,6 +1525,13 @@ public final class AppModel {
         }
     }
 
+    /// When Claudio comes to the front: macOS can hold back a background
+    /// app's polling, so read again if the last reading is out of date.
+    public func refreshUsageIfDue() async {
+        if let usage, now().timeIntervalSince(usage.updatedAt) < AppModel.usageRefreshInterval { return }
+        await refreshUsage()
+    }
+
     private func adopt(_ snapshot: UsageSnapshot) {
         var snapshot = snapshot
         snapshot.subscriptionType = plan(keeping: usage?.subscriptionType)

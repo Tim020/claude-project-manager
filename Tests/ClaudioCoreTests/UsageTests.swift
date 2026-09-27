@@ -226,4 +226,27 @@ final class UsageCreditsTests: XCTestCase {
             XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42, "the last reading is kept")
         }
     }
+
+    func testRefreshesOnActivationOnlyWhenDue() async throws {
+        final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_790_380_000) }
+        let clock = Clock()
+        let runner = FakeRunner()
+        let fixture = try Fixtures.string("usage-stream.jsonl")
+        runner.usageOutput = fixture
+        let model = try await MainActor.run {
+            AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                     hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                     locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh", now: { clock.now }, home: "/")
+        }
+        await model.refreshUsageIfDue()
+        await MainActor.run { XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42, "no reading yet") }
+
+        runner.usageOutput = fixture.replacingOccurrences(of: #""percent":42"#, with: #""percent":43"#)
+        clock.now += 30
+        await model.refreshUsageIfDue()
+        await MainActor.run { XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 42, "read 30 s ago") }
+        clock.now += 31
+        await model.refreshUsageIfDue()
+        await MainActor.run { XCTAssertEqual(model.usage?.sevenDay?.usedPercentage, 43) }
+    }
 }
