@@ -1502,9 +1502,8 @@ public final class AppModel {
 
     /// Asks Claude Code for plan usage (`claude -p /usage`), the one source of
     /// it. No model call, so it works before any session has run. Claude Code
-    /// caches the answer for 60 s, shared by every process, and drops the
-    /// cache once any session gets newer rate limit headers. A failed read
-    /// keeps the last figures.
+    /// caches the answer for 60 s, shared by every process, so a reading can
+    /// be up to a minute old. A failed read keeps the last figures.
     public static let usageRefreshInterval: TimeInterval = 60
 
     public func refreshUsage() async {
