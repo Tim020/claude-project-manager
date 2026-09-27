@@ -113,6 +113,8 @@ public struct UsageSnapshot: Equatable, Sendable {
         var snapshot = self
         snapshot.fiveHour = fiveHour?.current(at: now)
         snapshot.sevenDay = sevenDay?.current(at: now)
+        // The overage header described the state before the reset.
+        if snapshot.fiveHour != fiveHour || snapshot.sevenDay != sevenDay { snapshot.reportsUsingCredits = false }
         return snapshot
     }
 

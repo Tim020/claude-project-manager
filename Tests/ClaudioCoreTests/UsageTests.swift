@@ -43,6 +43,12 @@ final class UsageTests: XCTestCase {
         let full = UsageSnapshot(fiveHour: window, sevenDay: nil, subscriptionType: nil, updatedAt: resets, credits: credits)
         XCTAssertTrue(full.current(at: resets.addingTimeInterval(-60)).isUsingCredits)
         XCTAssertFalse(full.current(at: resets.addingTimeInterval(60)).isUsingCredits, "the badge follows the reset")
+
+        var reported = full
+        reported.fiveHour?.usedPercentage = 50
+        reported.reportsUsingCredits = true
+        XCTAssertTrue(reported.current(at: resets.addingTimeInterval(-60)).isUsingCredits)
+        XCTAssertFalse(reported.current(at: resets.addingTimeInterval(60)).isUsingCredits, "the overage header is from before the reset")
     }
 
     func testOldReadingsAreStale() {
