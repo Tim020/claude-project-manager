@@ -83,7 +83,7 @@ final class ContextEstimateTests: XCTestCase {
             let store = MemoryStore()
             store.state = state
             return AppModel(store: store, discovery: SessionDiscovery(claudeHome: home), hookEventsURL: home.appendingPathComponent("h.log"),
-                            usageURL: home.appendingPathComponent("usage.json"), statusDirectory: status,
+                            statusDirectory: status,
                             locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
         }
         await model.refreshAll()
@@ -96,7 +96,7 @@ final class ContextEstimateTests: XCTestCase {
             // Live status line data wins over the estimate.
             let live = #"{"context_window":{"used_percentage":42,"context_window_size":200000,"total_input_tokens":84000}}"#
             try live.write(to: status.appendingPathComponent("\(session.id.uuidString).json"), atomically: true, encoding: .utf8)
-            model.pollUsage()
+            model.pollStatusLines()
             XCTAssertEqual(model.context(for: session.id)?.usedPercentage, 42)
             XCTAssertEqual(model.context(for: session.id)?.isEstimate, false)
         }
