@@ -118,7 +118,7 @@ public struct PullRequestInfo: Equatable, Sendable, Identifiable {
     }
 
     public var id: String { key }
-    /// "owner/repo#123", for matching the URLs sessions mention.
+    /// "owner/repo#123", for matching sessions' `PullRequestLink`s.
     public var key: String { PullRequestKey.key(url) ?? url }
 
     public var isOpen: Bool { state == .open || state == .draft }
@@ -178,6 +178,24 @@ public struct PullRequestInfo: Equatable, Sendable, Identifiable {
 
     public enum Attention: Equatable, Sendable {
         case failing, changesRequested, waiting, ready, merged, closed
+
+        /// Most urgent first: 0 for failing checks.
+        public var urgency: Int {
+            switch self {
+            case .failing: return 0
+            case .changesRequested: return 1
+            case .waiting: return 2
+            case .ready: return 3
+            case .merged: return 4
+            case .closed: return 5
+            }
+        }
+    }
+
+    /// Pull requests ordered by what most needs doing (keeping their order
+    /// among equals).
+    public static func mostUrgentFirst(_ items: [PullRequestInfo]) -> [PullRequestInfo] {
+        items.enumerated().sorted { ($0.element.attention.urgency, $0.offset) < ($1.element.attention.urgency, $1.offset) }.map(\.element)
     }
 
     /// "Merged" once merged, else the review decision.

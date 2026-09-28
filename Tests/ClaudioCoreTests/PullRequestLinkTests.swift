@@ -16,7 +16,24 @@ final class PullRequestActivityTests: XCTestCase {
                        [PullRequestLink("https://github.com/o/r/pull/9", .opened)])
     }
 
+    func testEachLineAndOnlyTheCommandWord() {
+        XCTAssertEqual(bash("gh pr view 12\ngh pr review 12 --approve"), [PullRequestLink("#12", .reviewed)], "line 2 counts")
+        XCTAssertEqual(bash("echo gh pr close 4"), [], "gh isn't the command")
+        XCTAssertEqual(bash("git commit -m \"Fixes it (see gh pr merge 3)\""), [])
+        XCTAssertEqual(bash("GH_PAGER=cat env gh pr comment 5 --body hi"), [PullRequestLink("#5", .reviewed)])
+        XCTAssertEqual(bash("/opt/homebrew/bin/gh pr review 6 --approve"), [PullRequestLink("#6", .reviewed)])
+    }
+
+    func testCreateTakesOnlyTheNewPullRequest() {
+        XCTAssertEqual(bash("gh pr create --fill && gh pr view 1400",
+                            "https://github.com/o/r/pull/1427\ntitle: Other\nurl: https://github.com/o/r/pull/1400\n"),
+                       [PullRequestLink("https://github.com/o/r/pull/1427", .opened)])
+    }
+
     func testReadingDoesNotCount() {
+        XCTAssertEqual(bash("gh api -X GET repos/o/r/pulls/5/comments -f per_page=100"), [], "an explicit GET with fields")
+        XCTAssertEqual(bash("gh api --method=GET repos/o/r/pulls/5/reviews -F per_page=50"), [])
+        XCTAssertEqual(bash("gh api -X PATCH repos/o/r/pulls/5 -f title=New"), [PullRequestLink("https://github.com/o/r/pull/5", .reviewed)])
         let list = "1427\tFix websocket\thttps://github.com/o/r/pull/1427\n1430\tBump\thttps://github.com/other/repo/pull/1430"
         XCTAssertEqual(bash("gh pr list --json number,url", list), [])
         XCTAssertEqual(bash("gh pr view 1427", "title: Fix\nurl: https://github.com/o/r/pull/1427"), [])
@@ -51,6 +68,11 @@ final class PullRequestActivityTests: XCTestCase {
         XCTAssertEqual(PullRequestActivity.links(toolName: "mcp__github__get_pull_request",
                                                  input: ["owner": .string("o"), "repo": .string("r"), "pullNumber": .number(5)],
                                                  output: "https://github.com/o/r/pull/5"), [], "reading")
+        for tool in ["mcp__github__get_pull_request_comments", "mcp__github__get_pull_request_reviews",
+                     "mcp__github__list_pull_request_review_comments"] {
+            XCTAssertEqual(PullRequestActivity.links(toolName: tool, input: ["owner": .string("o"), "repo": .string("r"), "pullNumber": .number(5)],
+                                                     output: ""), [], tool)
+        }
     }
 
     func testMergeKeepsOpenedOverReviewed() {

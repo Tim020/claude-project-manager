@@ -416,6 +416,12 @@ extension Workspace {
         for found in discovered where !isRemoved(claudeSessionID: found.claudeSessionID) {
             if let existing = session(claudeSessionID: found.claudeSessionID) {
                 syncTitle(existing.id, claudeTitle: found.customTitle)
+                // Pull requests only add up, so they're safe to take even
+                // from a live or seemingly older history (hooks date
+                // activity by Claudio's clock, which can be later).
+                var links = existing.pullRequests
+                PullRequestLink.merge(found.pullRequests, into: &links)
+                if links != existing.pullRequests { updateSession(existing.id) { $0.pullRequests = links } }
                 guard !live.contains(existing.id), found.lastActivity >= existing.lastActivity else { continue }
                 updateSession(existing.id) { session in
                     if !found.summary.isEmpty { session.summary = found.summary }
@@ -424,7 +430,6 @@ extension Workspace {
                     session.lastActivity = found.lastActivity
                     session.hasConversation = true
                     if let model = found.model { session.model = model }
-                    PullRequestLink.merge(found.pullRequests, into: &session.pullRequests)
                 }
             } else {
                 try? addSession(found.makeSession(projectID: projectID))

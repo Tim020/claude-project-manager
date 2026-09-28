@@ -215,11 +215,40 @@ struct PullRequestsUnavailable: View {
     }
 }
 
-/// Whether a project's pull requests have loaded (without an error).
+/// Whether a project's pull requests have loaded, even if the last refresh
+/// failed (they're shown, with `PullRequestsErrorBanner`).
 @MainActor
 func hasPullRequests(_ model: AppModel, projectID: UUID) -> Bool {
-    guard let loaded = model.pullRequests(forProject: projectID) else { return false }
-    return loaded.error == nil && loaded.updatedAt != nil
+    model.pullRequests(forProject: projectID)?.hasLoaded ?? false
+}
+
+/// Above pull requests that loaded before: why the last refresh failed, and
+/// how old they are.
+struct PullRequestsErrorBanner: View {
+    @Environment(AppModel.self) private var model
+    let projectID: UUID
+
+    var body: some View {
+        if let loaded = model.pullRequests(forProject: projectID), let error = loaded.error, let updated = loaded.updatedAt {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                let age = RelativeAge.string(from: updated, now: context.date)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.orange)
+                    Text("\(error) Showing data from \(age == "now" ? "just now" : "\(age) ago").")
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 20)
+                .background(DS.orange.opacity(0.1))
+                .overlay(alignment: .bottom) { HorizontalRule() }
+            }
+        }
+    }
 }
 
 // MARK: - Overviews
@@ -319,8 +348,9 @@ struct OverviewView: View {
     }
 }
 
-/// Design 5a: every pull request in the project's repository, grouped by
-/// the folder whose sessions worked on it.
+/// Design 5a: the repository's pull requests (open ones, recent ones, and
+/// older ones sessions acted on), grouped by the folder whose sessions
+/// opened or reviewed them.
 struct ProjectPullRequestsView: View {
     @Environment(AppModel.self) private var model
     let projectID: UUID
@@ -337,6 +367,7 @@ struct ProjectPullRequestsView: View {
     var body: some View {
         VStack(spacing: 0) {
             if hasPullRequests(model, projectID: projectID) {
+                PullRequestsErrorBanner(projectID: projectID)
                 filterBar
                 columnHeader
                 ScrollView {
@@ -439,7 +470,7 @@ struct ProjectPullRequestsView: View {
                 .font(DS.font(12.5, .bold, italic: group.group == nil || group.isUnfiled))
                 .foregroundStyle(DS.muted)
             if group.group == nil {
-                Text("On GitHub, not started from Claudio")
+                Text("Not opened or reviewed by a session here")
                     .font(DS.font(12.5, .semibold))
                     .foregroundStyle(DS.dim)
             }
@@ -630,6 +661,7 @@ struct FolderPullRequestsView: View {
         let projectID = model.workspace.projectID(of: group)
         let pullRequests = model.pullRequests(in: group)
         VStack(spacing: 0) {
+            if let projectID { PullRequestsErrorBanner(projectID: projectID) }
             if let projectID, !hasPullRequests(model, projectID: projectID) {
                 PullRequestsUnavailable(projectID: projectID)
             } else if pullRequests.isEmpty {
@@ -667,7 +699,11 @@ struct FolderPullRequestsView: View {
         })
         .task(id: group) {
             if let projectID { await model.refreshPullRequests(projectID) }
-            await model.loadReviewThreads(for: model.pullRequests(in: group))
+        }
+        // Again whenever the folder's pull requests change: they may not have
+        // loaded yet when the tab opens (a refresh already under way).
+        .task(id: pullRequests.map(\.key)) {
+            await model.loadReviewThreads(for: pullRequests)
         }
     }
 
@@ -843,7 +879,10 @@ private struct PullRequestCard: View {
             return "Closed without merging."
         case .open, .draft:
             let prefix = pullRequest.state == .draft ? "Draft. " : ""
-            guard let threads = model.reviewThreads[pullRequest.key] else { return prefix + "Checking review comments…" }
+            guard let threads = model.reviewThreads[pullRequest.key] else {
+                return prefix + (model.reviewThreadFailures.contains(pullRequest.key)
+                                 ? "Couldn't load review comments." : "Checking review comments…")
+            }
             switch threads.count {
             case 0: return prefix + "No unresolved comments."
             case 1: return prefix + "1 unresolved comment."
@@ -1078,8 +1117,8 @@ private struct SessionPullRequestPopover: View {
         .frame(maxHeight: 660)
         .fixedSize(horizontal: false, vertical: true)
         .background(DS.input)
-        .task {
-            await model.refreshPullRequests(session.projectID)
+        .task { await model.refreshPullRequests(session.projectID) }
+        .task(id: model.pullRequests(ofSession: session.id).map(\.key)) {
             await model.loadReviewThreads(for: model.pullRequests(ofSession: session.id))
         }
     }
@@ -1167,7 +1206,9 @@ private struct PopoverPullRequest: View {
     }
 
     private func commentSummary(_ threads: [ReviewThread]?) -> String {
-        guard let threads else { return "Checking review comments…" }
+        guard let threads else {
+            return model.reviewThreadFailures.contains(pullRequest.key) ? "Couldn't load review comments" : "Checking review comments…"
+        }
         switch threads.count {
         case 0: return "No unresolved comments"
         case 1: return "1 unresolved comment"
@@ -1255,7 +1296,8 @@ struct FolderPullRequestChip: View {
     @State private var hovering = false
 
     var body: some View {
-        let open = model.pullRequests(in: group).filter(\.isOpen)
+        // The one that most needs doing leads, and colours the dot.
+        let open = PullRequestInfo.mostUrgentFirst(model.pullRequests(in: group).filter(\.isOpen))
         if let first = open.first {
             Button { model.showOverview(.folder(group)) } label: {
                 HStack(spacing: 4) {

@@ -90,8 +90,9 @@ public enum PullRequestActivity {
             guard invocation.count >= 2 else { continue }
             switch (invocation[0], invocation[1]) {
             case ("pr", "create"):
-                // gh prints the new pull request's URL.
-                PullRequestLink.merge(PullRequestDetector.urls(in: output).map { PullRequestLink($0, .opened) }, into: &links)
+                // gh prints the new pull request's URL first; later URLs are
+                // other commands' output (`… && gh pr view 1400`).
+                PullRequestLink.merge(PullRequestDetector.urls(in: output).prefix(1).map { PullRequestLink($0, .opened) }, into: &links)
             case ("pr", let sub) where reviewSubcommands.contains(sub):
                 if let target = target(of: invocation) { PullRequestLink.merge([PullRequestLink(target, .reviewed)], into: &links) }
             case ("api", _):
@@ -142,13 +143,14 @@ public enum PullRequestActivity {
         return "#\(number)"
     }
 
-    /// `gh api repos/OWNER/REPO/pulls/N/…` that writes (reviews, comments):
-    /// with a method other than GET, or fields.
+    /// `gh api repos/OWNER/REPO/pulls/N/…` that writes (reviews, comments).
+    /// An explicit method decides; without one, gh posts when there are
+    /// fields (`-X GET -f per_page=100` is a read).
     static func apiTarget(of invocation: [String]) -> String? {
-        let writes = invocation.contains { ["-f", "-F", "--field", "--raw-field", "--input"].contains($0) }
-            || zip(invocation, invocation.dropFirst()).contains { flag, value in
-                (flag == "-X" || flag == "--method") && value.uppercased() != "GET"
-            }
+        let method = zip(invocation, invocation.dropFirst()).first { flag, _ in flag == "-X" || flag == "--method" }?.1
+            ?? invocation.first { $0.hasPrefix("--method=") }.map { String($0.dropFirst("--method=".count)) }
+        let hasFields = invocation.contains { ["-f", "-F", "--field", "--raw-field", "--input"].contains($0) }
+        let writes = method.map { $0.uppercased() != "GET" } ?? hasFields
         guard writes else { return nil }
         for word in invocation {
             guard let range = word.range(of: #"repos/([^/\s]+)/([^/\s]+)/pulls/(\d+)"#, options: .regularExpression) else { continue }
@@ -169,7 +171,9 @@ public enum PullRequestActivity {
         if name.contains("create_pull_request") && !name.contains("review") {
             return PullRequestDetector.urls(in: output).prefix(1).map { PullRequestLink($0, .opened) }
         }
-        let writes = ["review", "comment", "merge", "update"].contains { name.contains($0) }
+        // get_pull_request_comments, list_…_reviews and the like only read.
+        let reads = ["get_", "list_", "search_"].contains { name.contains($0) }
+        let writes = !reads && ["review", "comment", "merge", "update"].contains { name.contains($0) }
         guard writes,
               let owner = input["owner"]?.stringValue, let repo = input["repo"]?.stringValue,
               let number = (input["pullNumber"] ?? input["pull_number"])?.doubleValue
@@ -178,11 +182,15 @@ public enum PullRequestActivity {
     }
 
     /// Each `gh …` in a command line, as words after `gh` (roughly
-    /// shell-split: quotes grouped, split at `&&`, `||`, `;`, `|`).
+    /// shell-split: quotes grouped, split at newlines, `&&`, `||`, `;`, `|`).
+    /// `gh` counts only as the command, after any `VAR=value` and `env`,
+    /// `command`, `time` or `sudo`: not `echo gh pr close 4`.
     static func ghInvocations(in command: String) -> [[String]] {
+        let wrappers: Set<String> = ["env", "command", "time", "sudo", "exec", "nohup"]
         var result: [[String]] = []
         for segment in ShellWords.segments(command) {
-            guard let index = segment.firstIndex(where: { $0 == "gh" || $0.hasSuffix("/gh") }) else { continue }
+            guard let index = segment.firstIndex(where: { !$0.contains("=") && !wrappers.contains($0) }),
+                  segment[index] == "gh" || segment[index].hasSuffix("/gh") else { continue }
             result.append(Array(segment[(index + 1)...]))
         }
         return result
@@ -219,9 +227,9 @@ enum ShellWords {
                 hasWord = true
             case "\\":
                 if let next = characters.popFirst(), next != "\n" { word.append(next); hasWord = true }
-            case " ", "\t", "\n":
+            case " ", "\t":
                 endWord()
-            case ";", "|", "&", "(", ")":
+            case "\n", ";", "|", "&", "(", ")":
                 endWord()
                 if segments[segments.count - 1].isEmpty == false { segments.append([]) }
             default:

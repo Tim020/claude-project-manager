@@ -168,6 +168,8 @@ public final class AppModel {
     /// Unresolved review threads per pull request (by key), loaded when shown.
     public internal(set) var reviewThreads: [String: [ReviewThread]] = [:]
     @ObservationIgnored var reviewThreadsLoaded: [String: Date] = [:]
+    /// Pull requests (by key) whose review threads failed to load.
+    public internal(set) var reviewThreadFailures = Set<String>()
     @ObservationIgnored var refreshingPullRequests = Set<UUID>()
     public internal(set) var loadingPullRequests = Set<UUID>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention

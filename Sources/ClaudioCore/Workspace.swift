@@ -72,7 +72,8 @@ public struct Workspace: Codable, Equatable, Sendable {
         // Older files kept archived sessions' tabs open (hidden); archiving closes
         // them now, so drop those, and any id without a session. Overview tabs
         // whose project or folder has gone are dropped too.
-        let savedOverviews = try c.decodeIfPresent([OverviewTab].self, forKey: .overviewTabs) ?? []
+        // Tolerant like `panes`: an overview tab is easily opened again.
+        let savedOverviews = ((try? c.decodeIfPresent([OverviewTab].self, forKey: .overviewTabs)) ?? nil) ?? []
         let overviews = savedOverviews.filter { projectID(of: $0.overview) != nil }
         let visible = Set(sessions.filter { !$0.isArchived }.map(\.id)).union(overviews.map(\.id))
         let open = (try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []).filter(visible.contains)

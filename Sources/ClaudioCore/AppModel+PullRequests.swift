@@ -1,14 +1,14 @@
 import Foundation
 
 /// Pull Requests overviews (design 5): each project's pull requests from
-/// GitHub via `gh`, tied to the sessions that mention them.
+/// GitHub via `gh`, tied to the sessions that opened or reviewed them.
 extension AppModel {
     /// How long loaded pull requests stay fresh before a refresh reloads them.
     public static let pullRequestRefreshInterval: TimeInterval = 120
     /// Open pull requests fetched per project; recent ones of any state too.
     static let openPullRequestLimit = 100
     static let recentPullRequestLimit = 40
-    /// Pull requests sessions mention but the lists missed, fetched one by one.
+    /// Pull requests sessions acted on but the lists missed, fetched one by one.
     static let extraPullRequestLimit = 20
 
     /// Why pull requests can't be loaded, when gh isn't set up.
@@ -57,7 +57,8 @@ extension AppModel {
         return PullRequestOverview.pullRequests(of: session, known: projectPullRequests[session.projectID])
     }
 
-    /// The pull requests a folder's (or Unfiled's) sessions mention.
+    /// The pull requests that belong to a folder (or Unfiled): the ones its
+    /// sessions opened, or reviewed when no session here opened them.
     public func pullRequests(in group: SessionGroup) -> [PullRequestInfo] {
         guard let projectID = workspace.projectID(of: group) else { return [] }
         return PullRequestOverview.pullRequests(in: group, workspace: workspace, known: projectPullRequests[projectID])
@@ -116,26 +117,30 @@ extension AppModel {
         return result
     }
 
-    /// Whether the sidebar shows a project's Pull Requests row: when gh can
-    /// load them, or a session has opened or reviewed one.
+    /// Whether the sidebar shows a project's Pull Requests row: when some
+    /// have loaded, when gh can load them (unless it found no GitHub
+    /// repository), or when a session has opened or reviewed one.
     public func showsPullRequestsRow(projectID: UUID) -> Bool {
-        if case .signedIn = environment.githubCLI { return true }
         if projectPullRequests[projectID]?.items.isEmpty == false { return true }
+        if case .signedIn = environment.githubCLI, projectPullRequests[projectID]?.isNotGitHub != true { return true }
         return workspace.sessions.contains { $0.projectID == projectID && !$0.isArchived && !pullRequestLinks(ofSession: $0.id).isEmpty }
     }
 
     // MARK: Loading
 
     /// Loads a project's pull requests: its open ones, its recent ones of any
-    /// state, and any others its sessions mention. Skipped while fresh
-    /// unless forced.
+    /// state, and up to `extraPullRequestLimit` older ones its sessions
+    /// opened or reviewed; then reloads the review threads already shown.
+    /// Skipped if tried recently, unless forced. A failure keeps what loaded
+    /// before, with the error.
     public func refreshPullRequests(_ projectID: UUID, force: Bool = false) async {
         guard gitHubCLIProblem == nil, let project = workspace.project(projectID), let gh = locateGitHubCLI(),
               !refreshingPullRequests.contains(projectID) else { return }
-        if !force, let updated = projectPullRequests[projectID]?.updatedAt,
-           now().timeIntervalSince(updated) < AppModel.pullRequestRefreshInterval {
+        let previous = projectPullRequests[projectID]
+        if !force, let tried = previous?.attemptedAt, now().timeIntervalSince(tried) < AppModel.pullRequestRefreshInterval {
             return
         }
+        if !force, previous?.isNotGitHub == true { return }
         refreshingPullRequests.insert(projectID)
         loadingPullRequests.insert(projectID)
         defer {
@@ -147,60 +152,82 @@ extension AppModel {
             await run(GitHubCLI.command(args, in: directory, gh: gh), logOnlyChanges: true, changeKey: "gh-\(key)|\(directory)")
         }
 
-        var loaded = projectPullRequests[projectID] ?? ProjectPullRequests()
+        var loaded = previous ?? ProjectPullRequests()
+        loaded.attemptedAt = now()
         if loaded.repository == nil {
+            await loadRemoteRepositories()
             let result = await runGitHub(["repo", "view", "--json", "nameWithOwner,url"], key: "repo")
-            guard result.exitCode == 0, let repository = GitHubCLI.parseRepository(result.output) else {
-                loaded.error = Self.firstLine(result.errorOutput) ?? "This project isn't a GitHub repository."
-                loaded.updatedAt = now()
+            guard let repository = GitHubCLI.parseRepository(result.output), result.exitCode == 0 else {
+                if result.exitCode != 0 {
+                    loaded.error = Self.firstLine(result.errorOutput) ?? "This project isn't a GitHub repository."
+                    // No GitHub `origin` either: it isn't one, so stop polling
+                    // it (and logging the same failure every 2 minutes).
+                    loaded.isNotGitHub = remoteRepositories[projectID] == nil
+                } else {
+                    loaded.error = "Couldn't read the repository from gh (gh repo view)."
+                }
                 projectPullRequests[projectID] = loaded
                 return
             }
             loaded.repository = repository
+            loaded.isNotGitHub = false
             // Known from now on, for resolving sessions' "#123" links below.
             projectPullRequests[projectID] = loaded
         }
 
         let fields = GitHubCLI.overviewFields
         let open = await runGitHub(["pr", "list", "--state", "open", "--limit", "\(AppModel.openPullRequestLimit)", "--json", fields], key: "open")
-        let recent = await runGitHub(["pr", "list", "--state", "all", "--limit", "\(AppModel.recentPullRequestLimit)", "--json", fields], key: "recent")
         guard open.exitCode == 0, let openItems = GitHubCLI.parsePullRequests(open.output) else {
-            loaded.error = Self.firstLine(open.errorOutput) ?? "Couldn't load pull requests."
-            loaded.updatedAt = now()
+            loaded.error = "Couldn't refresh: " + (Self.firstLine(open.errorOutput) ?? "gh pr list failed.")
             projectPullRequests[projectID] = loaded
             return
         }
+        var problems: [String] = []
         var items = openItems
         var keys = Set(items.map(\.key))
-        for item in GitHubCLI.parsePullRequests(recent.output) ?? [] where keys.insert(item.key).inserted {
-            items.append(item)
+        let recent = await runGitHub(["pr", "list", "--state", "all", "--limit", "\(AppModel.recentPullRequestLimit)", "--json", fields], key: "recent")
+        if recent.exitCode == 0, let recentItems = GitHubCLI.parsePullRequests(recent.output) {
+            for item in recentItems where keys.insert(item.key).inserted { items.append(item) }
+        } else {
+            // Keep the merged and closed ones that loaded before.
+            for item in previous?.items ?? [] where !item.isOpen && keys.insert(item.key).inserted { items.append(item) }
+            problems.append("recent pull requests: " + (Self.firstLine(recent.errorOutput) ?? "gh pr list failed"))
         }
 
         // Pull requests sessions opened or reviewed that neither list had
         // (older ones). Only this repository's: others aren't the project's.
+        // Merged and closed ones don't change, so known ones are kept as they
+        // are; the limit is on the ones that need fetching.
         let linked = workspace.sessions.filter { $0.projectID == projectID && !$0.isArchived }
             .flatMap { pullRequestLinks(ofSession: $0.id) }
-        var missing: [String] = []
+        var toFetch: [String] = []
         for link in linked {
-            guard let key = PullRequestKey.key(link.url), !keys.contains(key) else { continue }
-            keys.insert(key)
-            missing.append(link.url)
-        }
-        let previous = projectPullRequests[projectID]
-        for url in missing.prefix(AppModel.extraPullRequestLimit) {
-            // Merged and closed ones don't change: keep what's known.
-            if let known = previous?.item(forURL: url), !known.isOpen {
+            guard let key = PullRequestKey.key(link.url), keys.insert(key).inserted else { continue }
+            if let known = previous?.item(forURL: link.url), !known.isOpen {
                 items.append(known)
-                continue
+            } else {
+                toFetch.append(link.url)
             }
+        }
+        for url in toFetch.prefix(AppModel.extraPullRequestLimit) {
             let result = await runGitHub(["pr", "view", url, "--json", fields], key: "view-\(url)")
-            if result.exitCode == 0, let item = GitHubCLI.parsePullRequestInfo(result.output) { items.append(item) }
+            if result.exitCode == 0, let item = GitHubCLI.parsePullRequestInfo(result.output) {
+                items.append(item)
+            } else if let known = previous?.item(forURL: url) {
+                // Keep what loaded before rather than dropping it.
+                items.append(known)
+            }
         }
 
         loaded.items = items
-        loaded.error = nil
+        loaded.error = problems.isEmpty ? nil : "Couldn't load " + problems.joined(separator: "; ")
         loaded.updatedAt = now()
         projectPullRequests[projectID] = loaded
+
+        // Review threads already loaded (shown in a folder or popover) go
+        // stale with the rest.
+        let shown = items.filter { reviewThreads[$0.key] != nil || reviewThreadFailures.contains($0.key) }
+        await loadReviewThreads(for: shown, force: force)
     }
 
     /// Every project's pull requests (sidebar chips and counts).
@@ -212,6 +239,7 @@ extension AppModel {
     }
 
     /// Unresolved review threads for open pull requests, via `gh api graphql`.
+    /// A failure is remembered (the views say so) and retried next time.
     public func loadReviewThreads(for pullRequests: [PullRequestInfo], force: Bool = false) async {
         guard gitHubCLIProblem == nil, let gh = locateGitHubCLI() else { return }
         for pullRequest in pullRequests where pullRequest.isOpen || reviewThreads[pullRequest.key] == nil {
@@ -220,10 +248,13 @@ extension AppModel {
                 continue
             }
             guard let args = GitHubCLI.reviewThreadsArguments(url: pullRequest.url) else { continue }
-            reviewThreadsLoaded[pullRequest.key] = now()
             let result = await run(GitHubCLI.command(args, in: home, gh: gh), logOnlyChanges: true, changeKey: "gh-threads|\(pullRequest.key)")
-            if result.exitCode == 0, let threads = GitHubCLI.parseReviewThreads(result.output), reviewThreads[pullRequest.key] != threads {
-                reviewThreads[pullRequest.key] = threads
+            if result.exitCode == 0, let threads = GitHubCLI.parseReviewThreads(result.output) {
+                reviewThreadsLoaded[pullRequest.key] = now()
+                if reviewThreads[pullRequest.key] != threads { reviewThreads[pullRequest.key] = threads }
+                if reviewThreadFailures.contains(pullRequest.key) { reviewThreadFailures.remove(pullRequest.key) }
+            } else if !reviewThreadFailures.contains(pullRequest.key) {
+                reviewThreadFailures.insert(pullRequest.key)
             }
         }
     }

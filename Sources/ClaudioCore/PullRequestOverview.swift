@@ -58,16 +58,29 @@ public enum PullRequestFilter: String, CaseIterable, Sendable {
 public struct ProjectPullRequests: Equatable, Sendable {
     public var repository: GitHubCLI.Repository?
     public var items: [PullRequestInfo]
+    /// When the pull requests last loaded (what "Updated 2m ago" says).
     public var updatedAt: Date?
-    /// Why they couldn't be loaded, if they couldn't.
+    /// When a load was last tried, successful or not (for spacing out retries).
+    public var attemptedAt: Date?
+    /// What went wrong on the last try, if anything. `items` are then
+    /// whatever loaded before.
     public var error: String?
+    /// gh found no GitHub repository here: it isn't polled again (the
+    /// refresh button still tries).
+    public var isNotGitHub: Bool
 
-    public init(repository: GitHubCLI.Repository? = nil, items: [PullRequestInfo] = [], updatedAt: Date? = nil, error: String? = nil) {
+    public init(repository: GitHubCLI.Repository? = nil, items: [PullRequestInfo] = [], updatedAt: Date? = nil,
+                attemptedAt: Date? = nil, error: String? = nil, isNotGitHub: Bool = false) {
         self.repository = repository
         self.items = items
         self.updatedAt = updatedAt
+        self.attemptedAt = attemptedAt ?? updatedAt
         self.error = error
+        self.isNotGitHub = isNotGitHub
     }
+
+    /// Something has loaded, even if the last refresh failed.
+    public var hasLoaded: Bool { updatedAt != nil }
 
     public func item(forURL url: String) -> PullRequestInfo? {
         guard let key = PullRequestKey.key(url) else { return nil }

@@ -314,13 +314,23 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     var recent = "[]"
     var views: [String: String] = [:]
     var threads = #"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}"#
+    var openExit: Int32 = 0
+    var recentExit: Int32 = 0
+    var threadsExit: Int32 = 0
+    /// `git remote get-url origin`'s output ("" for none).
+    var remote = ""
     private var _calls: [[String]] = []
     var calls: [[String]] { lock.withLock { _calls } }
 
     func run(_ command: TerminalLaunch) async -> CommandResult {
         let args = command.arguments
         lock.withLock { _calls.append(args) }
-        guard command.executable.hasSuffix("/gh") else { return CommandResult(exitCode: 0, output: "", errorOutput: "") }
+        guard command.executable.hasSuffix("/gh") else {
+            if args.suffix(3) == ["remote", "get-url", "origin"] {
+                return CommandResult(exitCode: remote.isEmpty ? 2 : 0, output: remote, errorOutput: remote.isEmpty ? "error: No such remote 'origin'" : "")
+            }
+            return CommandResult(exitCode: 0, output: "", errorOutput: "")
+        }
         if args.starts(with: ["auth", "status"]) {
             return CommandResult(exitCode: 0, output: "✓ Logged in to github.com account Tim020 (keyring)\n", errorOutput: "")
         }
@@ -328,12 +338,16 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : "no git remotes found\n")
         }
         if args.starts(with: ["pr", "list"]) {
+            let exit = args.contains("open") ? openExit : recentExit
+            guard exit == 0 else { return CommandResult(exitCode: exit, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
             return CommandResult(exitCode: 0, output: args.contains("open") ? open : recent, errorOutput: "")
         }
         if args.starts(with: ["pr", "view"]), args.count > 2, let output = views[args[2]] {
             return CommandResult(exitCode: 0, output: output, errorOutput: "")
         }
-        if args.starts(with: ["api", "graphql"]) { return CommandResult(exitCode: 0, output: threads, errorOutput: "") }
+        if args.starts(with: ["api", "graphql"]) {
+            return CommandResult(exitCode: threadsExit, output: threadsExit == 0 ? threads : "", errorOutput: threadsExit == 0 ? "" : "timeout")
+        }
         return CommandResult(exitCode: 1, output: "", errorOutput: "not found")
     }
 }
