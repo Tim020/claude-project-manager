@@ -264,6 +264,22 @@ final class ShellPanelTests: XCTestCase {
         XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 256), 1)
         XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 9), 137, "killed by SIGKILL")
         XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 15), 143, "killed by SIGTERM")
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 0x8B), 139, "SIGSEGV with a core dump")
+    }
+
+    func testAnInstantCleanExitIsReported() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
+            model.shellStarted(id, launch: launch)
+            clock += 0.1
+            // Faster than anyone can press ⌃D: SwiftTerm reports 0 when it can't read the status.
+            model.shellExited(id, exitCode: ProcessExitStatus.exitCode(fromWaitStatus: 0))
+            XCTAssertTrue(model.shellPanel.tabs.isEmpty)
+            let message = try XCTUnwrap(model.errorMessage)
+            XCTAssertTrue(message.contains("Couldn't start /bin/zsh (it exited as soon as it started)"), message)
+        }
     }
 
     func testALaterExitIsNotAnError() throws {
