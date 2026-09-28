@@ -102,6 +102,9 @@ struct ClaudioApp: App {
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") {
+                    // The "still running" alert has the keyboard; a second ⌘W
+                    // mustn't close the session tab behind it.
+                    if model.shellCloseConfirmation != nil { return }
                     if let shell = terminals.registry.shellWithKeyboard() {
                         model.requestCloseShell(shell)
                     } else if let id = model.selectedSessionID {

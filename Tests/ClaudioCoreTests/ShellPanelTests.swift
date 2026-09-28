@@ -6,6 +6,7 @@ final class ShellPanelTests: XCTestCase {
     var store = MemoryStore()
     var terminals: FakeTerminals!
     var existing: Set<String> = []
+    var clock = Date(timeIntervalSince1970: 1_790_000_000)
 
     @MainActor
     private func makeModel() throws -> AppModel {
@@ -15,6 +16,7 @@ final class ShellPanelTests: XCTestCase {
             hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("hook-events.log"),
             locateClaude: { _ in "/usr/local/bin/claude" },
             shell: "/bin/zsh",
+            now: { [unowned self] in self.clock },
             home: "/Users/tim")
         terminals = FakeTerminals()
         model.terminals = terminals
@@ -188,6 +190,78 @@ final class ShellPanelTests: XCTestCase {
             model.closeShell(id)
             XCTAssertEqual(terminals.terminatedShells, [id])
             XCTAssertNil(model.shellCloseConfirmation)
+        }
+    }
+
+    func testExitingClearsAPendingCloseQuestion() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            terminals.shellCommands[id] = "npm"
+            model.requestCloseShell(id)
+            XCTAssertNotNil(model.shellCloseConfirmation)
+            model.shellExited(id, exitCode: 0)
+            XCTAssertNil(model.shellCloseConfirmation, "no question left about a shell that's gone")
+        }
+    }
+
+    func testAShellThatExitsAtOnceIsReported() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
+            model.shellStarted(id, launch: launch)
+            clock += 0.2
+            model.shellExited(id, exitCode: 127)
+            XCTAssertTrue(model.shellPanel.tabs.isEmpty)
+            let message = try XCTUnwrap(model.errorMessage)
+            XCTAssertTrue(message.contains("Couldn't start /bin/zsh (exit code 127)"), message)
+        }
+    }
+
+    func testALaterExitIsNotAnError() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
+            model.shellStarted(id, launch: launch)
+            clock += 60
+            // `exit` after a command that wasn't found also exits 127.
+            model.shellExited(id, exitCode: 127)
+            XCTAssertNil(model.errorMessage)
+            XCTAssertTrue(model.log.entries.contains { $0.title == "Shell started: /bin/zsh -l" })
+        }
+    }
+
+    func testAShellThatCantBeCreatedIsReported() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
+            model.shellFailedToStart(id, launch: launch)
+            XCTAssertTrue(model.shellPanel.tabs.isEmpty)
+            XCTAssertFalse(model.shellPanel.isOpen)
+            XCTAssertEqual(model.errorMessage, "Couldn't start a shell (/bin/zsh -l).")
+            XCTAssertFalse(model.log.entries.contains { $0.title.hasPrefix("Shell started") })
+        }
+    }
+
+    func testClickingAPaneTakesTheKeyboardFromTheShell() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try modelWithSession()
+            model.newShell()
+            XCTAssertTrue(model.shellHasFocus)
+            model.focusPane(model.panes.focusedGroupID)
+            XCTAssertFalse(model.shellHasFocus)
+        }
+    }
+
+    func testStartCandidatesDontNeedTheDisk() throws {
+        try MainActor.assumeIsolated {
+            existing = []
+            let (model, session) = try modelWithSession()
+            XCTAssertEqual(model.shellStartCandidates, [session.workingDirectory])
+            XCTAssertEqual(model.shellStartDirectory, "/Users/tim")
         }
     }
 

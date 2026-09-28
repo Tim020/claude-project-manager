@@ -113,6 +113,8 @@ public final class AppModel {
     /// asks first (`closeShell(_:)` to confirm).
     public var shellCloseConfirmation: ShellCloseConfirmation?
     @ObservationIgnored var pendingShellLaunches: [UUID: TerminalLaunch] = [:]
+    /// When each shell's process started (see `shellExited`).
+    @ObservationIgnored var shellStartTimes: [UUID: Date] = [:]
     /// Filesystem lookups for shells, replaceable in tests.
     @ObservationIgnored var directoryExists: (String) -> Bool = { path in
         var isDirectory: ObjCBool = false
@@ -760,6 +762,8 @@ public final class AppModel {
 
     /// Focuses a pane (e.g. when it's clicked), selecting the tab it shows.
     public func focusPane(_ groupID: UUID) {
+        // A click anywhere in a pane gives the keyboard back from a shell.
+        setShellFocus(false)
         updatePanes(saving: false) { $0.focusPane(groupID) }
     }
 

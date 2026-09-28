@@ -11,21 +11,29 @@ public struct ShellCloseConfirmation: Equatable, Sendable {
 /// window under all panes. A new shell starts in the selected session's
 /// folder, or its worktree when it has one.
 extension AppModel {
-    /// Where a new shell starts: the selected session's worktree (where Files
-    /// Changed found its edits), else its folder. With a Pull Requests
-    /// overview focused, its project's folder. Otherwise the home folder.
-    /// A worktree `claude rm` removed can still be recorded, so each
-    /// candidate has to exist.
-    public var shellStartDirectory: String {
-        var candidates: [String] = []
+    /// A shell that exits this soon after starting is taken to have failed
+    /// to start (a missing `$SHELL`, or one that dies in its rc files).
+    public static let shellStartupWindow: TimeInterval = 2
+
+    /// Where a new shell would start, best first: the selected session's
+    /// worktree (where Files Changed found its edits), then its folder; with
+    /// a Pull Requests overview focused, its project's folder. Nothing here
+    /// touches the disk, so views can show it as they redraw.
+    public var shellStartCandidates: [String] {
         if let session = selectedSession {
-            if let changes = changesDirectory(for: session.id) { candidates.append(changes) }
-            candidates.append(session.workingDirectory)
-        } else if let overview = selectedOverview,
-                  let project = workspace.projectID(of: overview).flatMap(workspace.project) {
-            candidates.append(project.path)
+            return (changesDirectory(for: session.id).map { [$0] } ?? []) + [session.workingDirectory]
         }
-        return candidates.first(where: directoryExists) ?? home
+        if let overview = selectedOverview,
+           let project = workspace.projectID(of: overview).flatMap(workspace.project) {
+            return [project.path]
+        }
+        return []
+    }
+
+    /// Where a new shell starts: the first candidate that exists (a worktree
+    /// `claude rm` removed can still be recorded), else the home folder.
+    public var shellStartDirectory: String {
+        shellStartCandidates.first(where: directoryExists) ?? home
     }
 
     /// Opens a new shell in `directory` (by default `shellStartDirectory`),
@@ -42,10 +50,23 @@ extension AppModel {
     }
 
     /// Hands a shell's queued launch to the terminal that will run it (once).
+    /// The terminal then reports `shellStarted` or `shellFailedToStart`.
     public func takePendingShellLaunch(_ shellID: UUID) -> TerminalLaunch? {
-        guard let launch = pendingShellLaunches.removeValue(forKey: shellID) else { return nil }
+        pendingShellLaunches.removeValue(forKey: shellID)
+    }
+
+    /// The shell's process is running.
+    public func shellStarted(_ shellID: UUID, launch: TerminalLaunch) {
+        shellStartTimes[shellID] = now()
         log.append(.terminal, "Shell started: \(launch.displayCommand)", detail: "in \(launch.workingDirectory)")
-        return launch
+    }
+
+    /// The shell's process couldn't be created (e.g. out of processes or
+    /// ptys): say so and drop its tab.
+    public func shellFailedToStart(_ shellID: UUID, launch: TerminalLaunch) {
+        guard let tab = shellPanel.tabs.first(where: { $0.id == shellID }) else { return }
+        report("Couldn't start a shell (\(launch.displayCommand)).")
+        removeShell(tab, message: "Shell failed to start")
     }
 
     /// ⌃`: shows or hides the panel. With no shells, showing it opens one.
@@ -83,6 +104,7 @@ extension AppModel {
         if shellCloseConfirmation?.shellID == shellID { shellCloseConfirmation = nil }
         guard let tab = shellPanel.tabs.first(where: { $0.id == shellID }) else { return }
         pendingShellLaunches[shellID] = nil
+        shellStartTimes[shellID] = nil
         terminals?.terminateShell(shellID)
         removeShell(tab, message: "Shell closed")
     }
@@ -90,7 +112,16 @@ extension AppModel {
     /// Called by the UI when a shell's process exits (`exit`, or after
     /// `closeShell`, when its tab is already gone).
     public func shellExited(_ shellID: UUID, exitCode: Int32?) {
+        // An exit answers any pending "still running" question about it.
+        if shellCloseConfirmation?.shellID == shellID { shellCloseConfirmation = nil }
+        let started = shellStartTimes.removeValue(forKey: shellID)
         guard let tab = shellPanel.tabs.first(where: { $0.id == shellID }) else { return }
+        if let started, now().timeIntervalSince(started) < Self.shellStartupWindow {
+            // Gone at once: most likely `$SHELL` can't run, or its rc files exit.
+            report("Couldn't start \(shell)"
+                + (exitCode.map { " (exit code \($0))" } ?? "")
+                + ". Check that $SHELL names a shell that's installed, and that its startup files don't exit.")
+        }
         removeShell(tab, message: exitCode.map { "Shell exited (code \($0))" } ?? "Shell exited")
     }
 

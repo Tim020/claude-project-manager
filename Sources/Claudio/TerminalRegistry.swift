@@ -36,7 +36,9 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         guard let hit = event.window?.contentView?.hitTest(event.locationInWindow) else { return }
         if shells.values.contains(where: { hit.isDescendant(of: $0) }) {
             model.setShellFocus(true)
-        } else if views.values.contains(where: { hit.isDescendant(of: $0) }) {
+        } else if views.values.contains(where: { hit.isDescendant(of: $0) })
+                    || containers.values.joined().contains(where: { $0.value.map(hit.isDescendant(of:)) ?? false }) {
+            // In a session's terminal, or its container's padding.
             model.setShellFocus(false)
         }
     }
@@ -127,6 +129,15 @@ final class TerminalRegistry: NSObject, TerminalControlling {
                               environment: launch.environmentList,
                               execName: nil,
                               currentDirectory: launch.workingDirectory)
+            // When forkpty fails, SwiftTerm returns without a process and
+            // never calls the delegate.
+            guard view.process.running else {
+                view.processDelegate = nil
+                shells[shellID] = nil
+                model.shellFailedToStart(shellID, launch: launch)
+                return nil
+            }
+            model.shellStarted(shellID, launch: launch)
         }
         return shells[shellID]
     }
@@ -143,7 +154,9 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     func runningCommand(inShell shellID: UUID) -> String? {
         guard let process = shells[shellID]?.process, process.running else { return nil }
         let group = tcgetpgrp(process.childfd)
-        guard group > 0, group != process.shellPid else { return nil }
+        // If the check fails, ask rather than close something that's busy.
+        if group < 0 { return "a command" }
+        guard group != process.shellPid else { return nil }
         var name = [CChar](repeating: 0, count: 256)
         let length = proc_name(group, &name, UInt32(name.count))
         return length > 0 ? String(cString: name) : "a command"

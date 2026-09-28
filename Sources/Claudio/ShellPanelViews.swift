@@ -62,6 +62,9 @@ private struct ShellPanelView: View {
     /// Height while the top edge is being dragged.
     @State private var draggingHeight: Double?
     @State private var dragStartHeight: Double?
+    /// The resize cursor is pushed; popped on leaving, or if the handle goes
+    /// (hidden, maximised or last shell closed) with the pointer on it.
+    @State private var cursorPushed = false
 
     var body: some View {
         let panel = model.shellPanel
@@ -94,7 +97,13 @@ private struct ShellPanelView: View {
             .frame(height: 8)
             .contentShape(Rectangle())
             .onHover { inside in
+                guard inside != cursorPushed else { return }
+                cursorPushed = inside
                 if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .onDisappear {
+                if cursorPushed { NSCursor.pop() }
+                cursorPushed = false
             }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
@@ -140,11 +149,14 @@ private struct ShellTabBar: View {
             .buttonStyle(.plain)
             .help("New Shell in the selected session's folder (its worktree, when it has one)")
             Spacer(minLength: 8)
-            Text("New shells open in \(ShellTab(workingDirectory: model.shellStartDirectory).name)")
+            // Unchecked candidate: checking the disk on every redraw isn't
+            // worth it, and a new shell falls back to home if it's gone.
+            let start = model.shellStartCandidates.first ?? model.home
+            Text("New shells open in \(ShellTab(workingDirectory: start).name)")
                 .font(DS.font(11.5))
                 .foregroundStyle(DS.dim)
                 .lineLimit(1)
-                .help(model.shellStartDirectory)
+                .help(start)
             barButton(panel.isMaximised ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                       help: panel.isMaximised ? "Restore" : "Maximise") { model.toggleShellMaximised() }
                 .padding(.leading, 8)
