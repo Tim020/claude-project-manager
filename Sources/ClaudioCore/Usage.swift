@@ -64,6 +64,11 @@ public struct UsageCredits: Equatable, Sendable {
     /// The monthly limit is spent, so nothing is left to fall back on.
     public var isExhausted: Bool { (usedPercentage ?? 0) >= 100 }
 
+    /// Worth showing: turned on, or spent. Hitting the monthly spend limit
+    /// turns `is_enabled` off (2.1.283), and that's when the spend matters most.
+    /// An account that never turned credits on has nothing spent.
+    public var isShown: Bool { isEnabled || isExhausted }
+
     /// "£12.50 of £50.00", or a percentage when there's no currency to format.
     public func amountLabel(locale: Locale = .current) -> String {
         guard let currency, let usedCredits else { return usedPercentage.map { "\(Int($0.rounded(.down)))% used" } ?? "" }
@@ -138,8 +143,9 @@ public struct UsageSnapshot: Equatable, Sendable {
     }
 
     /// A plan limit is reached and the month's usage credits are spent too.
+    /// Doesn't need `isEnabled`, which spending the limit turns off.
     public var isOutOfCredits: Bool {
-        guard let credits, credits.isEnabled else { return false }
+        guard let credits, credits.isShown else { return false }
         return isAtPlanLimit && credits.isExhausted
     }
 }
@@ -194,8 +200,10 @@ extension UsageSnapshot {
             default: break
             }
         }
-        if let extra = limits?["extra_usage"], let enabled = extra["is_enabled"]?.boolValue {
-            snapshot.credits = UsageCredits(isEnabled: enabled, monthlyLimit: extra["monthly_limit"]?.doubleValue,
+        // A missing or null `is_enabled` still leaves the spend worth reading.
+        if let extra = limits?["extra_usage"], extra.objectValue != nil {
+            snapshot.credits = UsageCredits(isEnabled: extra["is_enabled"]?.boolValue ?? false,
+                                            monthlyLimit: extra["monthly_limit"]?.doubleValue,
                                             usedCredits: extra["used_credits"]?.doubleValue,
                                             utilization: extra["utilization"]?.doubleValue,
                                             currency: extra["currency"]?.stringValue)
