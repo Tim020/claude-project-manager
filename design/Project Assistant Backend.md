@@ -11,6 +11,7 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
 - **Approved skills are native `SKILL.md` files.** They go in a directory Claudio owns and passes to every session it launches with `--add-dir`. Sessions find them like any project skill, pick up changes live, and nothing is written to `~/.claude` or the repository. Saving a skill to the repository is an extra per-skill action.
 - **A small bundled plugin** (`--plugin-dir`) gives sessions a `claudio` command, so they can read the plan and write notes back. It's copied out of the app bundle at launch. Nothing is installed.
 - **The learning loop feeds on data Claudio already has:** hook events, history files and changed files. Three more hook events cover failures. Skills need a high bar: a lesson has to recur, or the user has to correct Claude. Unused skills are offered for retirement.
+- **Code checks first; Claude only judges.** Polling, diffing, counting and matching are plain Swift and `gh`/`git` commands. Claude is called only once code has found something new that needs judgement, such as a new issue or a finished session with real changes. It's never called to find out *whether* anything happened.
 - **Background work is budgeted in plan usage.** It's deferred when the `/usage` reading Claudio already polls is high. What you ask for directly always runs.
 
 ## Research: what exists, and what we take from it
@@ -139,6 +140,21 @@ claude -p --model <haiku|sonnet> --output-format json \
 - The same kind of task with the default system prompt and tools cost $0.064 on Haiku, over 6 turns. So the flags above matter about 15-fold.
 - A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. It hasn't been measured.
 
+**Code checks first; Claude only judges.** A background job reaches `AssistantRunner` only after a code check has found work for it. Anything a script could answer is done in code and never becomes a Claude call:
+
+| Background work | Checked in code (no Claude) | Claude is called only when |
+|---|---|---|
+| GitHub issues | `gh issue list --json number,updatedAt` against the issue numbers already seen | there are unseen issues. All of them go in **one** triage call. |
+| Issue closed, linked PR merged | `gh` state, already polled for the Pull Requests overview | never: the "Mark Done" suggestion is made by code |
+| PR that closes an item's issue | `gh pr view --json closingIssuesReferences` | never: code links the PR to the item |
+| Session follow-ups | the "finished" trigger, plus the substance check below | the session changed files, failed a tool call, acted on a PR, committed, was corrected, or had 3 or more prompts since the last follow-up |
+| Skill proposals | lesson signatures counted across sessions (below) | a signature has recurred, or the user asked Claude to remember something |
+| Skill retirement | usage counts from `PreToolUse` Skill events | never: the Retire card is made by code |
+| Skill drift | file hashes | never |
+| Plan usage | `claude -p /usage`, already polled, with no model call | never |
+
+A job is also skipped when its input is the same as the last run's (a hash of the digest or issue list is stored with the watermark). And a queued job is replaced, not repeated, when newer input for the same thing arrives.
+
 **Plan-usage gate.** Before running a *background* job (follow-ups, skill drafts, retire checks, issue triage), `AssistantRunner` reads `AppModel.usage`. It defers the job if any of these holds:
 - the 5-hour or weekly window is at or above the **app-level** threshold (Settings, default 80%, one number for both windows)
 - `isUsingCredits` is true, unless the user has allowed background work on credits (an app-level toggle, off by default)
@@ -171,17 +187,20 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 - **Promote (right after capture):** one Haiku call per saved note. Input: the note, plus plan item titles for duplicates. Output: `{kind: bug|task|idea|fact, promote: Bool, reason, duplicateOf?}`. Measured at about 1.5–6 s, fast enough for the inline suggestion.
 - **Follow-ups (when a session finishes):**
   - `Stop` fires at the end of *every turn*, so it isn't "finished". A session counts as finished when it's Completed (not Awaiting Input), has been quiet for 2 minutes, and has new turns since its last follow-up (a watermark per session: the count of Stop events). Stopping the agent or closing its tab brings the job forward.
+  - **Substance check (code):** only call Claude if, since the last follow-up, the session changed files, had a tool failure, acted on a PR, made a commit, got a prompt matching a correction pattern ("no,", "don't", "instead", "next time", "remember"), or had 3 or more prompts. Otherwise there's nothing to follow up, and no call is made. A quick question and answer never costs a follow-up.
   - Input: a **digest**, built by Swift from the history file (first prompt, user corrections, failures, commands, the final message, files changed, PR state). It's capped at about 8k tokens, not the raw transcript. Also the current plan (ids, titles, statuses), the item this session belongs to, and the auto-memory index.
   - Output: `notes[]` (saved at once, marked assistant, undoable), `planChanges[]` (new item, move, mark done; each needs approval) and `lessons[]` (candidates, below).
   - This fills the follow-up card and its Needs You entry.
 - **Skill proposals (not per session):**
-  - A lesson from a follow-up is stored as a candidate with its evidence (session id, the failing command, the correction). A draft is only requested when one of these holds:
-    - (a) the same lesson recurs in at least 2 sessions (matched by the drafting call, which gets the candidate list), or
-    - (b) the user corrected Claude explicitly and said to remember it.
+  - A lesson from a follow-up is stored as a candidate with its evidence (session id, the failing command, the correction). Code gives each one a **signature** from its evidence, not from the model's wording: for example the failing command's first two words plus the error's first line, normalised (`git worktree` + "refused…"), or the tool name and the files involved.
+  - A draft is only requested when one of these holds:
+    - (a) the same signature appears in at least 2 sessions (counted in code), or
+    - (b) the user corrected Claude explicitly and said to remember it (flagged by the follow-up job, which is already running).
+  - So a lesson seen once costs nothing beyond the follow-up that found it.
   - The drafting call gets the existing skills and must prefer **patching** one over adding a new one.
   - Deterministic checks run in Swift before the card appears: referenced paths exist, commands exist on `PATH`, length limits, a valid name, the description limit, and no secrets (the same patterns as the Activity Log's redaction).
   - A draft that fails is dropped and logged, never shown.
-- **Retire:** a daily check. An approved skill that no session has used for 30 days becomes a Needs You card with Retire or Keep.
+- **Retire:** a daily check in code, with no Claude call. An approved skill that no session has used for 30 days becomes a Needs You card with Retire or Keep.
 - **On demand:** a "Review this session" item in the session's context menu runs the follow-up job straight away.
 
 ### 5. Skill selection at session start
@@ -199,13 +218,16 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 ### 6. GitHub
 
-- **Poll with `gh`; no webhooks.** A desktop app has no public endpoint. Run `gh issue list --state open --json number,title,body,labels,author,createdAt,updatedAt --search "updated:>=<watermark>"` every 10 minutes, but only while the project's assistant is on and the repository is on GitHub. Import Issues… runs the same query straight away without the watermark. Record `gh` output as fixtures, as `GitHubCLI` does.
-- **Triage:** one Haiku call per batch of new issues. The input is the issues, the repository's existing labels (`gh label list --json name,description`) and the plan's item titles and linked issues. The output per issue is `{label?, action: add|attach|skip, targetItemID?, reason}`. Only existing labels are suggested, and nothing is applied to GitHub.
+- **Poll with `gh`; no webhooks.** A desktop app has no public endpoint.
+  - Every 10 minutes, while the project's assistant is on and the repository is on GitHub, run a light query: `gh issue list --state open --json number,updatedAt --limit 100`.
+  - Compare it with the issue numbers already seen, which are stored per project. Only if there are unseen numbers, fetch their `title,body,labels,author` with a second `gh` call.
+  - Import Issues… runs the full query straight away. Record `gh` output as fixtures, as `GitHubCLI` does.
+- **Triage:** one Haiku call per batch of *new* issues, and only when the poll found some. The input is the issues, the repository's existing labels (`gh label list --json name,description`) and the plan's item titles and linked issues. The output per issue is `{label?, action: add|attach|skip, targetItemID?, reason}`. Only existing labels are suggested, and nothing is applied to GitHub.
 - **Duplicates:**
   - Deterministic first: the issue is already linked to an item, or the same URL appears in a note.
   - Then the model: "attach to item X" when the titles match.
 - **Export:** Create GitHub Issue runs `gh issue create --title … --body-file -`, with the item's notes as the body. It stores the returned number on the item, and logs it in the Activity Log. Nothing else writes to GitHub.
-- **Status back from GitHub:** an issue closed on GitHub, or a linked PR merged, leads to a "Mark Done" suggestion, never an automatic change.
+- **Status back from GitHub (code only):** an issue closed on GitHub, or a linked PR merged, leads to a "Mark Done" suggestion, never an automatic change. A PR whose `closingIssuesReferences` includes an item's issue is linked to the item. Neither needs Claude.
 
 ### 7. Chat (Ask)
 
@@ -230,7 +252,7 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 - **Per project, in Assistant Settings:**
   - **Off:** notes and plan still work by hand. No jobs run, and no background polling.
   - **Manual:** jobs run only when the user asks: Promote, Review this session, Import Issues, Ask.
-  - **Automatic** (the default for new projects; see Open decisions): everything above.
+  - **Automatic** (the default for new projects): Manual, plus the background work in the table under Runtime, each behind its code check.
   - "Don't send transcripts": follow-ups use only the final message and the list of changed files.
 - **A global switch** in Settings turns all assistant jobs off.
 
@@ -326,20 +348,17 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 - whether the skill loader follows symlinks (only for skill sets per session)
 - the cost of `--setting-sources user` compared with `""` (step 2)
 
-## Open decisions for Tim
+## Decisions
 
 Decided (2026-09-28):
 - **Where skills live:** Claudio's folder via `--add-dir`. Save to Repository stays as a per-skill action.
 - **Usage threshold:** app-level, user-configurable, default 80%.
 - **Session notes:** allowed, and tagged with the session as author.
+- **Skill chips:** a chip means "named in the opening prompt", and the sheet's hint says so. There are no skill sets per session.
+- **Default mode:** Automatic. Background work is checked in code first, and Claude is called only for judgement (see Runtime).
+- **Plan in git:** no. There's no `PLAN.md` export.
 
-Still open:
-
-2. **What a removed skill chip means.**
-   - "Not named in the opening prompt" (recommended for v1, with honest hint text).
-   - Or a real skill set per session (more work, and depends on the symlink check).
-3. **The assistant's default for new projects:** Automatic, Manual or Off (see Privacy).
-5. **Plan data in git.** The proposal keeps it out and uses GitHub Issues for sharing. If you want a committed `PLAN.md` export as well, it should be a one-way export, never read back.
+Still open: none. The UI gap (a marker for notes written by a session) goes back to the design.
 
 ## Sources
 
