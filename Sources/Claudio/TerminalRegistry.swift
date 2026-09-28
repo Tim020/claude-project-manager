@@ -149,6 +149,13 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         return length > 0 ? String(cString: name) : "a command"
     }
 
+    /// The shell that has the keyboard right now, if any. Asks the window,
+    /// since `AppModel.shellHasFocus` only follows clicks on terminals.
+    func shellWithKeyboard() -> UUID? {
+        guard let responder = NSApp.keyWindow?.firstResponder as? NSView else { return nil }
+        return shells.first { responder.isDescendant(of: $0.value) }?.key
+    }
+
     func focusShell(_ shellID: UUID) {
         guard let view = shells[shellID], let window = view.window, window.firstResponder !== view else { return }
         window.makeFirstResponder(view)

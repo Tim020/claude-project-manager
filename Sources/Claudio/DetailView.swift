@@ -13,10 +13,20 @@ struct DetailView: View {
     @Environment(\.addProject) private var addProject
 
     var body: some View {
+        GeometryReader { geometry in
+            // The Shell panel leaves room for the header and the panes' minimum height.
+            content(maxShellHeight: geometry.size.height - DetailHeader.height - PaneDropZone.minPaneHeight)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.window)
+        .clipped()
+    }
+
+    private func content(maxShellHeight: Double) -> some View {
         // A maximised Shell panel takes the panes' place. They leave the view
         // tree rather than shrinking, so no terminal is resized to nothing.
         let showsPanes = !(model.shellPanel.isOpen && model.shellPanel.isMaximised)
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             if let session = model.selectedSession, let crumb = model.breadcrumb {
                 DetailHeader(session: session, breadcrumb: crumb)
                     .task(id: session.id) { await model.refreshChanges(for: session.id) }
@@ -35,11 +45,8 @@ struct DetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             // The user's own shells (design 7a), under all panes.
-            ShellPanelSection()
+            ShellPanelSection(maxHeight: maxShellHeight)
         }
-        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.window)
-        .clipped()
     }
 
     private var emptyState: some View {
@@ -77,6 +84,7 @@ struct DetailView: View {
 }
 
 private struct DetailHeader: View {
+    static let height: Double = 52
     @Environment(AppModel.self) private var model
     let session: Session
     let breadcrumb: Breadcrumb
@@ -128,7 +136,7 @@ private struct DetailHeader: View {
             .help("More")
         }
         .padding(.horizontal, 20)
-        .frame(height: 52)
+        .frame(height: Self.height)
         .background(DS.sidebar)
         .overlay(alignment: .bottom) { HorizontalRule() }
         .alert("Rename Session", isPresented: $renaming) {

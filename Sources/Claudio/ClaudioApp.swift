@@ -102,7 +102,7 @@ struct ClaudioApp: App {
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") {
-                    if model.shellHasFocus, model.shellPanel.isOpen, let shell = model.shellPanel.selectedID {
+                    if let shell = terminals.registry.shellWithKeyboard() {
                         model.requestCloseShell(shell)
                     } else if let id = model.selectedSessionID {
                         model.closeTab(id)

@@ -8,10 +8,13 @@ import SwiftUI
 /// shows or hides it. Hidden, it's a thin bar that brings it back.
 struct ShellPanelSection: View {
     @Environment(AppModel.self) private var model
+    /// The tallest the panel may be, so the panes above keep their minimum
+    /// height and no session terminal is squeezed to nothing.
+    let maxHeight: Double
 
     var body: some View {
         if model.shellPanel.isOpen {
-            ShellPanelView()
+            ShellPanelView(maxHeight: maxHeight)
         } else {
             ShellPanelBar()
         }
@@ -55,6 +58,7 @@ private struct ShellPanelBar: View {
 private struct ShellPanelView: View {
     @Environment(AppModel.self) private var model
     @Environment(TerminalRegistryBox.self) private var terminals
+    let maxHeight: Double
     /// Height while the top edge is being dragged.
     @State private var draggingHeight: Double?
     @State private var dragStartHeight: Double?
@@ -71,12 +75,17 @@ private struct ShellPanelView: View {
                 DS.window
             }
         }
-        .frame(height: panel.isMaximised ? nil : draggingHeight ?? model.settings.shellPanelHeight)
+        // The saved height is kept as it is, so a taller window gets it back.
+        .frame(height: panel.isMaximised ? nil : fitted(draggingHeight ?? model.settings.shellPanelHeight))
         .frame(maxHeight: panel.isMaximised ? .infinity : nil)
         .overlay(alignment: .top) {
             HorizontalRule()
                 .overlay { if !panel.isMaximised { resizeHandle } }
         }
+    }
+
+    private func fitted(_ height: Double) -> Double {
+        max(min(height, maxHeight), 0)
     }
 
     /// The panel's top edge: drag it to change the panel's height.
@@ -92,7 +101,7 @@ private struct ShellPanelView: View {
                     .onChanged { value in
                         let start = dragStartHeight ?? model.settings.shellPanelHeight
                         dragStartHeight = start
-                        draggingHeight = AppSettings.clampShellPanelHeight(start - value.translation.height)
+                        draggingHeight = fitted(AppSettings.clampShellPanelHeight(start - value.translation.height))
                     }
                     .onEnded { _ in
                         if let height = draggingHeight { model.setShellPanelHeight(height) }
@@ -219,6 +228,15 @@ private struct ShellTerminalPane: NSViewRepresentable {
     let registry: TerminalRegistry
     let isFocused: Bool
 
+    /// Whether the shell was last asked to take the keyboard. The pane
+    /// updates whenever the model changes, and taking the keyboard on every
+    /// update would pull it out of a text field clicked in the meantime.
+    final class Coordinator {
+        var wasFocused = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
         container.wantsLayer = true
@@ -228,14 +246,18 @@ private struct ShellTerminalPane: NSViewRepresentable {
 
     func updateNSView(_ container: NSView, context: Context) {
         guard let terminal = registry.shellTerminal(for: shellID) else { return }
+        var placed = false
         if terminal.superview !== container {
             terminal.removeFromSuperview()
             container.subviews.forEach { $0.removeFromSuperview() }
             TerminalPane.pin(terminal, in: container)
+            placed = true
         }
-        if isFocused {
+        // Take the keyboard only when asked to afresh, or when just shown.
+        if isFocused && (placed || !context.coordinator.wasFocused) {
             DispatchQueue.main.async { registry.focusShell(shellID) }
         }
+        context.coordinator.wasFocused = isFocused
     }
 }
 
