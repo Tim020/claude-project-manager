@@ -212,6 +212,28 @@ final class AgentModelTests: XCTestCase {
         XCTAssertFalse(runner.commands.contains { $0.first == "stop" })
     }
 
+    func testCloseAllTabsClosesAndDetachesEveryAgentTab() async throws {
+        runner.agentsJSON = "[" + ["a1", "b2", "c3", "d4"].map { id in
+            #"{"id":"\#(id)","sessionId":"\#(id)-s","kind":"background","cwd":"\#(repo)","name":"\#(id)","pid":5,"status":"idle","state":"idle"}"#
+        }.joined(separator: ",") + "]"
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel()
+            model.addProject(path: repo)
+            return model
+        }
+        await model.refreshAgents()
+        await MainActor.run {
+            let ids = model.workspace.sessions.map(\.id)
+            XCTAssertEqual(ids.count, 4)
+            for id in ids { model.select(id); model.resume(id) }
+            XCTAssertTrue(ids.allSatisfy(model.isRunning))
+            model.closeAllTabs()
+            XCTAssertTrue(model.workspace.openTabIDs.isEmpty, "not every other tab")
+            XCTAssertEqual(Set(terminals.terminated), Set(ids))
+            XCTAssertFalse(ids.contains(where: model.isRunning))
+        }
+    }
+
     func testOpeningDetachedAliveAgentReattaches() async throws {
         runner.agentsJSON = #"[{"id":"fb72709a","sessionId":"fb72709a-1","kind":"background","cwd":"\#(repo)","name":"n","pid":5,"status":"busy","state":"working"}]"#
         let model = try await MainActor.run { () -> AppModel in
