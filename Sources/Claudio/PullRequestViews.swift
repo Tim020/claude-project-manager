@@ -227,6 +227,8 @@ func hasPullRequests(_ model: AppModel, projectID: UUID) -> Bool {
 struct PullRequestsErrorBanner: View {
     @Environment(AppModel.self) private var model
     let projectID: UUID
+    /// In a rail's tool: narrower padding, in a rounded box.
+    var compact = false
 
     var body: some View {
         if let loaded = model.pullRequests(forProject: projectID), let error = loaded.error, let updated = loaded.updatedAt {
@@ -243,9 +245,9 @@ struct PullRequestsErrorBanner: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, 8)
-                .padding(.horizontal, 20)
-                .background(DS.orange.opacity(0.1))
-                .overlay(alignment: .bottom) { HorizontalRule() }
+                .padding(.horizontal, compact ? 10 : 20)
+                .background(RoundedRectangle(cornerRadius: compact ? 4 : 0).fill(DS.orange.opacity(0.1)))
+                .overlay(alignment: .bottom) { if !compact { HorizontalRule() } }
             }
         }
     }
@@ -1033,7 +1035,7 @@ private struct UnresolvedComments: View {
 
 /// The right rail's Pull Request tool: the state, checks, review and
 /// unresolved comments of each of the selected session's pull requests,
-/// with the branch or worktree it works in.
+/// and the worktree it works in, if it has one.
 struct SessionPullRequestTool: View {
     @Environment(AppModel.self) private var model
     let session: Session
@@ -1047,7 +1049,9 @@ struct SessionPullRequestTool: View {
         }
         ScrollView {
             VStack(spacing: 0) {
-                // The branch moved here from the session header.
+                // The worktree moved here from the session header. An agent
+                // that entered one itself is listed in the repository, so also
+                // go by where Files Changed found its edits.
                 if let worktree = Worktree.name(ofPath: session.workingDirectory)
                     ?? model.changesDirectory(for: session.id).flatMap(Worktree.name(ofPath:)) {
                     HStack(spacing: 5) {
@@ -1079,6 +1083,21 @@ struct SessionPullRequestTool: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(16)
                         .overlay(alignment: .bottom) { HorizontalRule() }
+                } else if !links.isEmpty, let error = model.pullRequests(forProject: session.projectID)?.error {
+                    if model.pullRequests(forProject: session.projectID)?.hasLoaded == true {
+                        PullRequestsErrorBanner(projectID: session.projectID, compact: true)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                    } else {
+                        // Nothing has loaded, so the links below have no details.
+                        Text("Couldn't load this project's pull requests: \(error)")
+                            .font(DS.font(12))
+                            .foregroundStyle(DS.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .overlay(alignment: .bottom) { HorizontalRule() }
+                    }
                 }
                 ForEach(known) { pullRequest in
                     SessionPullRequestCard(session: session, pullRequest: pullRequest)
@@ -1235,20 +1254,25 @@ struct ProjectPullRequestsTool: View {
                         .padding(.horizontal, 8)
                         .padding(.bottom, 8)
                 } else if groups.isEmpty {
-                    Text(model.workspace.projects.isEmpty ? "No projects yet." : "None of your projects are on GitHub.")
+                    Text(model.pullRequestPanelEmptyText)
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
                         .padding(.horizontal, 8)
                 }
                 ForEach(groups) { group in
                     ProjectPullRequestsHeader(group: group)
+                    if group.hasLoaded {
+                        // A failed refresh keeps what loaded before: say how old it is.
+                        PullRequestsErrorBanner(projectID: group.projectID, compact: true)
+                    }
                     ForEach(group.items) { item in
                         PanelPullRequestRow(projectID: group.projectID, item: item)
                     }
-                    if group.items.isEmpty {
-                        Text(group.hasLoaded ? "No open pull requests from your sessions." : "Loading…")
+                    if group.items.isEmpty, let note = emptyNote(group) {
+                        Text(note)
                             .font(DS.font(12))
                             .foregroundStyle(DS.dim)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 10)
                             .padding(.bottom, 4)
                     }
@@ -1258,6 +1282,14 @@ struct ProjectPullRequestsTool: View {
             .padding(.bottom, 12)
         }
         .task { await model.refreshAllPullRequests() }
+    }
+
+    /// Why a project lists nothing. Nothing while gh isn't set up (the note
+    /// at the top says so), rather than a "Loading…" that never ends.
+    private func emptyNote(_ group: PullRequestPanelGroup) -> String? {
+        if group.hasLoaded { return "No pull requests to show." }
+        if let error = group.error { return "Couldn't load pull requests: \(error)" }
+        return model.gitHubCLIProblem == nil ? "Loading…" : nil
     }
 }
 

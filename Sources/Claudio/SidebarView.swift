@@ -496,11 +496,7 @@ private struct SessionRow: View {
                 .truncationMode(.tail)
                 .help(session.needsAction ?? (session.summary.isEmpty ? session.name : session.summary))
             Spacer(minLength: 4)
-            // Only the "also open in a terminal" warning (design 8c): a
-            // session's branch and pull requests are in the right rail's
-            // Pull Request tool.
-            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id))
-                        .filter { $0.kind == .terminal },
+            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id)),
                     id: \.symbol) { indicator in
                 Image(systemName: indicator.symbol)
                     .font(.system(size: 10))

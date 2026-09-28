@@ -873,8 +873,11 @@ public final class AppModel {
 
     /// Shows only sessions with `status` in the sidebar, or all again if it's
     /// already the filter.
+    /// A status count in the status bar. Turning a filter on also shows the
+    /// Sessions tool, so the filter is never on for a list you can't see.
     public func toggleStatusFilter(_ status: SessionStatus) {
         statusFilter = statusFilter == status ? nil : status
+        if statusFilter != nil && toolWindows.visibleLeft != .sessions { toggleTool(.sessions) }
     }
 
     /// Closes every completed tab.

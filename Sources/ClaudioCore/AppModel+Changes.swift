@@ -264,7 +264,9 @@ extension AppModel {
         paneModes[sessionID] ?? .terminal
     }
 
-    public func setPaneMode(_ mode: PaneMode, for sessionID: UUID) {
+    /// Internal: `openDiff` and `closeDiff` keep the mode and the diff's
+    /// file in step (a path exactly while the pane shows a diff).
+    func setPaneMode(_ mode: PaneMode, for sessionID: UUID) {
         paneModes[sessionID] = mode == .terminal ? nil : mode
     }
 

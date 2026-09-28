@@ -71,6 +71,8 @@ public struct PullRequestPanelGroup: Identifiable, Equatable, Sendable {
     public var items: [PullRequestPanelItem]
     /// Pull requests have loaded for the project (so an empty list means none).
     public var hasLoaded: Bool
+    /// Why the last load failed, if it did (what loaded before stays).
+    public var error: String?
 
     public var id: UUID { projectID }
 }
@@ -111,25 +113,39 @@ extension AppModel {
         let since = settings.activitySince(now: now())
         return workspace.projects.filter { tracksPullRequests(projectID: $0.id) }.map { project in
             let known = projectPullRequests[project.id]
-            var open: [PullRequestPanelItem] = []
-            var done: [PullRequestPanelItem] = []
+            var open: [(PullRequestInfo, Session?)] = []
+            var done: [(PullRequestInfo, Session?)] = []
             for pullRequest in (known?.items ?? []).sortedByUpdate {
                 let session = sessions(for: pullRequest, projectID: project.id).first
                 if pullRequest.isOpen {
                     guard session != nil || includeUnlinkedPullRequests else { continue }
+                    open.append((pullRequest, session))
                 } else {
+                    // Closed and merged ones only if a session here acted on them.
                     guard session != nil else { continue }
                     if let since, (pullRequest.updatedAt ?? .distantPast) < since { continue }
+                    done.append((pullRequest, session))
                 }
-                let item = PullRequestPanelItem(pullRequest: pullRequest, sessionID: session?.id,
-                                                folder: session.flatMap { workspace.group(of: $0.id) }.map(workspace.name(of:)))
-                if pullRequest.isOpen { open.append(item) } else { done.append(item) }
             }
-            let urgentOpen = open.enumerated().sorted {
-                ($0.element.pullRequest.attention.urgency, $0.offset) < ($1.element.pullRequest.attention.urgency, $1.offset)
-            }.map(\.element)
-            return PullRequestPanelGroup(projectID: project.id, name: project.name, items: urgentOpen + done,
-                                         hasLoaded: known?.hasLoaded ?? false)
+            let sessionByKey = Dictionary(open.map { ($0.0.key, $0.1) }, uniquingKeysWith: { first, _ in first })
+            let ordered = PullRequestInfo.mostUrgentFirst(open.map(\.0)).map { ($0, sessionByKey[$0.key] ?? nil) } + done
+            let items = ordered.map { pullRequest, session in
+                PullRequestPanelItem(pullRequest: pullRequest, sessionID: session?.id,
+                                     folder: session.flatMap { workspace.group(of: $0.id) }.map(workspace.name(of:)))
+            }
+            return PullRequestPanelGroup(projectID: project.id, name: project.name, items: items,
+                                         hasLoaded: known?.hasLoaded ?? false, error: known?.error)
         }
+    }
+
+    /// What the Pull Requests tool says when it lists no projects.
+    public var pullRequestPanelEmptyText: String {
+        if workspace.projects.isEmpty { return "No projects yet." }
+        // Only once gh has said so for every project.
+        if workspace.projects.allSatisfy({ projectPullRequests[$0.id]?.isNotGitHub == true }) {
+            return "None of your projects are on GitHub."
+        }
+        if case .unchecked = environment.githubCLI { return "Checking GitHub…" }
+        return "No pull requests to show."
     }
 }

@@ -96,7 +96,7 @@ private struct DetailHeader: View {
     @State private var confirmDelete = false
 
     /// Design 8c: only what's about the session itself (its name, role,
-    /// context and status, and ⋯). Its changes, branch and pull requests
+    /// context and status, and ⋯). Its changes, worktree and pull requests
     /// are in the right rail; the Shell is in the left.
     var body: some View {
         HStack(spacing: 10) {

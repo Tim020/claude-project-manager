@@ -414,15 +414,25 @@ struct FileDiffPane: View {
                     .background(DS.input)
                     .overlay(alignment: .bottom) { HorizontalRule() }
                     Spacer()
-                    Text(model.showsChangesLoading(for: session.id) ? "Looking for changes…" : "This file isn't in the list of changes any more.")
+                    Text(missingMessage)
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
                     Spacer()
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.window)
+    }
+
+    /// Why the file isn't listed: still loading, "vs main" can't be
+    /// compared here, or it's really gone (committed or reverted).
+    private var missingMessage: String {
+        if model.showsChangesLoading(for: session.id) { return "Looking for changes…" }
+        if model.changesScope == .base, let reason = model.baseUnavailableReason(for: session.id) { return reason }
+        return "This file isn't in the list of changes any more."
     }
 }
 
