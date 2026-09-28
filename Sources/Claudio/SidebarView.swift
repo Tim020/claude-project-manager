@@ -3,7 +3,8 @@ import AppKit
 import ClaudioCore
 import SwiftUI
 
-/// Design 1a: source list with the full Project → Folder → Session tree.
+/// The left rail's Sessions tool (design 1a, in 8c's rails): the full
+/// Project → Folder → Session tree.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @Environment(UICommands.self) private var commands
@@ -40,18 +41,12 @@ struct SidebarView: View {
                 }
                 .scrollIndicators(.automatic)
             }
-            UsageSection(usage: model.usage)
-            footer
         }
         .frame(width: width)
-        .background(DS.sidebar)
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            // Room for the window's traffic lights.
-            Spacer().frame(width: 64)
-            Spacer()
+        ToolHeader(title: "Sessions", leadingInset: ToolRail.trafficLightInset) {
             IconButton(systemName: "folder.badge.plus", help: "New Folder", size: 16) {
                 if let project = currentProjectID { model.createFolder(in: project) }
             }
@@ -61,8 +56,6 @@ struct SidebarView: View {
             }
             .disabled(model.workspace.projects.isEmpty)
         }
-        .padding(.horizontal, 16)
-        .frame(height: 52)
     }
 
     private func filterField(text: Binding<String>) -> some View {
@@ -107,37 +100,6 @@ struct SidebarView: View {
         }
         .padding(8)
         .padding(.top, 10)
-    }
-
-    /// Status counts; click one to show only those sessions (again for all).
-    private var footer: some View {
-        let counts = model.footerStatusCounts
-        return HStack(spacing: 6) {
-            ForEach(SessionStatus.allCases, id: \.self) { status in
-                let isActive = model.statusFilter == status
-                Button { model.toggleStatusFilter(status) } label: {
-                    HStack(spacing: 5) {
-                        StatusDot(status: status, size: 7)
-                        Text("\(counts[status]) \(status.label)")
-                    }
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 6)
-                    .background(Capsule().fill(isActive ? DS.color(for: status).opacity(0.25) : .clear))
-                    .overlay(Capsule().stroke(isActive ? DS.color(for: status).opacity(0.7) : .clear, lineWidth: 1))
-                    .foregroundStyle(isActive ? DS.text : DS.muted)
-                    .opacity(model.statusFilter == nil || isActive ? 1 : 0.55)
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help(isActive ? "Show all sessions" : "Show only \(status.label) sessions")
-            }
-            Spacer(minLength: 0)
-        }
-        .font(DS.font(12))
-        .lineLimit(1)
-        .padding(.vertical, 7)
-        .padding(.horizontal, 10)
-        .overlay(alignment: .top) { HorizontalRule() }
     }
 
     /// Says how many sessions the recent-activity window hides, with a way
@@ -230,9 +192,6 @@ private struct ProjectSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if !project.isCollapsed && model.showsPullRequestsRow(projectID: project.id) {
-                PullRequestsSidebarRow(projectID: project.id)
-            }
             ForEach(project.folders) { folder in
                 FolderSection(folder: folder, projectID: project.id, now: now)
             }
@@ -537,18 +496,12 @@ private struct SessionRow: View {
                 .truncationMode(.tail)
                 .help(session.needsAction ?? (session.summary.isEmpty ? session.name : session.summary))
             Spacer(minLength: 4)
-            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id),
-                                                 pullRequests: model.pullRequestLinks(ofSession: session.id).map(\.url)),
+            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id)),
                     id: \.symbol) { indicator in
-                HStack(spacing: 2) {
-                    Image(systemName: indicator.symbol)
-                        .font(.system(size: 10))
-                    if let text = indicator.text {
-                        Text(text).font(DS.font(10.5, .semibold))
-                    }
-                }
-                .foregroundStyle(indicatorColor(indicator))
-                .help(indicator.help)
+                Image(systemName: indicator.symbol)
+                    .font(.system(size: 10))
+                    .foregroundStyle(DS.dim)
+                    .help(indicator.help)
             }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
                 .font(DS.font(11))
@@ -587,12 +540,6 @@ private struct SessionRow: View {
         }
         .deleteSessionConfirmation(session: session, isPresented: $confirmDelete)
     }
-
-    /// Pull requests take the colour of the first one's state, once loaded.
-    private func indicatorColor(_ indicator: SessionIndicator) -> Color {
-        guard indicator.kind == .pullRequests, let first = model.pullRequests(ofSession: session.id).first else { return DS.dim }
-        return DS.color(for: first.attention)
-    }
 }
 
 /// Actions for a session, shared by the sidebar row and the detail header.
@@ -619,16 +566,6 @@ struct SessionMenu: View {
                 if !project.folders.isEmpty { Divider() }
                 Button(Workspace.unfiledName) { model.moveSession(session.id, to: .unfiled(projectID: project.id)) }
                 Button("New Folder") { model.createFolder(in: project.id, containing: session.id) }
-            }
-        }
-        let pullRequests = model.pullRequestLinks(ofSession: session.id)
-        if !pullRequests.isEmpty {
-            Menu("Open Pull Request") {
-                ForEach(pullRequests, id: \.url) { pullRequest in
-                    Button("#\(pullRequest.number)") {
-                        if let link = URL(string: pullRequest.url) { NSWorkspace.shared.open(link) }
-                    }
-                }
             }
         }
         Divider()
@@ -671,8 +608,8 @@ private struct DeleteSessionConfirmation: ViewModifier {
     }
 }
 /// Plan usage from Claude Code (5-hour session and weekly limits, and usage
-/// credits), from `claude -p /usage`.
-private struct UsageSection: View {
+/// credits), from `claude -p /usage`: the status bar's usage popover.
+struct UsageSection: View {
     let usage: UsageSnapshot?
 
     var body: some View {
@@ -717,9 +654,8 @@ private struct UsageSection: View {
                 }
             }
             .opacity(isStale ? 0.6 : 1)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .overlay(alignment: .top) { HorizontalRule() }
+            .padding(14)
+            .frame(width: 290)
             .help(usage.map { "Updated \(RelativeAge.string(from: $0.updatedAt, now: context.date)) ago" } ?? "")
         }
     }
@@ -750,6 +686,11 @@ private struct UsageSection: View {
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {
+        UsageSection.creditsBadge(text, color)
+    }
+
+    /// "USING CREDITS" and "OUT OF CREDITS", also shown in the status bar.
+    static func creditsBadge(_ text: String, _ color: Color) -> some View {
         Text(text)
             .font(DS.font(9.5, .extraBold))
             .kerning(0.4)
@@ -785,6 +726,10 @@ private struct UsageSection: View {
     }
 
     private func color(_ window: UsageWindow) -> Color {
+        UsageSection.color(for: window)
+    }
+
+    static func color(for window: UsageWindow) -> Color {
         switch window.usedPercentage {
         case ..<70: return DS.teal
         case ..<90: return DS.orange

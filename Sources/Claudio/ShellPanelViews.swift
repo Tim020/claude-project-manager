@@ -4,8 +4,9 @@ import ClaudioCore
 import SwiftUI
 
 /// The Shell panel (design 7a): the user's own login shells, in one tool
-/// window under all panes. It stays as it is while you switch sessions; ⌃`
-/// shows or hides it. Hidden, it's a thin bar that brings it back.
+/// window under all panes. It stays as it is while you switch sessions; ⌃`,
+/// or the Shell button at the foot of the left rail (design 8c), shows or
+/// hides it.
 struct ShellPanelSection: View {
     @Environment(AppModel.self) private var model
     /// The tallest the panel may be, so the panes above keep their minimum
@@ -15,42 +16,7 @@ struct ShellPanelSection: View {
     var body: some View {
         if model.shellPanel.isOpen {
             ShellPanelView(maxHeight: maxHeight)
-        } else {
-            ShellPanelBar()
         }
-    }
-}
-
-/// The panel while it's hidden.
-private struct ShellPanelBar: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let count = model.shellPanel.tabs.count
-        HStack(spacing: 8) {
-            Image(systemName: "terminal")
-                .font(.system(size: 12))
-            Text("Shell")
-                .font(DS.font(12, .bold))
-                .foregroundStyle(DS.text)
-            if count > 0 {
-                Text("· \(count) \(count == 1 ? "shell" : "shells")")
-            }
-            Spacer(minLength: 0)
-            // The shortcut is in the tooltip: "⌃`" beside the chevron read as
-            // a second arrow.
-            Image(systemName: "chevron.up")
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .font(DS.font(12))
-        .foregroundStyle(DS.muted)
-        .padding(.horizontal, 20)
-        .frame(height: 28)
-        .background(DS.sidebar)
-        .overlay(alignment: .top) { HorizontalRule() }
-        .contentShape(Rectangle())
-        .onTapGesture { model.toggleShellPanel() }
-        .help("Show Shell (⌃`)")
     }
 }
 
@@ -270,25 +236,6 @@ private struct ShellTerminalPane: NSViewRepresentable {
             DispatchQueue.main.async { registry.focusShell(shellID) }
         }
         context.coordinator.wasFocused = isFocused
-    }
-}
-
-/// The header button that shows or hides the Shell panel.
-struct ShellToggleButton: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let open = model.shellPanel.isOpen
-        Button { model.toggleShellPanel() } label: {
-            Image(systemName: "terminal")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.text)
-                .frame(width: 28, height: 26)
-                .background(RoundedRectangle(cornerRadius: 4).fill(open ? DS.selection : DS.border))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(open ? "Hide Shell (⌃`)" : "Show Shell (⌃`)")
     }
 }
 #endif

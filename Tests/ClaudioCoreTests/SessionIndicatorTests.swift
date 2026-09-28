@@ -7,25 +7,11 @@ final class SessionIndicatorTests: XCTestCase {
         XCTAssertEqual(SessionIndicators.indicators(for: session, isOpenInTerminal: false), [])
     }
 
-    func testWorktreeIndicatorNamesTheWorktree() throws {
-        let session = Session(projectID: UUID(), name: "Test", workingDirectory: "/code/repo/.claude/worktrees/test")
-        let indicator = try XCTUnwrap(SessionIndicators.indicators(for: session, isOpenInTerminal: false).first)
-        XCTAssertEqual(indicator.kind, .worktree)
-        XCTAssertTrue(indicator.help.contains("“test”"))
-        XCTAssertTrue(indicator.help.contains(".claude/worktrees/test"))
-    }
-
-    func testIndicatorsInOrderWithPullRequestCount() {
-        let session = Session(projectID: UUID(), name: "s", workingDirectory: "/code/repo/.claude/worktrees/x")
-        let indicators = SessionIndicators.indicators(for: session, isOpenInTerminal: true,
-                                                      pullRequests: ["https://github.com/o/r/pull/1427", "https://github.com/o/r/pull/1430"])
-        XCTAssertEqual(indicators.map(\.kind), [.terminal, .worktree, .pullRequests])
-        XCTAssertEqual(indicators.last?.text, "2")
-        XCTAssertEqual(indicators.last?.help, "2 pull requests: #1427, #1430")
-    }
-
-    func testSinglePullRequest() {
-        XCTAssertEqual(SessionIndicators.pullRequestHelp(["https://github.com/o/r/pull/7"]), "1 pull request: #7")
+    func testOnlyTheTerminalWarning() {
+        let worktree = Session(projectID: UUID(), name: "s", workingDirectory: "/code/repo/.claude/worktrees/x")
+        XCTAssertEqual(SessionIndicators.indicators(for: worktree, isOpenInTerminal: false), [],
+                       "the worktree is in the right rail's Pull Request tool, not on the row")
+        XCTAssertEqual(SessionIndicators.indicators(for: worktree, isOpenInTerminal: true).map(\.kind), [.terminal])
     }
 
     func testStatusHelpIncludesWhatItNeeds() {

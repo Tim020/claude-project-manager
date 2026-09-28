@@ -8,9 +8,10 @@ public enum ChangesScope: String, CaseIterable, Sendable {
     case base
 }
 
-/// What a session's pane shows: its terminal (or history), or the Changes view.
+/// What a session's pane shows: its terminal (or history), or the diff of a
+/// file picked in the right rail's Changes tool.
 public enum PaneMode: Equatable, Sendable {
-    case terminal, changes
+    case terminal, diff
 }
 
 public struct SessionChangeState: Equatable, Sendable {
@@ -259,45 +260,32 @@ extension AppModel {
 
     // MARK: Views
 
-    public var showsFilesInspector: Bool { state.settings.showFilesInspector }
-
-    public func toggleFilesInspector() {
-        var settings = state.settings
-        settings.showFilesInspector.toggle()
-        updateSettings(settings)
-    }
-
     public func paneMode(for sessionID: UUID) -> PaneMode {
         paneModes[sessionID] ?? .terminal
     }
 
-    public func setPaneMode(_ mode: PaneMode, for sessionID: UUID) {
+    /// Internal: `openDiff` and `closeDiff` keep the mode and the diff's
+    /// file in step (a path exactly while the pane shows a diff).
+    func setPaneMode(_ mode: PaneMode, for sessionID: UUID) {
         paneModes[sessionID] = mode == .terminal ? nil : mode
     }
 
-    /// The file selected in the Changes view (the first, if none is).
-    public func selectedChange(for sessionID: UUID) -> String? {
-        let files = currentChanges(for: sessionID)?.files ?? []
-        if let selected = selectedChanges[sessionID], files.contains(where: { $0.path == selected }) { return selected }
-        return files.first?.path
+    /// The file whose diff the session's pane shows, if it shows one. It
+    /// stays chosen when the file drops out of the list, so the pane can say
+    /// so rather than switch to another file.
+    public func diffPath(for sessionID: UUID) -> String? {
+        paneMode(for: sessionID) == .diff ? selectedChanges[sessionID] : nil
     }
 
-    public func selectChange(_ path: String, for sessionID: UUID) {
+    /// Clicking a file in the Changes tool: its diff in place of the terminal.
+    public func openDiff(_ path: String, for sessionID: UUID) {
         selectedChanges[sessionID] = path
+        setPaneMode(.diff, for: sessionID)
     }
 
-    /// The inspector row whose diff preview is open, if any.
-    public func expandedChange(for sessionID: UUID) -> String? {
-        expandedChanges[sessionID]
-    }
-
-    public func toggleExpandedChange(_ path: String, for sessionID: UUID) {
-        expandedChanges[sessionID] = expandedChanges[sessionID] == path ? nil : path
-    }
-
-    /// "Open Full Diff" in the inspector: the Changes view on that file.
-    public func openFullDiff(_ path: String, for sessionID: UUID) {
-        selectedChanges[sessionID] = path
-        setPaneMode(.changes, for: sessionID)
+    /// The diff's Close button: back to the terminal.
+    public func closeDiff(for sessionID: UUID) {
+        selectedChanges[sessionID] = nil
+        setPaneMode(.terminal, for: sessionID)
     }
 }

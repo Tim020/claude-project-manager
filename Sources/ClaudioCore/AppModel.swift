@@ -39,6 +39,9 @@ public struct MenuFlags: Equatable, Sendable {
     public var canRunSessions = true
     /// The Shell panel is showing (for Show/Hide Shell).
     public var isShellOpen = false
+    /// The rails' tools that are showing (for the View menu's checkmarks).
+    public var leftTool: LeftTool?
+    public var rightTool: RightTool?
 
     public init() {}
 }
@@ -87,14 +90,13 @@ public final class AppModel {
 
     /// Files each session changed, in both scopes (see AppModel+Changes).
     public internal(set) var sessionChanges: [UUID: SessionChangeState] = [:]
-    /// "This Session" or "vs main", shared by the inspector and Changes view.
+    /// "This Session" or "vs main", in the Changes tool (and so its diffs).
     public var changesScope: ChangesScope = .session
     public internal(set) var paneModes: [UUID: PaneMode] = [:]
     var selectedChanges: [UUID: String] = [:]
     /// The "vs" branch a session is switching to, shown until it has loaded.
     var pendingBaseNames: [UUID: String] = [:]
     @ObservationIgnored var pendingBaseTokens: [UUID: UUID] = [:]
-    var expandedChanges: [UUID: String] = [:]
     @ObservationIgnored var changesDirty = Set<UUID>()
     @ObservationIgnored var refreshingChanges = Set<UUID>()
     @ObservationIgnored let editLogCache = EditLogCache()
@@ -869,10 +871,13 @@ public final class AppModel {
         save()
     }
 
-    /// Shows only sessions with `status` in the sidebar, or all again if it's
-    /// already the filter.
+    /// A status count in the status bar: shows only sessions with `status`
+    /// in the Sessions tool, or all again if it's already the filter.
+    /// Turning a filter on also shows the Sessions tool, so the filter is
+    /// never on for a list you can't see.
     public func toggleStatusFilter(_ status: SessionStatus) {
         statusFilter = statusFilter == status ? nil : status
+        if statusFilter != nil && toolWindows.visibleLeft != .sessions { toggleTool(.sessions) }
     }
 
     /// Closes every completed tab.
@@ -1568,6 +1573,8 @@ public final class AppModel {
             flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         }
         flags.isShellOpen = shellPanel.isOpen
+        flags.leftTool = state.settings.toolWindows.visibleLeft
+        flags.rightTool = state.settings.toolWindows.visibleRight
         if flags != menuFlags { menuFlags = flags }
     }
 

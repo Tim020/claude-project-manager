@@ -37,8 +37,8 @@ public struct OverviewTab: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// The project overview's filter tabs.
-public enum PullRequestFilter: String, CaseIterable, Sendable {
+/// The project overview's filter tabs, and the Pull Requests tool's filter.
+public enum PullRequestFilter: String, CaseIterable, Codable, Sendable {
     case needsAttention = "Needs Attention"
     case open = "Open"
     case merged = "Merged"
