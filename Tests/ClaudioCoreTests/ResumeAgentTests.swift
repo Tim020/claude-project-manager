@@ -19,7 +19,7 @@ final class ResumeAgentTests: XCTestCase {
         session.agentID = "b3f8f7e8"
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/h.log")
         XCTAssertEqual(commands.resume(session: session, prompt: "/review-pr-inline 1427", continuingAgent: true).claudeArguments,
-                       ["/review-pr-inline 1427", "--bg", "--resume", sid])
+                       ["--bg", "--resume", sid, "--", "/review-pr-inline 1427"])
         XCTAssertTrue(commands.resume(session: session, prompt: nil).claudeArguments.contains("--settings"),
                       "a session that was never an agent still gets Claudio's hooks")
     }
@@ -62,7 +62,7 @@ final class ResumeAgentTests: XCTestCase {
         await model.lastTask?.value
         try await MainActor.run {
             let resume = try XCTUnwrap(runner.commands.last { $0.contains("--bg") })
-            XCTAssertEqual(resume, ["/review-pr-inline 1427", "--bg", "--resume", sid])
+            XCTAssertEqual(resume, ["--bg", "--resume", sid, "--", "/review-pr-inline 1427"])
             XCTAssertEqual(model.workspace.sessions.count, 1)
             XCTAssertEqual(model.workspace.session(id)?.agentID, "b3f8f7e8")
             XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "b3f8f7e8"])

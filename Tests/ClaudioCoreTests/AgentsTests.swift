@@ -100,13 +100,15 @@ final class AgentCommandTests: XCTestCase {
     /// asks before committing. Isolation goes in the settings instead.
     func testDispatchInWorktree() throws {
         let command = context().dispatch(session: session, prompt: "Fix it", isolation: .worktree)
-        XCTAssertEqual(Array(command.claudeArguments.prefix(6)), [
-            "Fix it", "--bg", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
+        XCTAssertEqual(Array(command.claudeArguments.prefix(5)), [
+            "--bg", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
         ])
-        XCTAssertEqual(command.claudeArguments[6], "--settings")
+        XCTAssertEqual(command.claudeArguments[5], "--settings")
+        XCTAssertEqual(Array(command.claudeArguments.suffix(2)), ["--", "Fix it"], "the prompt goes last, after --")
         XCTAssertFalse(command.claudeArguments.contains("--worktree"))
         XCTAssertEqual(try isolation(in: command), "worktree")
-        XCTAssertTrue(command.arguments[2].hasPrefix("cd '/Users/tim/My Code/app' && exec '/Users/tim/.local/bin/claude' 'Fix it' '--bg' "))
+        XCTAssertTrue(command.arguments[2].hasPrefix("cd '/Users/tim/My Code/app' && exec '/Users/tim/.local/bin/claude' '--bg' "))
+        XCTAssertTrue(command.arguments[2].hasSuffix(" '--' 'Fix it'"))
         XCTAssertEqual(command.executable, "/bin/zsh")
     }
 
@@ -137,8 +139,10 @@ final class AgentCommandTests: XCTestCase {
         var s = session
         s.claudeSessionID = "fb72709a-291a-41a1-ab00-ed7fe2d9115b"
         let command = context().resume(session: s, prompt: "  Carry on with the tests  ")
-        XCTAssertEqual(Array(command.claudeArguments.prefix(4)), ["Carry on with the tests", "--bg", "--resume", "fb72709a-291a-41a1-ab00-ed7fe2d9115b"])
-        XCTAssertEqual(context().resume(session: s, prompt: "   ").claudeArguments.first, "--bg", "a blank message is just a resume")
+        XCTAssertEqual(Array(command.claudeArguments.prefix(3)), ["--bg", "--resume", "fb72709a-291a-41a1-ab00-ed7fe2d9115b"])
+        XCTAssertEqual(Array(command.claudeArguments.suffix(2)), ["--", "Carry on with the tests"])
+        XCTAssertEqual(context().resume(session: s, prompt: "   ").claudeArguments, context().resume(session: s).claudeArguments,
+                       "a blank message is just a resume")
     }
 
     func testAttachStopRemoveAndList() {
