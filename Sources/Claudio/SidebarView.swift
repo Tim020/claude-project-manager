@@ -702,7 +702,7 @@ private struct UsageSection: View {
                 if let usage, usage.fiveHour != nil || usage.sevenDay != nil {
                     if let window = usage.fiveHour { row("Session", window, now: context.date) }
                     if let window = usage.sevenDay { row("Week", window, now: context.date) }
-                    if let credits = usage.credits, credits.isEnabled {
+                    if let credits = usage.credits, credits.isShown {
                         creditsRow(credits, inUse: usage.isUsingCredits)
                     }
                     if isStale {
