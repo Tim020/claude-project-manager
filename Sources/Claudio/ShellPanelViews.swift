@@ -37,8 +37,8 @@ private struct ShellPanelBar: View {
                 Text("· \(count) \(count == 1 ? "shell" : "shells")")
             }
             Spacer(minLength: 0)
-            Text("⌃`")
-                .foregroundStyle(DS.dim)
+            // The shortcut is in the tooltip: "⌃`" beside the chevron read as
+            // a second arrow.
             Image(systemName: "chevron.up")
                 .font(.system(size: 11, weight: .semibold))
         }
