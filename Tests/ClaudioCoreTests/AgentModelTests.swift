@@ -471,7 +471,7 @@ final class AgentModelTests: XCTestCase {
             let p = model.addProject(path: repo)
             let id = try XCTUnwrap(model.createSession(request(p)))
             XCTAssertNil(model.lastTask)
-            XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments.last, "Fix it")
+            XCTAssertEqual(model.takePendingLaunch(id).map { Array($0.claudeArguments.suffix(2)) }, ["--", "Fix it"])
         }
         XCTAssertTrue(runner.commands.isEmpty)
     }
@@ -657,6 +657,6 @@ final class AgentModelTests: XCTestCase {
         runner.dispatchOutput = "note: started a copy of that conversation as 2bd6a047.\nbackgrounded · 2bd6a047\n"
         await MainActor.run { model.resumeCopy(of: original) }
         await model.lastTask?.value
-        XCTAssertEqual(runner.commands.last { $0.contains("--bg") }?.last, "Try again")
+        XCTAssertEqual(runner.commands.last { $0.contains("--bg") }.map { Array($0.suffix(2)) }, ["--", "Try again"])
     }
 }

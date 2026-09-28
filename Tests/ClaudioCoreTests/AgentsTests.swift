@@ -141,7 +141,8 @@ final class AgentCommandTests: XCTestCase {
         let command = context().resume(session: s, prompt: "  Carry on with the tests  ")
         XCTAssertEqual(Array(command.claudeArguments.prefix(3)), ["--bg", "--resume", "fb72709a-291a-41a1-ab00-ed7fe2d9115b"])
         XCTAssertEqual(Array(command.claudeArguments.suffix(2)), ["--", "Carry on with the tests"])
-        XCTAssertFalse(context().resume(session: s, prompt: "   ").claudeArguments.contains("--"), "a blank message is just a resume")
+        XCTAssertEqual(context().resume(session: s, prompt: "   ").claudeArguments, context().resume(session: s).claudeArguments,
+                       "a blank message is just a resume")
     }
 
     func testAttachStopRemoveAndList() {
