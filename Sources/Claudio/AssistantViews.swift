@@ -29,7 +29,7 @@ struct AssistantTool: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
-                if let capture = model.noteCapture, capture.projectID == projectID {
+                if model.isNoteCaptureShowing {
                     NoteCaptureBox()
                         .padding(.horizontal, 10)
                         .padding(.bottom, 10)
@@ -54,7 +54,7 @@ private struct NoteCaptureBox: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        let text = Binding(get: { model.noteCapture?.text ?? "" }, set: { model.updateNoteCapture($0) })
+        let text = Binding(get: { model.noteDraft }, set: { model.updateNoteDraft($0) })
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {

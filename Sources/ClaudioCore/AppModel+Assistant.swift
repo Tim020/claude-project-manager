@@ -6,19 +6,19 @@ import Foundation
 
 extension AppModel {
     /// Reads every project's assistant data at launch. A project whose file
-    /// can't be read keeps its notes on disk: it isn't written to until it
+    /// can't be read keeps its data on disk: it isn't written to until it
     /// reads again, so nothing is overwritten.
     func loadAssistantData() {
-        var notes: [UUID: [ProjectNote]] = [:]
+        var loaded: [UUID: AssistantData] = [:]
         for project in state.workspace.projects {
             do {
-                notes[project.id] = try assistantStore.load(projectID: project.id).notes
+                loaded[project.id] = try assistantStore.load(projectID: project.id)
             } catch {
                 unreadableAssistantProjects.insert(project.id)
                 log.append(.error, "Couldn't read the assistant's notes for \(project.name)", detail: AppModel.describe(error))
             }
         }
-        if notes != assistantNotes { assistantNotes = notes }
+        if loaded != assistantData { assistantData = loaded }
     }
 
     /// The project the Assistant shows: the selected session's (or overview
@@ -31,7 +31,7 @@ extension AppModel {
 
     /// A project's notes, newest first.
     public func notes(inProject projectID: UUID) -> [ProjectNote] {
-        (assistantNotes[projectID] ?? []).reversed()
+        (assistantData[projectID]?.notes ?? []).reversed()
     }
 
     /// "You · linked to Shell Follow Up · 3h", with the session's current
@@ -52,30 +52,37 @@ extension AppModel {
         settings.toolWindows.isLeftOpen = true
         if settings != state.settings { updateSettings(settings) }
         updateMenuFlags()
-        let session = selectedSession.flatMap { $0.projectID == projectID ? $0.id : nil }
-        // Pressed again while open, it keeps what's been typed.
-        if noteCapture?.projectID == projectID && noteCapture?.sessionID == session { return }
-        noteCapture = NoteCapture(projectID: projectID, sessionID: session)
+        let capture = NoteCapture(projectID: projectID, sessionID: selectedSession.flatMap { $0.projectID == projectID ? $0.id : nil })
+        // Pressed again for the same place, it keeps what's been typed.
+        guard capture != noteCapture else { return }
+        noteCapture = capture
+        if !noteDraft.isEmpty { noteDraft = "" }
     }
 
-    public func updateNoteCapture(_ text: String) {
-        guard var capture = noteCapture, capture.text != text else { return }
-        capture.text = text
-        noteCapture = capture
+    /// Whether the capture box is on screen: it's open, the Assistant is
+    /// showing, and it's showing the capture's project. While it is, session
+    /// terminals leave the keyboard alone.
+    public var isNoteCaptureShowing: Bool {
+        guard let capture = noteCapture else { return false }
+        return toolWindows.visibleLeft == .assistant && capture.projectID == assistantProjectID
+    }
+
+    public func updateNoteDraft(_ text: String) {
+        if noteDraft != text { noteDraft = text }
     }
 
     public func cancelNoteCapture() {
         noteCapture = nil
+        if !noteDraft.isEmpty { noteDraft = "" }
     }
 
     /// Save Note: nothing happens while the text is blank.
     @discardableResult
     public func saveNoteCapture() -> ProjectNote? {
-        guard let capture = noteCapture else { return nil }
-        guard let note = addNote(capture.text, author: .user, projectID: capture.projectID, sessionID: capture.sessionID) else {
-            return nil
-        }
-        noteCapture = nil
+        guard let capture = noteCapture,
+              let note = addNote(noteDraft, author: .user, projectID: capture.projectID, sessionID: capture.sessionID)
+        else { return nil }
+        cancelNoteCapture()
         showToast("Saved to Notes")
         return note
     }
@@ -95,7 +102,7 @@ extension AppModel {
         guard !text.isEmpty, workspace.project(projectID) != nil else { return nil }
         let note = ProjectNote(text: text, author: author, sessionID: sessionID,
                                sessionName: sessionID.flatMap { workspace.session($0)?.name }, createdAt: now())
-        guard change(projectID: projectID, { $0.append(note) }) else { return nil }
+        guard change(projectID: projectID, { $0.notes.append(note) }) else { return nil }
         audit(AuditEntry(at: now(), actor: author, action: .noteAdded, after: note, cause: cause), projectID: projectID)
         log.append(.info, "Saved a note in \(workspace.project(projectID)?.name ?? "a project")")
         return note
@@ -103,37 +110,38 @@ extension AppModel {
 
     /// Undo on a note the assistant or a session wrote.
     public func undoNote(_ noteID: UUID, projectID: UUID) {
-        guard let note = assistantNotes[projectID]?.first(where: { $0.id == noteID }), note.canUndo else { return }
+        guard let note = assistantData[projectID]?.notes.first(where: { $0.id == noteID }), note.canUndo else { return }
         remove(note, projectID: projectID, action: .noteUndone)
     }
 
     /// Delete Note, from a note's context menu: any author's.
     public func deleteNote(_ noteID: UUID, projectID: UUID) {
-        guard let note = assistantNotes[projectID]?.first(where: { $0.id == noteID }) else { return }
+        guard let note = assistantData[projectID]?.notes.first(where: { $0.id == noteID }) else { return }
         remove(note, projectID: projectID, action: .noteDeleted)
     }
 
     private func remove(_ note: ProjectNote, projectID: UUID, action: AuditEntry.Action) {
-        guard change(projectID: projectID, { $0.removeAll { $0.id == note.id } }) else { return }
+        guard change(projectID: projectID, { $0.notes.removeAll { $0.id == note.id } }) else { return }
         audit(AuditEntry(at: now(), actor: .user, action: action, before: note, cause: "ui"), projectID: projectID)
     }
 
-    /// Applies a change to a project's notes and saves it. False (and an
-    /// error shown) when it can't be saved, leaving the notes as they were.
-    private func change(projectID: UUID, _ body: (inout [ProjectNote]) -> Void) -> Bool {
+    /// Applies a change to a project's data and saves the whole of it (so
+    /// whatever else it holds is kept). False, with an error shown, when it
+    /// can't be saved, leaving the data as it was.
+    private func change(projectID: UUID, _ body: (inout AssistantData) -> Void) -> Bool {
         guard !unreadableAssistantProjects.contains(projectID) else {
             report("The assistant's notes for this project couldn't be read, so they can't be changed. See the Activity Log.")
             return false
         }
-        var notes = assistantNotes[projectID] ?? []
-        body(&notes)
+        var data = assistantData[projectID] ?? AssistantData()
+        body(&data)
         do {
-            try assistantStore.save(AssistantData(notes: notes), projectID: projectID)
+            try assistantStore.save(data, projectID: projectID)
         } catch {
             report("Couldn't save the note: \(AppModel.describe(error))")
             return false
         }
-        assistantNotes[projectID] = notes
+        assistantData[projectID] = data
         return true
     }
 

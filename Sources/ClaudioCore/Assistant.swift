@@ -165,12 +165,12 @@ public final class AssistantFileStore: AssistantStoring {
     }
 }
 
-/// The capture box: a note being written, linked to the session that was
-/// focused when it opened.
+/// Where the capture box's note goes: its project, and the session that was
+/// focused when it opened. What's typed is kept apart, in
+/// `AppModel.noteDraft`, so a keystroke only redraws the box.
 public struct NoteCapture: Equatable, Sendable {
     public var projectID: UUID
     public var sessionID: UUID?
-    public var text = ""
 
     public init(projectID: UUID, sessionID: UUID?) {
         self.projectID = projectID

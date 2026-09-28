@@ -204,10 +204,12 @@ public final class AppModel {
     public internal(set) var loadingPullRequests = Set<UUID>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
-    /// Each project's assistant notes, oldest first (see AppModel+Assistant).
-    public internal(set) var assistantNotes: [UUID: [ProjectNote]] = [:]
-    /// The capture box, while a note is being written.
+    /// Each project's assistant data, as saved (see AppModel+Assistant).
+    public internal(set) var assistantData: [UUID: AssistantData] = [:]
+    /// The capture box's target, while a note is being written.
     public internal(set) var noteCapture: NoteCapture?
+    /// What's typed in the capture box.
+    public internal(set) var noteDraft = ""
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
     @ObservationIgnored let assistantStore: AssistantStoring

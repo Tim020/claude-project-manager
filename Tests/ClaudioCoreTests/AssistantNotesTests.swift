@@ -39,7 +39,7 @@ final class AssistantNotesTests: XCTestCase {
             XCTAssertEqual(f.model.noteCapture, NoteCapture(projectID: f.projects[0], sessionID: f.sessions[1]))
             XCTAssertEqual(f.model.noteCaptureLinkText, "Linked to Shell Follow Up")
 
-            f.model.updateNoteCapture("  Maximising the Shell panel flickers once.\n")
+            f.model.updateNoteDraft("  Maximising the Shell panel flickers once.\n")
             let note = try XCTUnwrap(f.model.saveNoteCapture())
             XCTAssertEqual(note.text, "Maximising the Shell panel flickers once.", "trimmed")
             XCTAssertEqual(note.author, .user)
@@ -56,7 +56,7 @@ final class AssistantNotesTests: XCTestCase {
         try MainActor.assumeIsolated {
             let f = try makeFixture()
             f.model.beginNoteCapture()
-            f.model.updateNoteCapture(" \n ")
+            f.model.updateNoteDraft(" \n ")
             XCTAssertNil(f.model.saveNoteCapture())
             XCTAssertNotNil(f.model.noteCapture, "the box stays open")
             XCTAssertNil(f.model.toast)
@@ -78,11 +78,26 @@ final class AssistantNotesTests: XCTestCase {
             f.model.beginNoteCapture()
             XCTAssertEqual(f.model.noteCapture, NoteCapture(projectID: f.projects[1], sessionID: f.sessions[2]),
                            "a new capture for the other project")
-            f.model.updateNoteCapture("Typed")
+            f.model.updateNoteDraft("Typed")
             f.model.beginNoteCapture()
-            XCTAssertEqual(f.model.noteCapture?.text, "Typed", "pressing it again keeps what's typed")
+            XCTAssertEqual(f.model.noteDraft, "Typed", "pressing it again keeps what's typed")
             f.model.cancelNoteCapture()
             XCTAssertNil(f.model.noteCapture)
+        }
+    }
+
+    func testTheBoxOnlyCountsAsShowingWhereItIsVisible() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            f.model.select(f.sessions[0])
+            f.model.beginNoteCapture()
+            XCTAssertTrue(f.model.isNoteCaptureShowing)
+            f.model.toggleTool(.sessions)
+            XCTAssertFalse(f.model.isNoteCaptureShowing, "hidden behind another tool, terminals get the keyboard back")
+            f.model.toggleTool(.assistant)
+            XCTAssertTrue(f.model.isNoteCaptureShowing)
+            f.model.select(f.sessions[2])
+            XCTAssertFalse(f.model.isNoteCaptureShowing, "another project's Assistant doesn't show it")
         }
     }
 
