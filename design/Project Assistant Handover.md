@@ -17,7 +17,7 @@ Builds on the shipped two-rail layout: `ToolRails.swift`, `ToolWindows.swift`, `
    - a ⋯ menu holding Import Issues…, Skills (with a count), Activity Log and Assistant Settings…
 2. **Status line** (only one shows at a time):
    - **Off:** a card reading "The assistant is off for this project…" or "…turned off in Settings…", with Turn On.
-   - **Paused** (Automatic mode, over the usage threshold): "Background work paused · 5-hour usage 84%", in quiet muted text, with a Limits… link.
+   - **Paused** (Automatic mode, over the usage threshold): "Background work paused · 5-hour usage 84% · 2 waiting", in quiet muted text, with a Limits… link. The count is the number of held-back jobs.
    - **Manual:** "Manual: it only works when you ask."
 3. **Capture box:** shown while capturing. It has a text field, "Linked to <session>", and Cancel and Save Note buttons.
 4. **Needs You · n:** one card per item. When there's nothing, it shows "Nothing needs you." When the assistant is off, the section is hidden. Card kinds:
@@ -103,7 +103,7 @@ What happens in other modes:
   - **MODELS:** "Quick checks" (Haiku) and "Follow-ups, skills and Ask" (Sonnet). Each opens a picker.
   - **STORAGE:** read-only: "Skills are stored by Claudio, not in the repository."
   - A link to the app-wide Settings › Assistant.
-- **Activity Log** (⋯, and from Job Failed): every Claude call, newest first. Each row shows the time, the job, what it was about, the model, and the result: Done (teal), Skipped (amber, for example "Skipped: 5-hour usage 84%") or Failed (red, with the reason).
+- **Activity Log** (⋯, and from Job Failed): every Claude call, newest first. Each row shows the time, the job, what it was about, the model, and the result: Done (teal), Waiting (amber, for example "Waiting: 5-hour usage 84%") or Failed (red, with the reason). A Waiting row changes to Done or Failed once the job runs.
 - **Job Failed:**
   - the title and a plain explanation, for example:
     - "Claude Code is installed but not signed in. Run claude in a Shell and sign in, then try again."
@@ -127,9 +127,9 @@ What happens in other modes:
   - **Working:** a spinner, "Reviewing <session>…", "This can take up to about 30 seconds. You can keep working." (plus the usage note while usage is high, when you started it yourself).
   - **Ready:** checkbox rows. NOTE rows are already saved; unticking one removes it. PLAN rows are applied with **Add n to Plan**.
     - If there's nothing to keep: "Nothing new to keep from this session." and Close.
-    - For a session started before the assistant: "Started before the assistant, so this is from its final message and changed files only. New sessions get its skills."
   - Later (or ✕) keeps it in Needs You as "<session> finished".
-  - In **Automatic** mode it appears when a session finishes, unless paused by usage (the Activity Log then records Skipped).
+  - In **Automatic** mode it appears when a session finishes. If paused by usage, it waits and appears once usage drops (the Activity Log shows Waiting until then).
+  - Older sessions get the same card. Follow-ups are built from the session's history and hook events inside Claudio.
   - In **Manual** mode it only appears from **Review This Session**.
 - **Session context menu** (⋯ in the session header): Rename…, Move to Folder, **Review This Session** (✦), Stop Session. It works in Automatic and Manual modes. When the assistant is off, it shows a toast instead.
 - **Settings window › Assistant** (app-wide; opened from Assistant Settings, the Limits… link, or the status-bar usage figures):
@@ -143,9 +143,9 @@ What happens in other modes:
 - **Notes:** saved straight away, whoever writes them. Notes from the assistant or a session can always be undone.
 - **Plan items and skills:** only change after an explicit user action (Promote, Attach, Add to Plan, Approve, Keep Change, Revert, Retire, Mark Done).
 - **Skills:** stored by Claudio unless saved to the repository. They're only surfaced when proposed, changed (by the assistant or outside Claudio) or unused. A proposal isn't used until it's approved.
-- **Background work:** runs only in Automatic mode, while the app switch is on, below the usage threshold, and not on credits unless allowed. Things the user starts always run.
+- **Background work:** runs only in Automatic mode, while the app switch is on, below the usage threshold, and not on credits unless allowed. Held-back work isn't dropped. It waits and runs once usage falls below the threshold, and a newer job for the same session replaces the waiting one. Things the user starts always run.
 - **GitHub:** import and export only. Nothing is written to GitHub without Create GitHub Issue. Triage labels are suggestions.
-- **Older sessions:** they can't use skills or write notes. Show the hint and never fail silently.
+- **Older sessions:** they can't use skills or write their own notes, so the plan item shows a hint. Follow-ups work fully for them.
 - **Copy:** British English, Title Case buttons, and no emoji.
 
 ## Colours (from `Theme.swift` and DigiScript)
@@ -153,7 +153,7 @@ What happens in other modes:
 - Text: muted `#adb5bd`, subtle `#6c757d`.
 - Teal `#00bc8c`: primary action, In Session, success, the session-author marker, Done in the log.
 - Blue `#3498db`: the assistant marker, Planned, the selection tint `rgba(52,152,219,.35)`, badges, the REPOSITORY tag, spinners.
-- Amber `#f39c12`: the Edit outline, EDITED OUTSIDE CLAUDIO, the paused icon, Skipped in the log.
+- Amber `#f39c12`: the Edit outline, EDITED OUTSIDE CLAUDIO, the paused icon, Waiting in the log.
 - Red `#e74c3c`: the bug label, failed jobs, removed diff lines, Retire and Revert.
 
 ## Shortcuts
@@ -183,4 +183,5 @@ The backend has since been designed (see its own design doc). The UI states abov
 8. **Duplicate check on capture:** the "Looks like … Attach it?" suggestion, alongside Promote.
 9. **Manual mode:** Review This Session in the session ⋯ menu. No automatic follow-up card in Manual mode.
 10. **Working and error states:** in-progress cards, working states for follow-ups and Ask, and a Job Failed view with Try Again and Activity Log.
-11. **Older sessions:** hints on their plan item and on their follow-up card.
+11. **Older sessions:** a hint on their plan item. Their follow-up card looks the same as any other.
+12. **Held-back work waits:** the Activity Log shows Waiting instead of Skipped, and the paused line shows how many jobs are waiting.

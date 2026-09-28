@@ -256,7 +256,6 @@
           <sc-if value="{{ a.inReady }}" hint-placeholder-val="{{ false }}">
             <sc-for list="{{ a.inFollow }}" as="f" hint-placeholder-count="3"><div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-top:1px solid #444"><span onClick="{{ f.onToggle }}" style="display:flex;cursor:pointer"><i class="mdi {{ f.box }}" style="font-size:17px;color:{{ f.boxC }}"></i></span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px">{{ f.t }}</span><span style="font-size:11.5px;color:#6c757d">{{ f.sub }}</span></div><span style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#adb5bd">{{ f.tag }}</span></div></sc-for>
             <sc-if value="{{ a.inEmpty }}" hint-placeholder-val="{{ false }}"><div style="padding:8px 14px;border-top:1px solid #444;font-size:12.5px;color:#adb5bd">Nothing new to keep from this session.</div></sc-if>
-            <sc-if value="{{ a.inOld }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:7px;padding:8px 14px;border-top:1px solid #444;font-size:12px;color:#adb5bd"><i class="mdi mdi-information-outline" style="font-size:14px;color:#6c757d"></i>Started before the assistant, so this is from its final message and changed files only. New sessions get its skills.</div></sc-if>
             <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #444;font-size:12px;color:#adb5bd"><sc-if value="{{ a.inSkill }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-school-outline" style="color:#3498db"></i><span>It also learned a skill. It's waiting in Needs You.</span></sc-if><span style="flex:1"></span><span onClick="{{ a.onFollowLater }}" style="cursor:pointer;font-size:13px">Later</span><span onClick="{{ a.onApply }}" style="padding:4px 12px;border-radius:4px;background:#00bc8c;color:#fff;font-size:13px;font-weight:700;cursor:pointer">{{ a.applyLabel }}</span></div>
           </sc-if>
         </div>
@@ -604,7 +603,7 @@ const FOLLOWS={
       {id:'h2',tag:'PLAN',t:'Add exit-status tests for signals',sub:'New plan item in In-built Shell',apply:m=>m.items.push({id:'ih',title:'Add exit-status tests for signals',status:'planned',issue:null,notes:[],folder:'In-built Shell'})}],
 };
 const LOG0=[['10:12','Quick check','Note from Shell Follow Up','Haiku','Done'],['09:58','Follow-up','Cmd + Enter','Sonnet','Done'],['09:31','Triage','2 issues','Haiku','Done']];
-const LOG_PAUSED=[['10:44','Follow-up','Shell Follow Up','Sonnet','Skipped: 5-hour usage 84%'],['10:30','Triage','1 new issue','Haiku','Skipped: 5-hour usage 84%']];
+const LOG_PAUSED=[['10:44','Follow-up','Shell Follow Up','Sonnet','Waiting: 5-hour usage 84%'],['10:30','Triage','1 new issue','Haiku','Waiting: 5-hour usage 84%']];
 const LOG_FAILED=[['09:58','Follow-up','Update PR','Sonnet',"Failed: signed out of Claude Code"],['09:40','Triage','2 issues','Haiku',"Failed: claude command not found"],['09:31','Skill draft','Shell Terminal','Sonnet','Failed: timed out after 60 s']];
 const _nowHHMM=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
 const _slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
@@ -668,7 +667,7 @@ class Component extends DCLogic {
   finish(k){
     if(k==='a'){
       const m0=this.state.a.m,auto=this.isOn(m0)&&m0.set.mode==='auto',paused=this.isPaused(m0);
-      this.mut(k,m=>{m.sess.st.status='done';m.term.st=[...TERM0.st,...ST_DONE];if(paused)this.logA(m,'Follow-up','Shell Terminal','Sonnet','Skipped: 5-hour usage '+m.u5+'%');});
+      this.mut(k,m=>{m.sess.st.status='done';m.term.st=[...TERM0.st,...ST_DONE];if(paused){m.log=m.log.filter(r=>!(r[1]==='Follow-up'&&r[2]==='Shell Terminal'&&r[4].startsWith('Waiting')));this.logA(m,'Follow-up','Shell Terminal','Sonnet','Waiting: 5-hour usage '+m.u5+'%');}});
       if(auto&&!paused){this.set(k,{inline:{sid:'st',phase:'working'}});this.addT(k,()=>this.followReady(k,'st',false),1600);}
       return;
     }
@@ -690,6 +689,14 @@ class Component extends DCLogic {
       this.logA(m,'Follow-up',m.sess[sid].name,m.set.main,'Done');
       return {inline:{sid,phase:'ready',manual}};
     });
+  }
+  runWaiting(k){
+    const m0=this.state[k].m;if(this.isPaused(m0)||!m0.log)return;
+    const waiting=m0.log.filter(r=>r[4].startsWith('Waiting'));if(!waiting.length)return;
+    this.mut(k,m=>{m.log=m.log.map(r=>r[4].startsWith('Waiting')?[_nowHHMM(),r[1],r[2],r[3],'Done']:r);
+      if(waiting.some(r=>r[1]==='Follow-up'&&r[2]==='Shell Follow Up')){this.addFollowNotes(m,'sfu');if(!m.inbox.includes('xf_sfu'))m.inbox.unshift('xf_sfu');}
+      if(waiting.some(r=>r[1]==='Follow-up'&&r[2]==='Shell Terminal')){this.addFollowNotes(m,'st');if(!m.inbox.includes('xf_st'))m.inbox.unshift('xf_st');}});
+    this.toast(k,'Usage is below the limit. Waiting jobs ran.');
   }
   review(k){
     const s=this.state[k];
@@ -911,7 +918,7 @@ class Component extends DCLogic {
       panelTitle:TITLES[vw]||'ASSISTANT',
       showOff:!on,offText:!m.app.on?'The assistant is turned off in Settings. Notes and the plan still work by hand.':'The assistant is off for this project. Notes and the plan still work by hand.',
       onTurnOn:()=>this.mut(k,mm=>{mm.app.on=true;if(mm.set.mode==='off')mm.set.mode='auto';}),
-      showPaused:paused,pausedText:`Background work paused · 5-hour usage ${m.u5}%`,showManual:on&&mode==='manual',highText,
+      showPaused:paused,pausedText:(()=>{const w=m.log.filter(r=>r[4].startsWith('Waiting')).length;return `Background work paused · 5-hour usage ${m.u5}%`+(w?` · ${w} waiting`:'');})(),showManual:on&&mode==='manual',highText,
       inbox:cards,hasInbox:cards.length>0,noInbox:on&&cards.length===0,inboxCount:need,
       notes:m.notes.map(n=>{const i=n.item&&itemsById[n.item],fresh=/^(nc|fn_|n24)/.test(n.id);return {
         text:n.text,meta:noteMeta(n),byYou:n.by==='you',byAsst:n.by==='asst',bySession:n.by==='session',canUndo:n.by!=='you',canPromote:!i&&!n.suggest,
@@ -951,9 +958,9 @@ class Component extends DCLogic {
       onOpenApp:()=>this.set(k,{appSheet:true,menu:false}),onCloseApp:()=>this.set(k,{appSheet:false}),appOpen:s.appSheet,
       appOnBg:ton.bg,appOnJust:ton.just,onAppOn:()=>this.mut(k,mm=>{mm.app.on=!mm.app.on;}),
       credBg:tcr.bg,credJust:tcr.just,onCred:()=>this.mut(k,mm=>{mm.app.credits=!mm.app.credits;}),
-      th:m.app.th,onTh:e=>{const v=Math.max(50,Math.min(100,Number(e.target.value)||80));this.mut(k,mm=>{mm.app.th=v;});},
+      th:m.app.th,onTh:e=>{const v=Math.max(50,Math.min(100,Number(e.target.value)||80));this.mut(k,mm=>{mm.app.th=v;});this.addT(k,()=>this.runWaiting(k),900);},
       u5:m.u5+'%',uw:m.uw+'%',uC:high?WARN:TEAL,
-      logRows:m.log.map(([time,job,what,model,res])=>({time,job,what,model,res,rc:res.startsWith('Done')?TEAL:res.startsWith('Skipped')?WARN:RED})),
+      logRows:m.log.map(([time,job,what,model,res])=>({time,job,what,model,res,rc:res.startsWith('Done')?TEAL:res.startsWith('Waiting')?WARN:RED})),
       errTitle:err?err.t:'',errDesc:err?err.d:'',errJob:err?err.job:'',onRetry:()=>this.retry(k,s.vid),
       smenuOpen:s.smenu,smenuBg:s.smenu?'#444':'transparent',onSMenu:()=>this.set(k,x=>({smenu:!x.smenu})),onReview:()=>this.review(k),
       showInline:!!inl&&s.sel===inSid,inWorking:!!inl&&inl.phase==='working',inReady:!!inl&&inl.phase==='ready',
