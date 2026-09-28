@@ -116,6 +116,38 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertTrue(reported.isUsingCredits)
     }
 
+    func testSpentCreditsStayShownWhenTurnedOff() throws {
+        // Hitting the monthly spend limit turns `is_enabled` off (2.1.283:
+        // `"is_enabled":false,…,"used_credits":5031,"utilization":100` against
+        // a limit of 5000). The spend and the out-of-credits state still show.
+        let fixture = try Fixtures.string("usage-stream.jsonl")
+            .replacingOccurrences(of: #""percent":42"#, with: #""percent":100"#)
+        let spent = fixture.replacingOccurrences(of: #""is_enabled":true,"monthly_limit":8000,"used_credits":2000,"utilization":25.0"#,
+                                                 with: #""is_enabled":false,"monthly_limit":8000,"used_credits":8050,"utilization":100"#)
+        XCTAssertNotEqual(spent, fixture)
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(spent, updatedAt: now))
+        let credits = try XCTUnwrap(usage.credits)
+        XCTAssertFalse(credits.isEnabled)
+        XCTAssertTrue(credits.isShown)
+        XCTAssertTrue(usage.isOutOfCredits)
+        XCTAssertFalse(usage.isUsingCredits)
+
+        // No `is_enabled` at all: the spend is still read.
+        let unflagged = spent.replacingOccurrences(of: #""is_enabled":false,"#, with: "")
+        XCTAssertTrue(try XCTUnwrap(UsageSnapshot.parseUsageStream(unflagged, updatedAt: now)).isOutOfCredits)
+
+        // Never turned on: nothing spent, nothing shown.
+        let off = fixture.replacingOccurrences(of: #""is_enabled":true,"monthly_limit":8000,"used_credits":2000,"utilization":25.0"#,
+                                               with: #""is_enabled":false,"monthly_limit":null,"used_credits":null,"utilization":null"#)
+        let never = try XCTUnwrap(UsageSnapshot.parseUsageStream(off, updatedAt: now))
+        XCTAssertEqual(never.credits?.isShown, false)
+        XCTAssertFalse(never.isOutOfCredits)
+
+        // `"extra_usage": null`
+        let noCredits = fixture.replacingOccurrences(of: #""extra_usage":{"#, with: #""extra_usage":null,"unused":{"#)
+        XCTAssertNil(try XCTUnwrap(UsageSnapshot.parseUsageStream(noCredits, updatedAt: now)).credits)
+    }
+
     func testCreditAmounts() {
         let gbp = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
         XCTAssertEqual(gbp.amountLabel(locale: Locale(identifier: "en_GB")), "£12.50 of £50.00")
