@@ -20,6 +20,10 @@ public struct ToolWindows: Codable, Equatable, Sendable {
     public var isLeftOpen = true
     public var right: RightTool = .changes
     public var isRightOpen = false
+    /// Which pull requests the left rail's Pull Requests tool lists.
+    public var pullRequestFilter: PullRequestFilter = .open
+    /// Projects collapsed in the Pull Requests tool (their headers stay).
+    public var collapsedPullRequestProjects: Set<UUID> = []
 
     public init(left: LeftTool = .sessions, isLeftOpen: Bool = true, right: RightTool = .changes, isRightOpen: Bool = false) {
         self.left = left
@@ -35,6 +39,8 @@ public struct ToolWindows: Codable, Equatable, Sendable {
         isLeftOpen = try c.decodeIfPresent(Bool.self, forKey: .isLeftOpen) ?? true
         right = (try? c.decodeIfPresent(RightTool.self, forKey: .right)) ?? .changes
         isRightOpen = try c.decodeIfPresent(Bool.self, forKey: .isRightOpen) ?? false
+        pullRequestFilter = (try? c.decodeIfPresent(PullRequestFilter.self, forKey: .pullRequestFilter)) ?? .open
+        collapsedPullRequestProjects = try c.decodeIfPresent(Set<UUID>.self, forKey: .collapsedPullRequestProjects) ?? []
     }
 
     /// The tool showing on the left, or nil when that side is hidden.
@@ -73,6 +79,8 @@ public struct PullRequestPanelGroup: Identifiable, Equatable, Sendable {
     public var hasLoaded: Bool
     /// Why the last load failed, if it did (what loaded before stays).
     public var error: String?
+    /// Collapsed to its header (`items` are still filled in, for its count).
+    public var isCollapsed = false
 
     public var id: UUID { projectID }
 }
@@ -104,18 +112,45 @@ extension AppModel {
         updateMenuFlags()
     }
 
+    /// Sets which pull requests the Pull Requests tool lists (remembered).
+    public func setPullRequestPanelFilter(_ filter: PullRequestFilter) {
+        guard state.settings.toolWindows.pullRequestFilter != filter else { return }
+        var settings = state.settings
+        settings.toolWindows.pullRequestFilter = filter
+        updateSettings(settings)
+    }
+
+    /// A project's header in the Pull Requests tool: collapses or expands its list.
+    public func togglePullRequestPanelCollapsed(_ projectID: UUID) {
+        var settings = state.settings
+        if !settings.toolWindows.collapsedPullRequestProjects.insert(projectID).inserted {
+            settings.toolWindows.collapsedPullRequestProjects.remove(projectID)
+        }
+        updateSettings(settings)
+    }
+
+    /// Collapse All / Expand All in the Pull Requests tool.
+    public func setAllPullRequestPanelsCollapsed(_ collapsed: Bool) {
+        var settings = state.settings
+        settings.toolWindows.collapsedPullRequestProjects = collapsed ? Set(workspace.projects.map(\.id)) : []
+        updateSettings(settings)
+    }
+
     /// The left rail's Pull Requests: for each project whose pull requests
-    /// are tracked, the ones its sessions opened or reviewed (plus, with
-    /// "Include PRs without a session", its other open ones). Open ones come
-    /// first, most urgent first; closed and merged ones follow if they were
-    /// updated within the sidebar's activity window.
+    /// are tracked, the ones the tool's filter matches that its sessions
+    /// opened or reviewed (plus, with "Include PRs without a session", its
+    /// other open ones). Open ones come first, most urgent first; closed and
+    /// merged ones follow if they were updated within the sidebar's activity
+    /// window.
     public func pullRequestPanel() -> [PullRequestPanelGroup] {
         let since = settings.activitySince(now: now())
+        let filter = toolWindows.pullRequestFilter
+        let collapsed = toolWindows.collapsedPullRequestProjects
         return workspace.projects.filter { tracksPullRequests(projectID: $0.id) }.map { project in
             let known = projectPullRequests[project.id]
             var open: [(PullRequestInfo, Session?)] = []
             var done: [(PullRequestInfo, Session?)] = []
-            for pullRequest in (known?.items ?? []).sortedByUpdate {
+            for pullRequest in (known?.items ?? []).sortedByUpdate where filter.matches(pullRequest) {
                 let session = sessions(for: pullRequest, projectID: project.id).first
                 if pullRequest.isOpen {
                     guard session != nil || includeUnlinkedPullRequests else { continue }
@@ -134,7 +169,19 @@ extension AppModel {
                                      folder: session.flatMap { workspace.group(of: $0.id) }.map(workspace.name(of:)))
             }
             return PullRequestPanelGroup(projectID: project.id, name: project.name, items: items,
-                                         hasLoaded: known?.hasLoaded ?? false, error: known?.error)
+                                         hasLoaded: known?.hasLoaded ?? false, error: known?.error,
+                                         isCollapsed: collapsed.contains(project.id))
+        }
+    }
+
+    /// What a loaded project in the Pull Requests tool says when the filter
+    /// leaves nothing to list.
+    public var pullRequestPanelNoMatchText: String {
+        switch toolWindows.pullRequestFilter {
+        case .open: return "No open pull requests."
+        case .needsAttention: return "None need attention."
+        case .merged: return "No recently merged pull requests."
+        case .all: return "No pull requests to show."
         }
     }
 

@@ -33,6 +33,18 @@ final class ToolWindowsTests: XCTestCase {
         return (model, sessions.map(\.id))
     }
 
+    func testPanelSettingsDecode() throws {
+        let old = try JSONDecoder().decode(ToolWindows.self, from: Data(#"{"left":"pullRequests"}"#.utf8))
+        XCTAssertEqual(old.pullRequestFilter, .open, "open pull requests by default")
+        XCTAssertEqual(old.collapsedPullRequestProjects, [])
+
+        var tools = ToolWindows()
+        tools.pullRequestFilter = .needsAttention
+        tools.collapsedPullRequestProjects = [UUID()]
+        let decoded = try JSONDecoder().decode(ToolWindows.self, from: JSONEncoder().encode(tools))
+        XCTAssertEqual(decoded, tools)
+    }
+
     func testToolsAreSaved() throws {
         try MainActor.assumeIsolated {
             let store = MemoryStore()
@@ -101,6 +113,9 @@ extension PullRequestModelTests {
         _ = await MainActor.run { model.addProject(path: "/elsewhere") }
         await model.refreshPullRequests(project)
         await MainActor.run {
+            XCTAssertEqual(model.pullRequestPanel()[0].items.map(\.pullRequest.number), [1430, 1427],
+                           "open ones only, by default")
+            model.setPullRequestPanelFilter(.all)
             let groups = model.pullRequestPanel()
             XCTAssertEqual(groups.map(\.projectID), [project], "a project with nothing tracked is left out")
             XCTAssertTrue(groups[0].hasLoaded)
@@ -116,6 +131,40 @@ extension PullRequestModelTests {
             XCTAssertEqual(model.pullRequestPanel()[0].items.map(\.pullRequest.number), [1427, 1422])
             model.setActivityWindow(days: 0)
             XCTAssertEqual(model.pullRequestPanel()[0].items.map(\.pullRequest.number), [1427, 1422, 900], "any time")
+        }
+    }
+
+    func testPanelFiltersAndCollapses() async throws {
+        let failing = PullRequestFixtures.pr(1430, checks: "[\(PullRequestFixtures.failing)]")
+        let runner = FakeGitHub()
+        runner.open = "[\(PullRequestFixtures.pr(1427)),\(failing)]"
+        runner.recent = "[\(PullRequestFixtures.pr(1427)),\(failing),\(PullRequestFixtures.pr(1422, state: "MERGED"))]"
+        let links = [1427, 1430, 1422].map { "https://github.com/dreamteamprod/DigiScript/pull/\($0)" }
+        let (model, project, _) = try await MainActor.run { try makeModel(runner, sessionPRs: links) }
+        await model.refreshPullRequests(project)
+        await MainActor.run {
+            @MainActor func listed() -> [Int] { model.pullRequestPanel()[0].items.map(\.pullRequest.number) }
+            XCTAssertEqual(model.toolWindows.pullRequestFilter, .open)
+            XCTAssertEqual(listed(), [1430, 1427])
+            model.setPullRequestPanelFilter(.needsAttention)
+            XCTAssertEqual(listed(), [1430], "a failing check")
+            model.setPullRequestPanelFilter(.merged)
+            XCTAssertEqual(listed(), [1422])
+            XCTAssertEqual(model.pullRequestPanelNoMatchText, "No recently merged pull requests.")
+            model.setPullRequestPanelFilter(.all)
+            XCTAssertEqual(listed(), [1430, 1427, 1422])
+            XCTAssertEqual(model.settings.toolWindows.pullRequestFilter, .all, "remembered")
+
+            XCTAssertFalse(model.pullRequestPanel()[0].isCollapsed)
+            model.togglePullRequestPanelCollapsed(project)
+            XCTAssertTrue(model.pullRequestPanel()[0].isCollapsed)
+            XCTAssertEqual(listed(), [1430, 1427, 1422], "still counted while collapsed")
+            model.togglePullRequestPanelCollapsed(project)
+            XCTAssertFalse(model.pullRequestPanel()[0].isCollapsed)
+            model.setAllPullRequestPanelsCollapsed(true)
+            XCTAssertTrue(model.pullRequestPanel()[0].isCollapsed)
+            model.setAllPullRequestPanelsCollapsed(false)
+            XCTAssertFalse(model.pullRequestPanel()[0].isCollapsed)
         }
     }
 

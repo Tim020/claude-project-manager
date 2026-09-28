@@ -1244,50 +1244,61 @@ struct ProjectPullRequestsTool: View {
 
     var body: some View {
         let groups = model.pullRequestPanel()
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                if let problem = model.gitHubCLIProblem {
-                    Text(problem + " Set it up in Settings › Setup.")
-                        .font(DS.font(12))
-                        .foregroundStyle(DS.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 8)
-                } else if groups.isEmpty {
-                    Text(model.pullRequestPanelEmptyText)
-                        .font(DS.font(12.5))
-                        .foregroundStyle(DS.dim)
-                        .padding(.horizontal, 8)
-                }
-                ForEach(groups) { group in
-                    ProjectPullRequestsHeader(group: group)
-                    if group.hasLoaded {
-                        // A failed refresh keeps what loaded before: say how old it is.
-                        PullRequestsErrorBanner(projectID: group.projectID, compact: true)
-                    }
-                    ForEach(group.items) { item in
-                        PanelPullRequestRow(projectID: group.projectID, item: item)
-                    }
-                    if group.items.isEmpty, let note = emptyNote(group) {
-                        Text(note)
+        VStack(spacing: 0) {
+            PullRequestPanelFilterSwitch()
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if let problem = model.gitHubCLIProblem {
+                        Text(problem + " Set it up in Settings › Setup.")
                             .font(DS.font(12))
-                            .foregroundStyle(DS.dim)
+                            .foregroundStyle(DS.muted)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 4)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 8)
+                    } else if groups.isEmpty {
+                        Text(model.pullRequestPanelEmptyText)
+                            .font(DS.font(12.5))
+                            .foregroundStyle(DS.dim)
+                            .padding(.horizontal, 8)
+                    }
+                    ForEach(groups) { group in
+                        ProjectPullRequestsHeader(group: group)
+                        if !group.isCollapsed {
+                            groupContent(group)
+                        }
                     }
                 }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 12)
         }
         .task { await model.refreshAllPullRequests() }
+    }
+
+    @ViewBuilder private func groupContent(_ group: PullRequestPanelGroup) -> some View {
+        if group.hasLoaded {
+            // A failed refresh keeps what loaded before: say how old it is.
+            PullRequestsErrorBanner(projectID: group.projectID, compact: true)
+        }
+        ForEach(group.items) { item in
+            PanelPullRequestRow(projectID: group.projectID, item: item)
+        }
+        if group.items.isEmpty, let note = emptyNote(group) {
+            Text(note)
+                .font(DS.font(12))
+                .foregroundStyle(DS.dim)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+        }
     }
 
     /// Why a project lists nothing. Nothing while gh isn't set up (the note
     /// at the top says so), rather than a "Loading…" that never ends.
     private func emptyNote(_ group: PullRequestPanelGroup) -> String? {
-        if group.hasLoaded { return "No pull requests to show." }
+        if group.hasLoaded { return model.pullRequestPanelNoMatchText }
         if let error = group.error { return "Couldn't load pull requests: \(error)" }
         return model.gitHubCLIProblem == nil ? "Loading…" : nil
     }
@@ -1303,9 +1314,12 @@ private struct ProjectPullRequestsHeader: View {
     var body: some View {
         let items = model.pullRequests(forProject: group.projectID)?.items ?? []
         let attention = items.filter(\.needsAttention).count
-        let open = items.filter(\.isOpen).count
         let selected = model.selectedOverview == .project(group.projectID)
         HStack(spacing: 6) {
+            Image(systemName: group.isCollapsed ? "chevron.right" : "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(DS.dim)
+                .frame(width: 10)
             Text(group.name.uppercased())
                 .font(DS.font(11, .extraBold))
                 .kerning(0.66)
@@ -1316,21 +1330,29 @@ private struct ProjectPullRequestsHeader: View {
                 countPill("\(attention)", color: DS.red, background: DS.red.opacity(0.2))
                     .help("\(attention) need attention: a failing check or changes requested")
             }
-            if open > 0 {
-                countPill("\(open) open", color: DS.muted, background: DS.dim.opacity(0.25))
-                    .help("\(open) open pull \(open == 1 ? "request" : "requests") in the repository")
+            if group.hasLoaded {
+                countPill("\(group.items.count)", color: DS.muted, background: DS.dim.opacity(0.25))
+                    .help("\(group.items.count) listed")
             }
-            Image(systemName: "arrow.up.forward.square")
-                .font(.system(size: 11))
-                .foregroundStyle(hovering ? DS.text : DS.dim)
+            IconButton(systemName: "arrow.up.forward.square", help: "Show all of \(group.name)'s pull requests", size: 11) {
+                model.showOverview(.project(group.projectID))
+            }
+            .frame(height: 16)
         }
         .padding(.vertical, 5)
-        .padding(.horizontal, 10)
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
         .background(RoundedRectangle(cornerRadius: 4).fill(selected ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { model.showOverview(.project(group.projectID)) }
-        .help("Show all of \(group.name)'s pull requests")
+        .onTapGesture { model.togglePullRequestPanelCollapsed(group.projectID) }
+        .help(group.isCollapsed ? "Expand" : "Collapse")
+        .contextMenu {
+            Button("Show All of \(group.name)'s Pull Requests") { model.showOverview(.project(group.projectID)) }
+            Divider()
+            Button("Collapse All") { model.setAllPullRequestPanelsCollapsed(true) }
+            Button("Expand All") { model.setAllPullRequestPanelsCollapsed(false) }
+        }
         .padding(.top, 8)
     }
 
@@ -1342,6 +1364,43 @@ private struct ProjectPullRequestsHeader: View {
             .frame(minHeight: 16)
             .background(Capsule().fill(background))
             .fixedSize()
+    }
+}
+
+/// "Open | Attention | Merged | All" above the Pull Requests tool's list.
+private struct PullRequestPanelFilterSwitch: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let current = model.toolWindows.pullRequestFilter
+        HStack(spacing: 0) {
+            ForEach([PullRequestFilter.open, .needsAttention, .merged, .all], id: \.self) { filter in
+                let active = filter == current
+                Button { model.setPullRequestPanelFilter(filter) } label: {
+                    Text(filter == .needsAttention ? "Attention" : filter.rawValue)
+                        .foregroundStyle(active ? DS.text : DS.muted)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                        .background(active ? DS.border : .clear)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(help(filter))
+            }
+        }
+        .font(DS.font(12))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+    }
+
+    private func help(_ filter: PullRequestFilter) -> String {
+        switch filter {
+        case .open: return "Open pull requests"
+        case .needsAttention: return "Open pull requests with a failing check or changes requested"
+        case .merged: return "Pull requests merged within the sidebar's recent-activity window"
+        case .all: return "Open ones, then closed and merged ones from the recent-activity window"
+        }
     }
 }
 
