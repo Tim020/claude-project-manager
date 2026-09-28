@@ -143,9 +143,11 @@ claude -p --model <haiku|sonnet> --output-format json \
 - the 5-hour window is at 80% or more
 - the weekly window is at 90% or more
 - `isUsingCredits` is true
-- there's no reading yet
+- there's no reading yet, but one is expected (a subscription sign-in whose first `/usage` hasn't come back)
 
-Deferred jobs stay queued and are retried on the next usage refresh. Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The thresholds are settings.
+Deferred jobs stay queued and are retried on the next usage refresh.
+
+Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call and a daily job limit set in Assistant Settings. Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The thresholds are settings.
 
 ### 4. The learning loop
 
@@ -157,7 +159,7 @@ Signals Claudio already receives, plus three new hook events:
 | User prompts | `UserPromptSubmit`, and history files | corrections ("no, …", "don't …", "next time …") |
 | Tool calls | `PostToolUse` (already parsed) | PR activity, commands, the digest |
 | **Tool failures** | **new: `PostToolUseFailure`** (`tool_name`, `tool_input`, `error.message`) | "learned the hard way" evidence |
-| **Denied actions** | **new: `PermissionDenied`** | the user refused something, which is a strong correction signal |
+| **Denied actions** | **new: `PermissionDenied`** | possibly a correction signal. **Assumed:** it fires when the user refuses a permission prompt. It may fire only for auto-mode classifier denials, so check before relying on it. |
 | **Turn failed** | **new: `StopFailure`** (`error.type`: rate_limit, overloaded, …) | don't draw lessons from a turn that ended in an API error |
 | Skill used | `PreToolUse` with `tool_name == "Skill"` | the "used by n sessions" count, and retirement |
 | Files changed | `SessionChanges` / `ChangesDirectory` | skill `paths`, and skill selection |
@@ -252,8 +254,8 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 ### The session-side plugin
 
 - **`bin/claudio`** is a POSIX `sh` script: no dependencies, and testable on Linux.
-  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in a background agent's Bash tool (verified in 2.1.284), and its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
-  - It writes base64 text, so nothing needs JSON escaping in shell: `printf '%s\t%s\tnote\t%s\n' "$sid" "$PWD" "$(printf %s "$text" | base64)" >> inbox.log`. That's the same single-write append as `HookSettings.command`.
+  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in a background agent's Bash tool (verified in 2.1.284). Direct-mode tabs weren't checked; for those it falls back to `$CLAUDIO_SESSION_ID`, which `TerminalLaunch.make` already sets. It identifies its project its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
+  - It writes base64 text, so nothing needs JSON escaping in shell: `printf '%s\t%s\tnote\t%s\n' "$sid" "$PWD" "$(printf %s "$text" | base64 | tr -d '\n')" >> inbox.log`. The `tr` matters: GNU `base64` wraps its output at 76 columns, and BSD `base64` doesn't. That's the same single-write append as `HookSettings.command`.
   - Commands:
     - `claudio plan`: prints `plan.md`
     - `claudio item <id>`: an item with its notes
@@ -304,14 +306,15 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 | `--json-schema` returns `structured_output` in `--output-format json` | The same calls. |
 | A skill in `<repo>/.claude/skills/` (uncommitted) loads in a session started in `<repo>/.claude/worktrees/w` | A real `claude -p` call run from the worktree listed it. |
 | Skills under an `--add-dir` root's `.claude/skills/` load | The same call listed `addprobe`. |
-| Per-launch environment variables don't reach the agent | `CLAUDIO_SESSION_ID=… claude --bg` in a container. The job's `providerEnv` is `{}`. The agent inherits its environment from the shared daemon, which only has the variables of whichever launch started it. |
-| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). |
+| A launch's environment isn't saved for respawns | `CLAUDIO_SESSION_ID=… claude --bg` in a container. The job's `providerEnv` is `{}`. Whether the variable reaches the *first* agent process couldn't be settled. Agents are often started in pre-spawned `bg-spare` processes, and `/proc/<pid>/environ` doesn't show what those set once claimed. So nothing here relies on per-launch environment variables. |
+| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) weren't checked. |
 | Costs listed under Runtime | `total_cost_usd` from the calls above. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
 
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
-- hook payload field names for the three new events, and the Skill tool's input key (step 4)
+- hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
+- `CLAUDE_CODE_SESSION_ID` in direct-mode tabs (step 3)
 - whether the skill loader follows symlinks (only for skill sets per session)
 - the cost of `--setting-sources user` compared with `""` (step 2)
 
