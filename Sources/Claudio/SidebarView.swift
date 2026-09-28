@@ -243,6 +243,7 @@ private struct ProjectSection: View {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path)
             }
             Divider()
+            Button("Archive Completed") { model.archiveCompleted(inProject: project.id) }
             Button("Remove Project", role: .destructive) { model.removeProject(project.id) }
         }
     }

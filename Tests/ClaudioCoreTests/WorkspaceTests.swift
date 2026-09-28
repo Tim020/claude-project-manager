@@ -252,6 +252,26 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertTrue(ws.session(done.id)!.isArchived)
     }
 
+    func testArchiveCompletedInAProjectCoversItsFoldersAndUnfiled() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let other = ws.addProject(path: "/code/b")
+        let f = try ws.createFolder(in: p, named: "F")
+        let filed = makeSession("filed", project: p, status: .completed)
+        let unfiled = makeSession("unfiled", project: p, status: .completed)
+        let busy = makeSession("busy", project: p, status: .working)
+        let elsewhere = makeSession("elsewhere", project: other, status: .completed)
+        try ws.addSession(filed, toFolder: f)
+        try ws.addSession(busy, toFolder: f)
+        try ws.addSession(unfiled)
+        try ws.addSession(elsewhere)
+        XCTAssertEqual(Set(ws.archiveCompleted(inProject: p)), [filed.id, unfiled.id])
+        XCTAssertEqual(ws.sessions(in: .folder(f)).map(\.name), ["busy"])
+        XCTAssertTrue(ws.sessions(in: .unfiled(projectID: p)).isEmpty)
+        XCTAssertFalse(ws.session(elsewhere.id)!.isArchived, "other projects are left alone")
+        XCTAssertEqual(ws.archiveCompleted(inProject: p), [], "already archived")
+    }
+
     func testRemoveSessionRemovesFromFolder() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code/a")

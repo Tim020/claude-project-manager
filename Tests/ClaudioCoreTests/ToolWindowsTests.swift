@@ -33,6 +33,33 @@ final class ToolWindowsTests: XCTestCase {
         return (model, sessions.map(\.id))
     }
 
+    func testSessionRailShowsOnlyWithASessionSelected() throws {
+        try MainActor.assumeIsolated {
+            let store = MemoryStore()
+            let (model, ids) = try makeModel(store: store)
+            XCTAssertFalse(model.showsSessionTools, "no tab selected")
+
+            model.select(ids[0])
+            XCTAssertTrue(model.showsSessionTools)
+            model.toggleTool(.changes)
+            XCTAssertEqual(model.visibleSessionTool, .changes)
+
+            let project = try XCTUnwrap(model.workspace.projects.first).id
+            model.showOverview(.project(project))
+            model.updateMenuFlags()
+            XCTAssertFalse(model.showsSessionTools, "an overview tab isn't a session")
+            XCTAssertNil(model.visibleSessionTool)
+            XCTAssertNil(model.menuFlags.rightTool)
+            XCTAssertFalse(model.menuFlags.hasSelection, "so the View menu's session tools are off")
+            XCTAssertEqual(model.toolWindows.visibleRight, .changes, "still open, for the next session")
+
+            model.select(ids[1])
+            model.updateMenuFlags()
+            XCTAssertEqual(model.visibleSessionTool, .changes, "comes back with a session")
+            XCTAssertEqual(model.menuFlags.rightTool, .changes)
+        }
+    }
+
     func testPanelSettingsDecode() throws {
         let old = try JSONDecoder().decode(ToolWindows.self, from: Data(#"{"left":"pullRequests"}"#.utf8))
         XCTAssertEqual(old.pullRequestFilter, .open, "open pull requests by default")

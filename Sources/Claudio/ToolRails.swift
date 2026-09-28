@@ -5,8 +5,9 @@ import SwiftUI
 
 // Design 8c, two rails (like PyCharm): the left rail's tools cover projects
 // (Sessions, Pull Requests, and the Shell at its foot), the right rail's
-// cover the selected session (Changes, Pull Request). The side a tool is on
-// says what it covers. App-wide figures live in the status bar.
+// cover the selected session (Changes, Pull Request), and show only while
+// one is selected. The side a tool is on says what it covers. App-wide
+// figures live in the status bar.
 
 enum ToolRail {
     static let width: CGFloat = 44
@@ -182,19 +183,12 @@ struct RightToolPanel: View {
             ToolHeader(title: tool == .changes ? "Changes" : "Pull Request") {
                 IconButton(systemName: "minus", help: "Hide", size: 13) { model.toggleTool(tool) }
             }
+            // Only shown while a session is selected (`showsSessionTools`).
             if let session = model.selectedSession {
                 switch tool {
                 case .changes: ChangesTool(session: session)
                 case .pullRequest: SessionPullRequestTool(session: session)
                 }
-            } else {
-                Text(model.selectedOverview == nil ? "No session selected." : "Select a session's tab to see its \(tool == .changes ? "changes" : "pull requests").")
-                    .font(DS.font(12.5))
-                    .foregroundStyle(DS.dim)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                Spacer()
             }
         }
         .frame(width: ToolRail.rightPanelWidth)

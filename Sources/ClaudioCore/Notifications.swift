@@ -8,6 +8,8 @@ public struct NotificationSettings: Codable, Equatable, Sendable {
     public var finished = true
     /// A background agent exited while it was working.
     public var stoppedUnexpectedly = false
+    /// A plan limit (session or weekly) that was reached has reset.
+    public var usageReset = true
     public var sound = true
 
     public init() {}
@@ -17,20 +19,25 @@ public struct NotificationSettings: Codable, Equatable, Sendable {
         awaitingInput = try c.decodeIfPresent(Bool.self, forKey: .awaitingInput) ?? true
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished) ?? true
         stoppedUnexpectedly = try c.decodeIfPresent(Bool.self, forKey: .stoppedUnexpectedly) ?? false
+        usageReset = try c.decodeIfPresent(Bool.self, forKey: .usageReset) ?? true
         sound = try c.decodeIfPresent(Bool.self, forKey: .sound) ?? true
     }
 }
 
 public struct SessionNotification: Equatable, Sendable {
     public enum Kind: String, Sendable {
-        case awaitingInput, finished, stopped
+        case awaitingInput, finished, stopped, usageReset
     }
 
-    public var sessionID: UUID
+    /// The session it's about; nil for app-wide ones (a usage reset).
+    public var sessionID: UUID?
     public var kind: Kind
     public var title: String
     public var subtitle: String
     public var body: String
+    /// Notification Centre's id: a newer notification with the same one
+    /// replaces the last (one per session, one per usage window).
+    public var identifier: String
 
     public init(sessionID: UUID, kind: Kind, title: String, subtitle: String, body: String) {
         self.sessionID = sessionID
@@ -38,6 +45,23 @@ public struct SessionNotification: Equatable, Sendable {
         self.title = title
         self.subtitle = subtitle
         self.body = body
+        identifier = sessionID.uuidString
+    }
+
+    /// A plan limit that was reached has reset.
+    public init(usageReset window: UsageResetTracker.Window) {
+        sessionID = nil
+        kind = .usageReset
+        switch window {
+        case .session:
+            title = "Session limit reset"
+            body = "Your 5-hour usage limit has reset, so sessions run on your plan again."
+        case .week:
+            title = "Weekly limit reset"
+            body = "Your weekly usage limit has reset, so sessions run on your plan again."
+        }
+        subtitle = ""
+        identifier = "usage-reset-\(window.rawValue)"
     }
 }
 

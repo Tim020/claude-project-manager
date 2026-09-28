@@ -176,6 +176,24 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    func testArchiveCompletedInAProjectClosesTheirTabs() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let p = model.addProject(path: projectPath)
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let sessions = model.workspace.sessions(in: .unfiled(projectID: p))
+            let completed = try XCTUnwrap(sessions.first { $0.status == .completed })
+            model.moveSession(completed.id, to: .folder(f))
+            for session in sessions { model.select(session.id) }
+            model.archiveCompleted(inProject: p)
+            XCTAssertTrue(model.workspace.session(completed.id)!.isArchived)
+            XCTAssertFalse(model.workspace.isOpen(completed.id), "archived sessions leave the panes")
+            let rest = sessions.filter { $0.status != .completed }
+            XCTAssertFalse(rest.isEmpty)
+            XCTAssertTrue(rest.allSatisfy { model.workspace.isOpen($0.id) && !model.workspace.session($0.id)!.isArchived })
+        }
+    }
+
     // MARK: Terminal lifecycle
 
     func testCreateSessionQueuesTerminalLaunchWithPrompt() throws {
