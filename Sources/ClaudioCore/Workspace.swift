@@ -175,6 +175,11 @@ public struct Workspace: Codable, Equatable, Sendable {
         openTabIDs.removeAll { $0 == sessionID }
     }
 
+    /// Closes several tabs in one change.
+    public mutating func closeTabs(_ ids: Set<UUID>) {
+        openTabIDs.removeAll { ids.contains($0) }
+    }
+
     /// Closes the other tabs in a tab's pane.
     public mutating func closeOtherTabs(keeping sessionID: UUID) {
         let others = Set(panes.group(containing: sessionID)?.tabIDs ?? []).subtracting([sessionID])

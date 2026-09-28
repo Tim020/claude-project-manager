@@ -858,12 +858,14 @@ public final class AppModel {
     /// closes, `fallback` is selected instead.
     private func closeTabs(_ ids: [UUID], fallback: UUID?) {
         guard !ids.isEmpty else { return }
+        // Copy the ids before changing the workspace. Close All passes
+        // `openTabIDs` itself, and in release builds (Swift 6.3.3) closing
+        // tabs one by one shrank `ids` too, so every other tab stayed open.
+        let closing = Set(ids)
         let selected = selectedSessionID
-        for id in ids {
-            state.workspace.closeTab(id)
-            if state.workspace.session(id)?.agentID != nil { detach(id) }
-        }
-        if let selected, ids.contains(selected), let fallback { state.workspace.selectTab(fallback) }
+        state.workspace.closeTabs(closing)
+        for id in closing where state.workspace.session(id)?.agentID != nil { detach(id) }
+        if let selected, closing.contains(selected), let fallback { state.workspace.selectTab(fallback) }
         save()
     }
 
