@@ -22,8 +22,9 @@ final class ToolWindowsTests: XCTestCase {
     }
 }
 
-final class PullRequestPanelTests: XCTestCase {
-    func testListsSessionsPullRequestsMostUrgentFirst() async throws {
+/// The left rail's Pull Requests tool, using `PullRequestModelTests`' model.
+extension PullRequestModelTests {
+    func testPanelListsSessionsPullRequestsMostUrgentFirst() async throws {
         let failing = PullRequestFixtures.pr(1430, checks: "[\(PullRequestFixtures.failing)]")
         let runner = FakeGitHub()
         runner.open = "[\(PullRequestFixtures.pr(1427)),\(failing)]"
@@ -31,8 +32,7 @@ final class PullRequestPanelTests: XCTestCase {
         let old = "https://github.com/dreamteamprod/DigiScript/pull/900"
         runner.views[old] = PullRequestFixtures.pr(900, state: "CLOSED", updated: "2026-01-01T10:00:00Z")
         let links = [1427, 1422].map { "https://github.com/dreamteamprod/DigiScript/pull/\($0)" } + [old]
-        let helper = PullRequestModelTests()
-        let (model, project, session) = try await MainActor.run { try helper.makeModel(runner, sessionPRs: links) }
+        let (model, project, session) = try await MainActor.run { try makeModel(runner, sessionPRs: links) }
         await model.refreshPullRequests(project)
         await MainActor.run {
             let groups = model.pullRequestPanel()
