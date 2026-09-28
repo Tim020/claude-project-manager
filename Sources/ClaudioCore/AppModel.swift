@@ -204,6 +204,15 @@ public final class AppModel {
     public internal(set) var loadingPullRequests = Set<UUID>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
+    /// Each project's assistant notes, oldest first (see AppModel+Assistant).
+    public internal(set) var assistantNotes: [UUID: [ProjectNote]] = [:]
+    /// The capture box, while a note is being written.
+    public internal(set) var noteCapture: NoteCapture?
+    /// A confirmation shown at the foot of the window; the view clears it.
+    public internal(set) var toast: Toast?
+    @ObservationIgnored let assistantStore: AssistantStoring
+    /// Projects whose assistant file failed to load; never written to.
+    @ObservationIgnored var unreadableAssistantProjects = Set<UUID>()
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored let shell: String
     @ObservationIgnored let now: () -> Date
@@ -215,6 +224,7 @@ public final class AppModel {
         hookEventsURL: URL,
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
+        assistantStore: AssistantStoring = MemoryAssistantStore(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
@@ -231,6 +241,7 @@ public final class AppModel {
         self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
+        self.assistantStore = assistantStore
         self.gitExecutable = git
         self.locateClaude = locateClaude
         self.locateGitHubCLI = locateGitHubCLI
@@ -250,6 +261,7 @@ public final class AppModel {
         for session in state.workspace.sessions where session.status == .working {
             state.workspace.updateSession(session.id) { $0.status = .completed }
         }
+        loadAssistantData()
     }
 
     // MARK: - Derived state

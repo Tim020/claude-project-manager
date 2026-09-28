@@ -4,7 +4,7 @@ import ClaudioCore
 import SwiftUI
 
 // Design 8c, two rails (like PyCharm): the left rail's tools cover projects
-// (Sessions, Pull Requests, and the Shell at its foot), the right rail's
+// (Sessions, Pull Requests, the Assistant, and the Shell at its foot), the right rail's
 // cover the selected session (Changes, Pull Request). The side a tool is on
 // says what it covers. App-wide figures live in the status bar.
 
@@ -99,6 +99,8 @@ struct LeftRail: View {
                        isActive: showing == .sessions) { model.toggleTool(.sessions) }
             RailButton(systemName: "arrow.triangle.pull", help: help("Pull Requests", showing == .pullRequests, "⌘2"),
                        isActive: showing == .pullRequests) { model.toggleTool(.pullRequests) }
+            RailButton(systemName: "note.text", help: help("Assistant", showing == .assistant, "⌘3"),
+                       isActive: showing == .assistant) { model.toggleTool(.assistant) }
             Spacer(minLength: 0)
             // The Shell's tool window runs under the panes, as in PyCharm.
             let open = model.shellPanel.isOpen
@@ -137,6 +139,8 @@ struct LeftToolPanel: View {
                     ProjectPullRequestsTool()
                 }
                 .frame(width: width)
+            case .assistant:
+                AssistantTool(width: width)
             }
         }
         .frame(maxHeight: .infinity)

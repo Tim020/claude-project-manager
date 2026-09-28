@@ -69,6 +69,7 @@ struct ContentView: View {
             }
             StatusBar()
         }
+        .overlay(alignment: .bottom) { ToastOverlay() }
         .background(DS.window)
         .ignoresSafeArea(.container, edges: .top)
         .environment(\.presentNewSession, { group in

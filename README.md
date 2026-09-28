@@ -15,7 +15,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 ## Features
 
 - **Two rails** (design 8c, like PyCharm). Every control lives where its scope lives, and the side a tool is on tells you what it covers:
-  - The **left rail** holds project tools: **Sessions** (the sidebar tree, ⌘1) and **Pull Requests** (⌘2), with the **Shell** at its foot (⌃`; a badge counts hidden shells).
+  - The **left rail** holds project tools: **Sessions** (the sidebar tree, ⌘1), **Pull Requests** (⌘2) and the **Assistant** (⌘3), with the **Shell** at its foot (⌃`; a badge counts hidden shells).
   - The **right rail** holds tools for the selected session: **Changes** (⌥⌘F, with a badge counting its files) and **Pull Request** (⌥⌘P). Both follow the focused tab.
   - Click a rail's tool to open it, and click it again to hide that side. Each side remembers its tool, and Claudio reopens them as you left them.
   - The session header holds only the session: its folder and name, role, context, status and **⋯** (Rename, Role, Move to Folder, Stop or Resume, and Delete).
@@ -25,7 +25,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - Only sessions active in the last 2 weeks are shown by default; sessions that are working, awaiting input, open in a tab or selected always show. The end of the list says how many are hidden, with Show All. Change the window (a preset or any number of days, or Any time) from the filter button or Settings → General.
   - A terminal icon beside a session means it's also open in a terminal outside Claudio. Its worktree and pull requests are in the right rail's Pull Request tool. Hover any icon, status dot or age for details.
   - Sessions that aren't in a folder appear under **Unfiled**.
-- **Folders.** Create a folder with the folder-plus button or ⇧⌘N, then rename it in place (Return or a click elsewhere saves the name, Esc cancels). Double-click a folder to rename it later.
+- **Folders.** Create a folder with the folder-plus button or ⌥⌘N, then rename it in place (Return or a click elsewhere saves the name, Esc cancels). Double-click a folder to rename it later.
   - Drag sessions onto a folder to move them, or onto another session to reorder (it goes just above). Drop one on a project header to unfile it.
   - Drag a folder onto another folder (or one of its sessions) to put it just above, or onto a project header or Unfiled to move it, with its sessions, to the end of that project. Drag a project's header onto another project to take its place.
   - Click a folder, or Unfiled, to collapse or expand it.
@@ -36,6 +36,9 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
   - A pane closes when its last tab leaves. The focused pane (outlined, its tab underlined in teal) is the one the header, menus and new sessions use; click a pane to focus it.
   - Session → Split Right (`⌘\`) / Split Down (`⇧⌘\`), or Split Right / Split Down on a tab's right-click menu, move a tab into a new pane.
   - Close tabs with × or ⌘W; a closed tab's session keeps running. Right-click a tab for Close Other Tabs and Close Tabs to the Left / Right (within its pane), Close Completed Tabs and Close All Tabs.
+- **Project Assistant** (design 9a, being built in steps; see `design/Project Assistant Backend.md`). The left rail's Assistant tool (⌘3) follows the selected session's project.
+  - **Notes:** press ⇧⌘N anywhere (File → New Note) to open the capture box, linked to the session you're in. Save Note (⌘↩) saves it straight away; Esc cancels. Notes are listed newest first, each with its author (you, the assistant or a session), the session it came from or was linked to, and its age. Notes the assistant or a session wrote have Undo. Right-click a note to copy or delete it.
+  - Notes are kept per project in `~/Library/Application Support/Claudio/assistant/<project id>/`: `assistant.json`, and `audit.jsonl`, a log of every change.
 - **Shell** (design 7a). Your own login shell (`$SHELL -l`), separate from Claude, in a panel under all panes with its own tabs, like the terminal panel in VS Code or PyCharm. ⌃` (or the Shell button at the foot of the left rail) shows or hides it, and ⌃⇧` or + opens another shell. A new shell starts in the selected session's folder, or in its worktree when it has one. Each tab shows the folder's name and git branch. The panel stays open as you switch sessions, and hiding it keeps the shells running. Drag its top edge to resize it, or maximise it over the panes. Shells aren't sessions: they aren't saved, and they stay out of the sidebar and the status counts. Closing a shell (its ×, or ⌘W while it has the keyboard) ends it, and Claudio asks first if a command is still running. Typing `exit` closes its tab.
 - **Files Changed** (designs 4 and 8c). Two scopes, switched in the Changes tool:
   - **This Session:** files the session's own Edit and Write tool calls changed (including its subagents'). Each file is compared from its state when the session first touched it to what's on disk now, so it works outside git. Only files inside the session's folder, or its project's folder, are listed. Claude Code's own files (such as `~/.claude/plans`), scratch files in `/tmp` and other sessions' worktrees are left out.
