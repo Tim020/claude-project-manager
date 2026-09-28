@@ -298,7 +298,7 @@ struct FixTerminal: NSViewRepresentable {
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
         func processTerminated(source: TerminalView, exitCode: Int32?) {
-            let code = exitCode ?? -1
+            let code = exitCode.map(ProcessExitStatus.exitCode(fromWaitStatus:)) ?? -1
             DispatchQueue.main.async { self.onExit(code) }
         }
     }

@@ -15,6 +15,12 @@ extension AppModel {
     /// to have failed to start (a missing `$SHELL`, or rc files that fail).
     public static let shellStartupWindow: TimeInterval = 2
 
+    /// A shell that exits this soon has failed to start even with status 0.
+    /// No one presses ⌃D this fast, and SwiftTerm 1.20.0 reports 0 when it
+    /// can't read the status (`LocalProcess.processTerminated` starts from
+    /// `var n: Int32 = 0` and ignores what `waitpid(…, WNOHANG)` returns).
+    public static let shellInstantExitWindow: TimeInterval = 0.2
+
     /// Where a new shell would start, best first: the selected session's
     /// worktree (where Files Changed found its edits), then its folder; with
     /// a Pull Requests overview focused, its project's folder. Nothing here
@@ -117,11 +123,21 @@ extension AppModel {
         if shellCloseConfirmation?.shellID == shellID { shellCloseConfirmation = nil }
         let started = shellStartTimes.removeValue(forKey: shellID)
         guard let tab = shellPanel.tabs.first(where: { $0.id == shellID }) else { return }
-        // A quick ⌃D or `exit` (status 0) is just the user closing it.
-        if let started, let exitCode, exitCode != 0, now().timeIntervalSince(started) < Self.shellStartupWindow {
+        if let started, let exitCode {
             // Gone at once: most likely `$SHELL` can't run, or its rc files fail.
-            report("Couldn't start \(shell)"
-                + " (exit code \(exitCode)). Check that $SHELL names a shell that's installed, and that its startup files don't fail.")
+            // A quick ⌃D or `exit` (status 0) is just the user closing it.
+            let elapsed = now().timeIntervalSince(started)
+            let reason: String? = if exitCode != 0, elapsed < Self.shellStartupWindow {
+                "exit code \(exitCode)"
+            } else if elapsed < Self.shellInstantExitWindow {
+                "it exited as soon as it started"
+            } else {
+                nil
+            }
+            if let reason {
+                report("Couldn't start \(shell) (\(reason))."
+                    + " Check that $SHELL names a shell that's installed, and that its startup files don't fail.")
+            }
         }
         removeShell(tab, message: exitCode.map { "Shell exited (code \($0))" } ?? "Shell exited")
     }
