@@ -34,7 +34,7 @@ final class CommandDisplayTests: XCTestCase {
                                      baseEnvironment: ["HOME": "/Users/tim"])
         let session = Session(projectID: UUID(), name: "s", workingDirectory: "/code/app")
         let display = commands.dispatch(session: session, prompt: "Fix it", isolation: .worktree).displayCommand
-        XCTAssertEqual(display, "claude 'Fix it' --bg --settings <hooks>")
+        XCTAssertEqual(display, "claude --bg --settings <hooks> -- 'Fix it'")
         XCTAssertEqual(commands.list().displayCommand, "claude agents --json --all")
     }
 
@@ -104,7 +104,7 @@ final class AppModelActivityTests: XCTestCase {
         await model.lastTask?.value
         await MainActor.run {
             let entries = model.log.entries
-            let dispatch = entries.first { $0.kind == .command && $0.title.hasPrefix("claude 'Fix it' --bg") }
+            let dispatch = entries.first { $0.kind == .command && $0.title.hasPrefix("claude --bg") && $0.title.hasSuffix("-- 'Fix it'") }
             XCTAssertNotNil(dispatch)
             XCTAssertTrue(dispatch?.detail?.contains("exit 1") == true)
             XCTAssertTrue(dispatch?.detail?.contains("Workspace not trusted.") == true)
@@ -123,7 +123,7 @@ final class AppModelActivityTests: XCTestCase {
                                                                           prompt: "hi", model: nil, permissionMode: .standard)))
             _ = model.takePendingLaunch(id)
             model.terminalExited(id, exitCode: 2)
-            XCTAssertTrue(model.log.entries.contains { $0.kind == .terminal && $0.title.hasPrefix("Terminal started: claude hi --session-id") })
+            XCTAssertTrue(model.log.entries.contains { $0.kind == .terminal && $0.title.hasPrefix("Terminal started: claude --session-id") && $0.title.hasSuffix("-- hi") })
             XCTAssertTrue(model.log.entries.contains { $0.kind == .terminal && $0.title == "Terminal exited (code 2): x" })
         }
     }

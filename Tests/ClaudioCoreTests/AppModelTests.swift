@@ -194,7 +194,8 @@ final class AppModelTests: XCTestCase {
 
             let launch = try XCTUnwrap(model.takePendingLaunch(id))
             XCTAssertEqual(launch.executable, "/bin/zsh")
-            XCTAssertEqual(Array(launch.claudeArguments.prefix(3)), ["Fix the storage bug", "--session-id", session.claudeSessionID!])
+            XCTAssertEqual(Array(launch.claudeArguments.prefix(2)), ["--session-id", session.claudeSessionID!])
+            XCTAssertEqual(Array(launch.claudeArguments.suffix(2)), ["--", "Fix the storage bug"])
             XCTAssertTrue(launch.claudeArguments.contains { $0.contains(self.hookLog.path) })
             XCTAssertNil(model.takePendingLaunch(id), "a launch is handed out once")
         }
