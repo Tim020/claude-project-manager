@@ -81,11 +81,12 @@ final class TerminalLaunchTests: XCTestCase {
 
     func testNewSessionArguments() {
         let launch = make(session(mode: .acceptEdits, model: "claude-opus-5-5"), prompt: "Fix the bug")
-        XCTAssertEqual(Array(launch.claudeArguments.prefix(7)), [
-            "Fix the bug", "--session-id", "abc", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
+        XCTAssertEqual(Array(launch.claudeArguments.prefix(6)), [
+            "--session-id", "abc", "--model", "claude-opus-5-5", "--permission-mode", "acceptEdits",
         ])
-        XCTAssertEqual(launch.claudeArguments[7], "--settings")
-        XCTAssertEqual(launch.claudeArguments.count, 9)
+        XCTAssertEqual(launch.claudeArguments[6], "--settings")
+        XCTAssertEqual(Array(launch.claudeArguments.suffix(2)), ["--", "Fix the bug"])
+        XCTAssertEqual(launch.claudeArguments.count, 10)
     }
 
     func testResumeOmitsDefaultsAndPrompt() {
@@ -100,7 +101,8 @@ final class TerminalLaunchTests: XCTestCase {
         XCTAssertEqual(launch.executable, "/bin/zsh")
         XCTAssertEqual(Array(launch.arguments.prefix(2)), ["-l", "-c"])
         let command = launch.arguments[2]
-        XCTAssertTrue(command.hasPrefix("cd '/Users/tim/My Code/app' && exec '/Users/tim/.local/bin/claude' 'it'\\''s done?' "))
+        XCTAssertTrue(command.hasPrefix("cd '/Users/tim/My Code/app' && exec '/Users/tim/.local/bin/claude' '--session-id' "))
+        XCTAssertTrue(command.hasSuffix(" '--' 'it'\\''s done?'"))
         XCTAssertEqual(launch.workingDirectory, "/Users/tim/My Code/app")
     }
 
@@ -140,8 +142,8 @@ final class TerminalLaunchTests: XCTestCase {
 
         let lines = try String(contentsOf: dir.appendingPathComponent("out.txt"), encoding: .utf8).split(separator: "\n").map(String.init)
         XCTAssertTrue(lines[0].hasSuffix("it's here"))
-        XCTAssertEqual(lines[1], "say \"hi\"")
-        XCTAssertEqual(lines[2], "--session-id")
+        XCTAssertEqual(lines[1], "--session-id")
+        XCTAssertEqual(Array(lines.suffix(2)), ["--", "say \"hi\""])
     }
 }
 

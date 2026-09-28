@@ -78,7 +78,8 @@ final class AgentModelTests: XCTestCase {
         await model.lastTask?.value
         try await MainActor.run {
             let dispatch = try XCTUnwrap(runner.commands.first { $0.contains("--bg") })
-            XCTAssertEqual(Array(dispatch.prefix(2)), ["Fix it", "--bg"])
+            XCTAssertEqual(dispatch.first, "--bg")
+            XCTAssertEqual(Array(dispatch.suffix(2)), ["--", "Fix it"])
             XCTAssertFalse(dispatch.contains("--worktree"), "the agent enters its own worktree, so it can commit there")
             XCTAssertEqual(isolation(in: dispatch), "worktree")
             XCTAssertEqual(model.workspace.session(id)?.agentID, "abcd1234")
@@ -109,6 +110,39 @@ final class AgentModelTests: XCTestCase {
         }
         await model.lastTask?.value
         XCTAssertEqual(isolation(in: try XCTUnwrap(runner.commands.first { $0.contains("--bg") })), "none")
+    }
+
+    /// `claude '- [ ] …' --bg` failed with "error: unknown option '- [ ] …'".
+    func testPromptStartingWithADashIsNotReadAsAnOption() async throws {
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            model.createSession(request(p, prompt: "- [ ] Bug: the credits line goes away"))
+            return model
+        }
+        await model.lastTask?.value
+        let dispatch = try XCTUnwrap(runner.commands.first { $0.contains("--bg") })
+        XCTAssertEqual(dispatch.first, "--bg")
+        XCTAssertEqual(Array(dispatch.suffix(2)), ["--", "- [ ] Bug: the credits line goes away"])
+    }
+
+    func testPromptArgumentsEndOptionsBeforeThePrompt() {
+        XCTAssertEqual(TerminalLaunch.promptArguments("Fix it"), ["--", "Fix it"])
+        XCTAssertEqual(TerminalLaunch.promptArguments("  - item\n"), ["--", "- item"])
+        XCTAssertEqual(TerminalLaunch.promptArguments(" \n"), [])
+        XCTAssertEqual(TerminalLaunch.promptArguments(nil), [])
+    }
+
+    func testResumeAndDirectLaunchPutDashPromptsLast() {
+        let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/tmp/hooks.log",
+                                     baseEnvironment: ["HOME": "/Users/tim"])
+        let session = Session(projectID: UUID(), claudeSessionID: "abc", name: "s", workingDirectory: repo)
+        let resumed = commands.resume(session: session, prompt: "- next step", continuingAgent: true)
+        XCTAssertEqual(resumed.claudeArguments, ["--bg", "--resume", "abc", "--", "- next step"])
+        let direct = TerminalLaunch.make(session: session, claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh",
+                                         initialPrompt: "- next step", hookEventsPath: "/tmp/hooks.log", baseEnvironment: ["HOME": "/Users/tim"])
+        XCTAssertEqual(direct.claudeArguments.first, "--session-id")
+        XCTAssertEqual(Array(direct.claudeArguments.suffix(2)), ["--", "- next step"])
     }
 
     /// `worktree.bgIsolation` in a command's `--settings` JSON.
@@ -437,7 +471,7 @@ final class AgentModelTests: XCTestCase {
             let p = model.addProject(path: repo)
             let id = try XCTUnwrap(model.createSession(request(p)))
             XCTAssertNil(model.lastTask)
-            XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments.first, "Fix it")
+            XCTAssertEqual(model.takePendingLaunch(id).map { Array($0.claudeArguments.suffix(2)) }, ["--", "Fix it"])
         }
         XCTAssertTrue(runner.commands.isEmpty)
     }
@@ -592,7 +626,7 @@ final class AgentModelTests: XCTestCase {
         }
         await model.lastTask?.value
         await MainActor.run {
-            XCTAssertEqual(Array(runner.commands.last { $0.contains("--bg") }!.prefix(4)), ["Carry on", "--bg", "--resume", "83526b6d-2eed"])
+            XCTAssertEqual(runner.commands.last { $0.contains("--bg") }, ["--bg", "--resume", "83526b6d-2eed", "--", "Carry on"])
             XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "83526b6d"])
         }
     }
@@ -607,7 +641,9 @@ final class AgentModelTests: XCTestCase {
             let model = try makeModel()
             let id = model.workspace.sessions[0].id
             model.resume(id, message: "Carry on")
-            XCTAssertEqual(Array(model.takePendingLaunch(id)!.claudeArguments.prefix(3)), ["Carry on", "--resume", "abc"])
+            let launch = try XCTUnwrap(model.takePendingLaunch(id))
+            XCTAssertEqual(Array(launch.claudeArguments.prefix(2)), ["--resume", "abc"])
+            XCTAssertEqual(Array(launch.claudeArguments.suffix(2)), ["--", "Carry on"])
             XCTAssertEqual(model.workspace.session(id)?.status, .working)
         }
     }
@@ -621,6 +657,6 @@ final class AgentModelTests: XCTestCase {
         runner.dispatchOutput = "note: started a copy of that conversation as 2bd6a047.\nbackgrounded · 2bd6a047\n"
         await MainActor.run { model.resumeCopy(of: original) }
         await model.lastTask?.value
-        XCTAssertEqual(runner.commands.last { $0.contains("--bg") }?.first, "Try again")
+        XCTAssertEqual(runner.commands.last { $0.contains("--bg") }.map { Array($0.suffix(2)) }, ["--", "Try again"])
     }
 }

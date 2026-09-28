@@ -49,18 +49,23 @@ public struct TerminalLaunch: Equatable, Sendable {
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
-        var claudeArguments: [String] = []
-        if let prompt = initialPrompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty {
-            // The prompt goes first so variadic options can't swallow it.
-            claudeArguments.append(prompt)
-        }
-        claudeArguments += session.hasConversation ? ["--resume", claudeID] : ["--session-id", claudeID]
+        var claudeArguments: [String] = session.hasConversation ? ["--resume", claudeID] : ["--session-id", claudeID]
         if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
         if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
         claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
+        claudeArguments += promptArguments(initialPrompt)
         return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: session.workingDirectory,
                      shell: shell, loginShell: true, baseEnvironment: baseEnvironment,
                      extraEnvironment: ["CLAUDIO_SESSION_ID": session.id.uuidString])
+    }
+
+    /// A prompt as `claude`'s last arguments: `-- <prompt>`, or none when it's
+    /// blank. They go after every option. Without `--`, a prompt starting with
+    /// `-` ("- [ ] Bug…") is read as an unknown option, however it's quoted, and
+    /// `--` also stops variadic options swallowing it.
+    public static func promptArguments(_ prompt: String?) -> [String] {
+        guard let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else { return [] }
+        return ["--", prompt]
     }
 
     /// `<shell> -l -c "cd <dir> && exec claude <args>"` with a terminal-friendly environment.
