@@ -107,6 +107,14 @@ struct ContentView: View {
         } message: {
             Text("This session is open in a terminal. Resuming it here starts a separate copy of the conversation; to keep working on the original, switch to that terminal.")
         }
+        .alert(shellCloseTitle, isPresented: shellCloseBinding) {
+            Button("Close Shell", role: .destructive) {
+                if let shell = model.shellCloseConfirmation?.shellID { model.closeShell(shell) }
+            }
+            Button("Cancel", role: .cancel) { model.shellCloseConfirmation = nil }
+        } message: {
+            Text("Closing the shell ends it, and whatever is running in it.")
+        }
         .alert("Claudio", isPresented: errorBinding) {
             Button("OK", role: .cancel) { model.errorMessage = nil }
         } message: {
@@ -197,6 +205,14 @@ struct ContentView: View {
 
     private var copyBinding: Binding<Bool> {
         Binding(get: { model.copyConfirmation != nil }, set: { if !$0 { model.copyConfirmation = nil } })
+    }
+
+    private var shellCloseTitle: String {
+        "“\(model.shellCloseConfirmation?.command ?? "A command")” is still running"
+    }
+
+    private var shellCloseBinding: Binding<Bool> {
+        Binding(get: { model.shellCloseConfirmation != nil }, set: { if !$0 { model.shellCloseConfirmation = nil } })
     }
 
     private var errorBinding: Binding<Bool> {

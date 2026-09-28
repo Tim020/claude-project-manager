@@ -1,0 +1,260 @@
+#if os(macOS)
+import AppKit
+import ClaudioCore
+import SwiftUI
+
+/// The Shell panel (design 7a): the user's own login shells, in one tool
+/// window under all panes. It stays as it is while you switch sessions; ⌃`
+/// shows or hides it. Hidden, it's a thin bar that brings it back.
+struct ShellPanelSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if model.shellPanel.isOpen {
+            ShellPanelView()
+        } else {
+            ShellPanelBar()
+        }
+    }
+}
+
+/// The panel while it's hidden.
+private struct ShellPanelBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let count = model.shellPanel.tabs.count
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 12))
+            Text("Shell")
+                .font(DS.font(12, .bold))
+                .foregroundStyle(DS.text)
+            if count > 0 {
+                Text("· \(count) \(count == 1 ? "shell" : "shells")")
+            }
+            Spacer(minLength: 0)
+            Text("⌃`")
+                .foregroundStyle(DS.dim)
+            Image(systemName: "chevron.up")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .font(DS.font(12))
+        .foregroundStyle(DS.muted)
+        .padding(.horizontal, 20)
+        .frame(height: 28)
+        .background(DS.sidebar)
+        .overlay(alignment: .top) { HorizontalRule() }
+        .contentShape(Rectangle())
+        .onTapGesture { model.toggleShellPanel() }
+        .help("Show Shell (⌃`)")
+    }
+}
+
+/// The open panel: its tab bar, then the selected shell.
+private struct ShellPanelView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(TerminalRegistryBox.self) private var terminals
+    /// Height while the top edge is being dragged.
+    @State private var draggingHeight: Double?
+    @State private var dragStartHeight: Double?
+
+    var body: some View {
+        let panel = model.shellPanel
+        VStack(spacing: 0) {
+            ShellTabBar()
+            if let tab = panel.selectedTab {
+                ShellTerminalPane(shellID: tab.id, registry: terminals.registry, isFocused: model.shellHasFocus)
+                    .id(tab.id)
+                    .background(DS.window)
+            } else {
+                DS.window
+            }
+        }
+        .frame(height: panel.isMaximised ? nil : draggingHeight ?? model.settings.shellPanelHeight)
+        .frame(maxHeight: panel.isMaximised ? .infinity : nil)
+        .overlay(alignment: .top) {
+            HorizontalRule()
+                .overlay { if !panel.isMaximised { resizeHandle } }
+        }
+    }
+
+    /// The panel's top edge: drag it to change the panel's height.
+    private var resizeHandle: some View {
+        Color.clear
+            .frame(height: 8)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let start = dragStartHeight ?? model.settings.shellPanelHeight
+                        dragStartHeight = start
+                        draggingHeight = AppSettings.clampShellPanelHeight(start - value.translation.height)
+                    }
+                    .onEnded { _ in
+                        if let height = draggingHeight { model.setShellPanelHeight(height) }
+                        draggingHeight = nil
+                        dragStartHeight = nil
+                    })
+    }
+}
+
+private struct ShellTabBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let panel = model.shellPanel
+        HStack(spacing: 6) {
+            Text("Shell")
+                .font(DS.font(12.5, .bold))
+                .foregroundStyle(DS.text)
+                .padding(.trailing, 8)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(panel.tabs) { tab in
+                        ShellTabItem(tab: tab, isSelected: tab.id == panel.selectedID)
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Button { model.newShell() } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DS.muted)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("New Shell in the selected session's folder (its worktree, when it has one)")
+            Spacer(minLength: 8)
+            Text("New shells open in \(ShellTab(workingDirectory: model.shellStartDirectory).name)")
+                .font(DS.font(11.5))
+                .foregroundStyle(DS.dim)
+                .lineLimit(1)
+                .help(model.shellStartDirectory)
+            barButton(panel.isMaximised ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                      help: panel.isMaximised ? "Restore" : "Maximise") { model.toggleShellMaximised() }
+                .padding(.leading, 8)
+            barButton("minus", help: "Hide Shell (⌃`)") { model.toggleShellPanel() }
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 12)
+        .frame(height: 36)
+        .background(DS.sidebar)
+        .overlay(alignment: .bottom) { HorizontalRule() }
+    }
+
+    private func barButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.muted)
+                .padding(.vertical, 3)
+                .padding(.horizontal, 5)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+private struct ShellTabItem: View {
+    @Environment(AppModel.self) private var model
+    let tab: ShellTab
+    let isSelected: Bool
+    @State private var hoveringClose = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "apple.terminal")
+                .font(.system(size: 11))
+                .foregroundStyle(DS.dim)
+            Text(tab.name)
+                .lineLimit(1)
+            if let branch = tab.branch {
+                Text(branch)
+                    .font(DS.font(11))
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
+            Button { model.requestCloseShell(tab.id) } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(hoveringClose ? DS.text : DS.dim)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(hoveringClose ? Color.white.opacity(0.08) : .clear))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hoveringClose = $0 }
+            .help("Close Shell")
+        }
+        .font(DS.font(12.5))
+        .foregroundStyle(isSelected ? DS.text : DS.muted)
+        .padding(.vertical, 3)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? DS.border : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectShell(tab.id) }
+        .help(tab.workingDirectory)
+        .contextMenu {
+            Button("Close Shell") { model.requestCloseShell(tab.id) }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(tab.workingDirectory, forType: .string)
+            }
+        }
+    }
+}
+
+/// Hosts a shell's terminal. The panel shows one shell at a time, so the
+/// container just swaps in the selected one; the others keep running.
+private struct ShellTerminalPane: NSViewRepresentable {
+    let shellID: UUID
+    let registry: TerminalRegistry
+    let isFocused: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(hex: 0x222222).cgColor
+        return container
+    }
+
+    func updateNSView(_ container: NSView, context: Context) {
+        guard let terminal = registry.shellTerminal(for: shellID) else { return }
+        if terminal.superview !== container {
+            terminal.removeFromSuperview()
+            container.subviews.forEach { $0.removeFromSuperview() }
+            TerminalPane.pin(terminal, in: container)
+        }
+        if isFocused {
+            DispatchQueue.main.async { registry.focusShell(shellID) }
+        }
+    }
+}
+
+/// The header button that shows or hides the Shell panel.
+struct ShellToggleButton: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let open = model.shellPanel.isOpen
+        Button { model.toggleShellPanel() } label: {
+            Image(systemName: "terminal")
+                .font(.system(size: 13))
+                .foregroundStyle(DS.text)
+                .frame(width: 28, height: 26)
+                .background(RoundedRectangle(cornerRadius: 4).fill(open ? DS.selection : DS.border))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Hide Shell (⌃`)" : "Show Shell (⌃`)")
+    }
+}
+#endif

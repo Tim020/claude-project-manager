@@ -37,6 +37,8 @@ public struct MenuFlags: Equatable, Sendable {
     public var canSplitSelected = false
     /// Claude Code can run (installed, signed in), or hasn't been checked yet.
     public var canRunSessions = true
+    /// The Shell panel is showing (for Show/Hide Shell).
+    public var isShellOpen = false
 
     public init() {}
 }
@@ -51,6 +53,11 @@ public struct Breadcrumb: Equatable, Sendable {
 @MainActor
 public protocol TerminalControlling: AnyObject {
     func terminate(_ sessionID: UUID)
+    /// Ends one of the user's shells (see `AppModel+Shells`).
+    func terminateShell(_ shellID: UUID)
+    /// The command running in the foreground of a shell ("npm"), or nil
+    /// when it's at its prompt.
+    func runningCommand(inShell shellID: UUID) -> String?
 }
 
 /// App state and every user action. The SwiftUI layer is a thin view over this.
@@ -97,6 +104,21 @@ public final class AppModel {
     /// A short notice shown over a session's terminal (e.g. why a key was
     /// ignored), cleared by `clearTerminalHint`.
     public private(set) var terminalHints: [UUID: String] = [:]
+
+    /// The user's own shells, under the panes (see AppModel+Shells).
+    public internal(set) var shellPanel = ShellPanel()
+    /// A shell has the keyboard, so session terminals don't take it back.
+    public internal(set) var shellHasFocus = false
+    /// A shell the user asked to close while a command runs in it; the UI
+    /// asks first (`closeShell(_:)` to confirm).
+    public var shellCloseConfirmation: ShellCloseConfirmation?
+    @ObservationIgnored var pendingShellLaunches: [UUID: TerminalLaunch] = [:]
+    /// Filesystem lookups for shells, replaceable in tests.
+    @ObservationIgnored var directoryExists: (String) -> Bool = { path in
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+    @ObservationIgnored var readBranch: (String) -> String? = { GitHead.branch(atDirectory: $0) }
 
     /// Shows only sessions with this status in the sidebar (nil: all).
     public var statusFilter: SessionStatus?
@@ -161,7 +183,7 @@ public final class AppModel {
     @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
     public static let pullRequestCacheInterval: TimeInterval = 300
     @ObservationIgnored private let isGitRepository: (String) -> Bool
-    @ObservationIgnored private let shell: String
+    @ObservationIgnored let shell: String
     @ObservationIgnored let now: () -> Date
     @ObservationIgnored public let home: String
 
@@ -690,6 +712,8 @@ public final class AppModel {
     /// in the focused pane if it isn't open.
     public func select(_ sessionID: UUID?) {
         guard let sessionID, state.workspace.session(sessionID) != nil else { return }
+        // Choosing a session gives its terminal the keyboard back from a shell.
+        setShellFocus(false)
         if !running.contains(sessionID) && isAgentAlive(sessionID) {
             // Reopening a live agent reattaches rather than showing the old terminal.
             exitCodes[sessionID] = nil
@@ -1500,6 +1524,7 @@ public final class AppModel {
             flags.canStopSelected = running.contains(id) || isAgentAlive(id)
             flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         }
+        flags.isShellOpen = shellPanel.isOpen
         if flags != menuFlags { menuFlags = flags }
     }
 

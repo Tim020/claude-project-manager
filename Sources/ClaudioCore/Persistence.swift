@@ -22,6 +22,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var activityWindowDays = AppSettings.defaultActivityWindowDays
     /// The Files Changed inspector beside the terminal is open.
     public var showFilesInspector = false
+    /// Height of the Shell panel under the panes, in points.
+    public var shellPanelHeight = AppSettings.defaultShellPanelHeight
     public static let defaultActivityWindowDays = 14
 
     /// Quick choices for the window, in days (0 is any time).
@@ -60,6 +62,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
         min(max(width, sidebarWidthRange.lowerBound), sidebarWidthRange.upperBound)
     }
 
+    public static let defaultShellPanelHeight: Double = 250
+    public static let shellPanelHeightRange: ClosedRange<Double> = 120...900
+
+    public static func clampShellPanelHeight(_ height: Double) -> Double {
+        min(max(height, shellPanelHeightRange.lowerBound), shellPanelHeightRange.upperBound)
+    }
+
     public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .auto,
                 useBackgroundAgents: Bool = true, sidebarWidth: Double = 290,
                 roles: [String] = SessionRole.defaultNames) {
@@ -83,6 +92,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
         defaultBackgroundPermissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .defaultBackgroundPermissionMode) ?? .auto
         showFilesInspector = try c.decodeIfPresent(Bool.self, forKey: .showFilesInspector) ?? false
+        shellPanelHeight = AppSettings.clampShellPanelHeight(
+            try c.decodeIfPresent(Double.self, forKey: .shellPanelHeight) ?? AppSettings.defaultShellPanelHeight)
         activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)
     }
 }

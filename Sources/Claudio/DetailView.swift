@@ -13,10 +13,14 @@ struct DetailView: View {
     @Environment(\.addProject) private var addProject
 
     var body: some View {
-        Group {
+        // A maximised Shell panel takes the panes' place. They leave the view
+        // tree rather than shrinking, so no terminal is resized to nothing.
+        let showsPanes = !(model.shellPanel.isOpen && model.shellPanel.isMaximised)
+        VStack(spacing: 0) {
             if let session = model.selectedSession, let crumb = model.breadcrumb {
-                VStack(spacing: 0) {
-                    DetailHeader(session: session, breadcrumb: crumb)
+                DetailHeader(session: session, breadcrumb: crumb)
+                    .task(id: session.id) { await model.refreshChanges(for: session.id) }
+                if showsPanes {
                     HStack(spacing: 0) {
                         PaneArea()
                         // Files Changed inspector (design 4a), beside the terminal.
@@ -26,10 +30,12 @@ struct DetailView: View {
                     }
                     .frame(maxHeight: .infinity)
                 }
-                .task(id: session.id) { await model.refreshChanges(for: session.id) }
-            } else {
+            } else if showsPanes {
                 emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // The user's own shells (design 7a), under all panes.
+            ShellPanelSection()
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.window)
@@ -107,6 +113,7 @@ private struct DetailHeader: View {
             StatusPill(status: session.status)
                 .help(SessionIndicators.statusHelp(session))
             FilesButton(session: session)
+            ShellToggleButton()
             pullRequestButton
             Menu {
                 SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
@@ -457,7 +464,9 @@ struct SessionPane: View {
                 // Changes view (design 4b); the terminal keeps running meanwhile.
                 ChangesView(session: session)
             } else if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
-                TerminalPane(sessionID: session.id, registry: terminals.registry, isFocused: isFocused && running)
+                // A shell with the keyboard keeps it (see `AppModel.shellHasFocus`).
+                TerminalPane(sessionID: session.id, registry: terminals.registry,
+                             isFocused: isFocused && running && !model.shellHasFocus)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)
                     .overlay(alignment: .top) {

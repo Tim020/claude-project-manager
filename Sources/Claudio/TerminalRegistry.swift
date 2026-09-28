@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import ClaudioCore
+import Darwin
 import SwiftTerm
 import SwiftUI
 
@@ -13,9 +14,31 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     private var views: [UUID: LocalProcessTerminalView] = [:]
     /// Containers showing each session, oldest first (see `TerminalContainer`).
     private var containers: [UUID: [WeakContainer]] = [:]
+    /// The user's own shells (the Shell panel), by shell id.
+    private var shells: [UUID: ShellTerminalView] = [:]
+
+    private var clickMonitor: Any?
 
     init(model: AppModel) {
         self.model = model
+        super.init()
+        // SwiftTerm doesn't let subclasses see focus changes, so a click
+        // decides whether a shell or a session's terminal has the keyboard.
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            self?.noteClick(event)
+            return event
+        }
+    }
+
+    private func noteClick(_ event: NSEvent) {
+        // hitTest takes a point in the superview's coordinates, which for the
+        // content view are the window's.
+        guard let hit = event.window?.contentView?.hitTest(event.locationInWindow) else { return }
+        if shells.values.contains(where: { hit.isDescendant(of: $0) }) {
+            model.setShellFocus(true)
+        } else if views.values.contains(where: { hit.isDescendant(of: $0) }) {
+            model.setShellFocus(false)
+        }
     }
 
     /// The terminal for a session, starting its queued launch if there is one.
@@ -90,6 +113,47 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         focus(sessionID)
     }
 
+    // MARK: Shells
+
+    /// A shell's terminal, starting its queued launch if there is one.
+    func shellTerminal(for shellID: UUID) -> ShellTerminalView? {
+        if let launch = model.takePendingShellLaunch(shellID) {
+            let view = ShellTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 250))
+            style(view)
+            view.processDelegate = self
+            shells[shellID] = view
+            view.startProcess(executable: launch.executable,
+                              args: launch.arguments,
+                              environment: launch.environmentList,
+                              execName: nil,
+                              currentDirectory: launch.workingDirectory)
+        }
+        return shells[shellID]
+    }
+
+    func terminateShell(_ shellID: UUID) {
+        guard let view = shells.removeValue(forKey: shellID) else { return }
+        view.processDelegate = nil
+        view.terminate()
+        view.removeFromSuperview()
+    }
+
+    /// The shell's foreground process, when it isn't the shell itself: the
+    /// terminal's foreground process group differs from the shell's pid.
+    func runningCommand(inShell shellID: UUID) -> String? {
+        guard let process = shells[shellID]?.process, process.running else { return nil }
+        let group = tcgetpgrp(process.childfd)
+        guard group > 0, group != process.shellPid else { return nil }
+        var name = [CChar](repeating: 0, count: 256)
+        let length = proc_name(group, &name, UInt32(name.count))
+        return length > 0 ? String(cString: name) : "a command"
+    }
+
+    func focusShell(_ shellID: UUID) {
+        guard let view = shells[shellID], let window = view.window, window.firstResponder !== view else { return }
+        window.makeFirstResponder(view)
+    }
+
     private func makeView() -> LocalProcessTerminalView {
         let view = SessionTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
         view.onBlockedLeave = { [weak self] in
@@ -104,11 +168,15 @@ final class TerminalRegistry: NSObject, TerminalControlling {
             self.returnToSession(id)
         }
         view.processDelegate = self
+        style(view)
+        return view
+    }
+
+    private func style(_ view: LocalProcessTerminalView) {
         view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         view.nativeBackgroundColor = NSColor(hex: 0x222222)
         view.nativeForegroundColor = NSColor(hex: 0xF1F3F5)
         view.caretColor = NSColor(hex: 0x00BC8C)
-        return view
     }
 
     fileprivate func sessionID(for source: AnyObject) -> UUID? {
@@ -116,6 +184,11 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     }
 
     fileprivate func processExited(_ source: AnyObject, exitCode: Int32?) {
+        if let shellID = shells.first(where: { $0.value === source })?.key {
+            shells[shellID] = nil
+            model.shellExited(shellID, exitCode: exitCode)
+            return
+        }
         guard let id = sessionID(for: source) else { return }
         model.terminalExited(id, exitCode: exitCode)
     }
@@ -195,6 +268,10 @@ final class SessionTerminalView: LocalProcessTerminalView {
         return (max(0, rows - count)..<rows).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
     }
 }
+
+/// One of the user's shells: a plain terminal, without the session guards
+/// (Shift+Enter, ← and the exit keys behave as in any terminal).
+final class ShellTerminalView: LocalProcessTerminalView {}
 
 extension TerminalRegistry: LocalProcessTerminalViewDelegate {
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
