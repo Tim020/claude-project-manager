@@ -700,10 +700,11 @@ struct FolderPullRequestsView: View {
         .task(id: group) {
             if let projectID { await model.refreshPullRequests(projectID) }
         }
-        // Again whenever the folder's pull requests change: they may not have
-        // loaded yet when the tab opens (a refresh already under way).
+        // Review threads, kept fresh while shown. Restarts when the folder's
+        // pull requests change: they may not have loaded yet when the tab
+        // opens (a refresh already under way).
         .task(id: pullRequests.map(\.key)) {
-            await model.loadReviewThreads(for: pullRequests)
+            await model.watchReviewThreads(for: pullRequests)
         }
     }
 
@@ -1119,7 +1120,7 @@ private struct SessionPullRequestPopover: View {
         .background(DS.input)
         .task { await model.refreshPullRequests(session.projectID) }
         .task(id: model.pullRequests(ofSession: session.id).map(\.key)) {
-            await model.loadReviewThreads(for: model.pullRequests(ofSession: session.id))
+            await model.watchReviewThreads(for: model.pullRequests(ofSession: session.id))
         }
     }
 }

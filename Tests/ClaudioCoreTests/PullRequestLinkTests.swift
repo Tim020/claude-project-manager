@@ -22,6 +22,14 @@ final class PullRequestActivityTests: XCTestCase {
         XCTAssertEqual(bash("git commit -m \"Fixes it (see gh pr merge 3)\""), [])
         XCTAssertEqual(bash("GH_PAGER=cat env gh pr comment 5 --body hi"), [PullRequestLink("#5", .reviewed)])
         XCTAssertEqual(bash("/opt/homebrew/bin/gh pr review 6 --approve"), [PullRequestLink("#6", .reviewed)])
+        XCTAssertEqual(bash("env -u GH_TOKEN gh pr review 5 --approve"), [PullRequestLink("#5", .reviewed)])
+        XCTAssertEqual(bash("sudo -u x gh pr comment 7 --body hi"), [PullRequestLink("#7", .reviewed)])
+        XCTAssertEqual(bash("time -p gh pr create --fill", "https://github.com/o/r/pull/8\n"),
+                       [PullRequestLink("https://github.com/o/r/pull/8", .opened)])
+        XCTAssertEqual(bash("timeout 60 gh pr create --fill", "https://github.com/o/r/pull/9\n"),
+                       [PullRequestLink("https://github.com/o/r/pull/9", .opened)])
+        XCTAssertEqual(bash("timeout -s KILL 60 gh pr merge 10 --squash"), [PullRequestLink("#10", .reviewed)])
+        XCTAssertEqual(bash("env FOO=1 time echo gh pr close 4"), [], "echo is the command")
     }
 
     func testCreateTakesOnlyTheNewPullRequest() {

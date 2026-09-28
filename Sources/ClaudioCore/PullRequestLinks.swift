@@ -183,17 +183,46 @@ public enum PullRequestActivity {
 
     /// Each `gh …` in a command line, as words after `gh` (roughly
     /// shell-split: quotes grouped, split at newlines, `&&`, `||`, `;`, `|`).
-    /// `gh` counts only as the command, after any `VAR=value` and `env`,
-    /// `command`, `time` or `sudo`: not `echo gh pr close 4`.
+    /// `gh` counts only as the command: not `echo gh pr close 4`.
     static func ghInvocations(in command: String) -> [[String]] {
-        let wrappers: Set<String> = ["env", "command", "time", "sudo", "exec", "nohup"]
-        var result: [[String]] = []
-        for segment in ShellWords.segments(command) {
-            guard let index = segment.firstIndex(where: { !$0.contains("=") && !wrappers.contains($0) }),
-                  segment[index] == "gh" || segment[index].hasSuffix("/gh") else { continue }
-            result.append(Array(segment[(index + 1)...]))
+        ShellWords.segments(command).compactMap { segment in
+            guard let index = commandIndex(in: segment), segment[index] == "gh" || segment[index].hasSuffix("/gh") else { return nil }
+            return Array(segment[(index + 1)...])
         }
-        return result
+    }
+
+    /// Commands that run another command, and their options that take a
+    /// value (`env -u NAME`, `sudo -u user`, `timeout -s KILL`).
+    static let wrappers: [String: Set<String>] = [
+        "env": ["-u", "--unset", "-C", "--chdir", "-S", "--split-string"],
+        "sudo": ["-u", "-g", "-C", "-h", "-p", "-U", "-r", "-t", "-T"],
+        "time": ["-f", "-o"],
+        "timeout": ["-s", "--signal", "-k", "--kill-after"],
+        "xargs": ["-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"],
+        "nice": ["-n"],
+        "command": [], "exec": ["-a"], "nohup": [], "caffeinate": [],
+    ]
+
+    /// Where the command word is in a segment: past `VAR=value`s and
+    /// wrappers with their options (and `timeout`'s duration).
+    static func commandIndex(in segment: [String]) -> Int? {
+        var index = 0
+        while index < segment.count {
+            let word = segment[index]
+            if word.contains("="), !word.hasPrefix("-") {
+                index += 1
+                continue
+            }
+            guard let valued = wrappers[word] else { return index }
+            index += 1
+            while index < segment.count, segment[index].hasPrefix("-") {
+                let option = segment[index]
+                index += valued.contains(option) ? 2 : 1
+            }
+            // `timeout 60 gh …`: its duration comes first.
+            if word == "timeout", index < segment.count { index += 1 }
+        }
+        return nil
     }
 }
 

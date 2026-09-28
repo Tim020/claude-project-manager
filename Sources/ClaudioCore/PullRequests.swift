@@ -259,6 +259,14 @@ extension GitHubCLI {
         }
     }
 
+    /// Whether `gh repo view`'s error says there's no GitHub repository
+    /// here (as opposed to a network or auth failure worth retrying).
+    public static func isNotGitHubRepository(_ errorOutput: String) -> Bool {
+        let text = errorOutput.lowercased()
+        return ["none of the git remotes configured for this repository point to a known github host",
+                "no git remotes found", "not a git repository"].contains { text.contains($0) }
+    }
+
     public static func parseRepository(_ output: String) -> Repository? {
         guard let value = json(output), let name = value["nameWithOwner"]?.stringValue, !name.isEmpty else { return nil }
         return Repository(nameWithOwner: name, url: value["url"]?.stringValue ?? "https://github.com/\(name)")

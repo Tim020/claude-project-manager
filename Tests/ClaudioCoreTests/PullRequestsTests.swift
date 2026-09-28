@@ -310,6 +310,9 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     private let lock = NSLock()
     var repo = #"{"nameWithOwner":"dreamteamprod/DigiScript","url":"https://github.com/dreamteamprod/DigiScript"}"#
     var repoExit: Int32 = 0
+    var repoError = "no git remotes found\n"
+    /// How long `gh api graphql` takes, to test overlapping loads.
+    var threadsDelay: UInt64 = 0
     var open = "[]"
     var recent = "[]"
     var views: [String: String] = [:]
@@ -335,7 +338,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: 0, output: "✓ Logged in to github.com account Tim020 (keyring)\n", errorOutput: "")
         }
         if args.starts(with: ["repo", "view"]) {
-            return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : "no git remotes found\n")
+            return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : repoError)
         }
         if args.starts(with: ["pr", "list"]) {
             let exit = args.contains("open") ? openExit : recentExit
@@ -346,6 +349,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: 0, output: output, errorOutput: "")
         }
         if args.starts(with: ["api", "graphql"]) {
+            if threadsDelay > 0 { try? await Task.sleep(nanoseconds: threadsDelay) }
             return CommandResult(exitCode: threadsExit, output: threadsExit == 0 ? threads : "", errorOutput: threadsExit == 0 ? "" : "timeout")
         }
         return CommandResult(exitCode: 1, output: "", errorOutput: "not found")

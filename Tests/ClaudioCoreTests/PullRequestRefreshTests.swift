@@ -102,16 +102,29 @@ final class PullRequestRefreshTests: XCTestCase {
         XCTAssertEqual(runner.calls.filter { $0.starts(with: ["repo", "view"]) }.count, 2, "the refresh button still tries")
     }
 
-    func testAGitHubRemoteMeansItIsOneEvenIfGhFails() async throws {
+    /// Only gh saying there's no GitHub repository stops polling; a failure
+    /// like being offline (or a GitHub Enterprise host) is retried.
+    func testOtherRepositoryLookupFailuresAreRetried() async throws {
         let runner = FakeGitHub()
         runner.repoExit = 1
-        runner.remote = "git@github.com:dreamteamprod/DigiScript.git\n"
+        runner.repoError = "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com\n"
         let (model, project, _) = try await MainActor.run { try makeModel(runner) }
         await model.refreshPullRequests(project)
-        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.isNotGitHub, false) }
+        await MainActor.run {
+            XCTAssertEqual(model.pullRequests(forProject: project)?.isNotGitHub, false)
+            XCTAssertEqual(model.pullRequests(forProject: project)?.error, "error connecting to api.github.com")
+        }
+        runner.repoExit = 0
+        runner.open = "[\(PullRequestFixtures.pr(1427))]"
+        await later()
+        await model.refreshPullRequests(project)
+        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.items.map(\.number), [1427]) }
+        XCTAssertTrue(GitHubCLI.isNotGitHubRepository("none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`"))
+        XCTAssertTrue(GitHubCLI.isNotGitHubRepository("failed to run git: fatal: not a git repository (or any of the parent directories): .git"))
+        XCTAssertFalse(GitHubCLI.isNotGitHubRepository("HTTP 502: Bad Gateway"))
     }
 
-    func testReviewThreadFailuresAreRetriedAndReloadWithTheRest() async throws {
+    func testReviewThreadFailuresAreRetried() async throws {
         let runner = FakeGitHub()
         runner.open = "[\(PullRequestFixtures.pr(1427))]"
         runner.threadsExit = 1
@@ -129,11 +142,42 @@ final class PullRequestRefreshTests: XCTestCase {
             XCTAssertEqual(model.reviewThreads[pr.key], [], "retried at once: a failure isn't stamped as loaded")
             XCTAssertFalse(model.reviewThreadFailures.contains(pr.key))
         }
-        // The poll reloads threads already shown.
-        let calls = runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count
+    }
+
+    /// Threads reload while a view shows them, and with the refresh button,
+    /// not for every pull request ever shown.
+    func testOnlyShownReviewThreadsReload() async throws {
+        let runner = FakeGitHub()
+        runner.open = "[\(PullRequestFixtures.pr(1427))]"
+        let (model, project, _) = try await MainActor.run { try makeModel(runner) }
+        await model.refreshPullRequests(project)
+        let pr = try await MainActor.run { try XCTUnwrap(model.pullRequests(forProject: project)?.items.first) }
+        func graphqlCalls() -> Int { runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count }
+
+        let watching = Task { await model.watchReviewThreads(for: [pr]) }
+        while graphqlCalls() == 0 { await Task.yield() }
         await later()
         await model.refreshAllPullRequests()
-        XCTAssertEqual(runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count, calls + 1)
+        XCTAssertEqual(graphqlCalls(), 1, "the poll leaves threads to the views")
+        await model.refreshPullRequests(project, force: true)
+        XCTAssertEqual(graphqlCalls(), 2, "the refresh button reloads the shown ones")
+        await MainActor.run { XCTAssertFalse(model.loadingPullRequests.contains(project)) }
+
+        watching.cancel()
+        await watching.value
+        await model.refreshPullRequests(project, force: true)
+        XCTAssertEqual(graphqlCalls(), 2, "no longer shown")
+    }
+
+    func testOverlappingLoadsShareOneCall() async throws {
+        let runner = FakeGitHub()
+        runner.threadsDelay = 50_000_000
+        let (model, _, _) = try await MainActor.run { try makeModel(runner) }
+        let pr = try XCTUnwrap(GitHubCLI.parsePullRequestInfo(PullRequestFixtures.pr(1427)))
+        async let first: Void = model.loadReviewThreads(for: [pr])
+        async let second: Void = model.loadReviewThreads(for: [pr])
+        _ = await (first, second)
+        XCTAssertEqual(runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count, 1)
     }
 
     func testMostUrgentFirst() {
@@ -145,6 +189,18 @@ final class PullRequestRefreshTests: XCTestCase {
 }
 
 final class PullRequestLinkPersistenceTests: XCTestCase {
+    func testUnknownOverviewTabsDontFailTheState() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/repo")
+        try ws.addSession(Session(projectID: p, name: "s", workingDirectory: "/repo"))
+        var json = try JSONSerialization.jsonObject(with: JSONFileStore.encoder.encode(ws)) as! [String: Any]
+        json["overviewTabs"] = [["id": UUID().uuidString, "overview": ["somethingNew": [:]]]]
+        let decoded = try JSONFileStore.decoder.decode(Workspace.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.projects.map(\.id), [p])
+        XCTAssertEqual(decoded.sessions.count, 1)
+        XCTAssertEqual(decoded.overviewTabs, [])
+    }
+
     func testUnknownActionsDontFailTheState() throws {
         let json = ##"{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","projectID":"6F9619FF-8B86-D011-B42D-00CF4FC964FE","name":"x","workingDirectory":"/","createdAt":"2026-09-25T10:00:00Z","lastActivity":"2026-09-25T10:00:00Z","pullRequests":[{"reference":"#1","action":"merged"}]}"##
         let session = try JSONFileStore.decoder.decode(Session.self, from: Data(json.utf8))
