@@ -13,16 +13,33 @@ struct DetailView: View {
     @Environment(\.addProject) private var addProject
 
     var body: some View {
-        Group {
+        GeometryReader { geometry in
+            // The Shell panel leaves room for the header (sessions' and
+            // overviews' are the same height) and the panes' minimum height.
+            content(maxShellHeight: geometry.size.height - DetailHeader.height - PaneDropZone.minPaneHeight)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.window)
+        .clipped()
+        .task(id: model.selectedSession?.id) {
+            if let id = model.selectedSession?.id { await model.refreshChanges(for: id) }
+        }
+    }
+
+    private func content(maxShellHeight: Double) -> some View {
+        // A maximised Shell panel takes the panes' place. They leave the view
+        // tree rather than shrinking, so no terminal is resized to nothing.
+        let showsPanes = !(model.shellPanel.isOpen && model.shellPanel.isMaximised)
+        return VStack(spacing: 0) {
             if model.selectedSession != nil || model.selectedOverview != nil {
                 // One view tree whichever kind of tab has focus, so the panes
                 // (and their terminals) aren't rebuilt when focus moves.
-                VStack(spacing: 0) {
-                    if let session = model.selectedSession, let crumb = model.breadcrumb {
-                        DetailHeader(session: session, breadcrumb: crumb)
-                    } else if let overview = model.selectedOverview {
-                        OverviewHeader(overview: overview)
-                    }
+                if let session = model.selectedSession, let crumb = model.breadcrumb {
+                    DetailHeader(session: session, breadcrumb: crumb)
+                } else if let overview = model.selectedOverview {
+                    OverviewHeader(overview: overview)
+                }
+                if showsPanes {
                     HStack(spacing: 0) {
                         PaneArea()
                         // Files Changed inspector (design 4a), beside the terminal.
@@ -32,16 +49,13 @@ struct DetailView: View {
                     }
                     .frame(maxHeight: .infinity)
                 }
-                .task(id: model.selectedSession?.id) {
-                    if let id = model.selectedSession?.id { await model.refreshChanges(for: id) }
-                }
-            } else {
+            } else if showsPanes {
                 emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // The user's own shells (design 7a), under all panes.
+            ShellPanelSection(maxHeight: maxShellHeight)
         }
-        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
-        .background(DS.window)
-        .clipped()
     }
 
     private var emptyState: some View {
@@ -79,6 +93,7 @@ struct DetailView: View {
 }
 
 private struct DetailHeader: View {
+    static let height: Double = 52
     @Environment(AppModel.self) private var model
     let session: Session
     let breadcrumb: Breadcrumb
@@ -125,6 +140,7 @@ private struct DetailHeader: View {
             StatusPill(status: session.status)
                 .help(SessionIndicators.statusHelp(session))
             FilesButton(session: session)
+            ShellToggleButton()
             SessionPullRequestButton(session: session)
             Menu {
                 SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
@@ -139,7 +155,7 @@ private struct DetailHeader: View {
             .help("More")
         }
         .padding(.horizontal, 20)
-        .frame(height: 52)
+        .frame(height: Self.height)
         .background(DS.sidebar)
         .overlay(alignment: .bottom) { HorizontalRule() }
         .alert("Rename Session", isPresented: $renaming) {
@@ -490,7 +506,9 @@ struct SessionPane: View {
                 // Changes view (design 4b); the terminal keeps running meanwhile.
                 ChangesView(session: session)
             } else if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
-                TerminalPane(sessionID: session.id, registry: terminals.registry, isFocused: isFocused && running)
+                // A shell with the keyboard keeps it (see `AppModel.shellHasFocus`).
+                TerminalPane(sessionID: session.id, registry: terminals.registry,
+                             isFocused: isFocused && running && !model.shellHasFocus)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)
                     .overlay(alignment: .top) {

@@ -102,7 +102,16 @@ struct ClaudioApp: App {
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") {
-                    if let id = model.selectedSessionID { model.closeTab(id) } else { NSApp.keyWindow?.performClose(nil) }
+                    // The "still running" alert has the keyboard; a second ⌘W
+                    // mustn't close the session tab behind it.
+                    if model.shellCloseConfirmation != nil { return }
+                    if let shell = terminals.registry.shellWithKeyboard() {
+                        model.requestCloseShell(shell)
+                    } else if let id = model.selectedSessionID {
+                        model.closeTab(id)
+                    } else {
+                        NSApp.keyWindow?.performClose(nil)
+                    }
                 }
                 .keyboardShortcut("w")
                 Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
@@ -130,6 +139,12 @@ struct ClaudioApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .option])
                 .disabled(!model.menuFlags.hasSelection)
+                Divider()
+                // As in VS Code: ⌃` toggles the panel, ⌃⇧` opens another shell.
+                Button(model.menuFlags.isShellOpen ? "Hide Shell" : "Show Shell") { model.toggleShellPanel() }
+                    .keyboardShortcut("`", modifiers: .control)
+                Button("New Shell") { model.newShell() }
+                    .keyboardShortcut("`", modifiers: [.control, .shift])
                 Divider()
                 Button("Resume Session") {
                     if let id = model.selectedSessionID { model.resume(id) }

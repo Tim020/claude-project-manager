@@ -14,6 +14,11 @@ final class MemoryStore: StateStore {
 final class FakeTerminals: TerminalControlling {
     var terminated: [UUID] = []
     func terminate(_ sessionID: UUID) { terminated.append(sessionID) }
+    var terminatedShells: [UUID] = []
+    /// Foreground commands per shell; absent means it's at its prompt.
+    var shellCommands: [UUID: String] = [:]
+    func terminateShell(_ shellID: UUID) { terminatedShells.append(shellID) }
+    func runningCommand(inShell shellID: UUID) -> String? { shellCommands[shellID] }
 }
 
 /// Test bodies run via `MainActor.assumeIsolated`: XCTest runs tests on the
