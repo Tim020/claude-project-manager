@@ -58,7 +58,14 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(session.role, .code)
         XCTAssertEqual(session.permissionMode, .standard)
         XCTAssertFalse(session.isArchived)
-        XCTAssertEqual(session.pullRequestURLs, [])
+        XCTAssertEqual(session.pullRequests, [])
+    }
+
+    /// Earlier versions kept every pull request link a session saw; those
+    /// are dropped (discovery finds the ones it acted on again).
+    func testOldPullRequestLinksAreDropped() throws {
+        let json = #"{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","projectID":"6F9619FF-8B86-D011-B42D-00CF4FC964FE","name":"x","workingDirectory":"/","createdAt":"2026-09-25T10:00:00Z","lastActivity":"2026-09-25T10:00:00Z","pullRequestURLs":["https://github.com/other/repo/pull/1"]}"#
+        XCTAssertEqual(try JSONFileStore.decoder.decode(Session.self, from: Data(json.utf8)).pullRequests, [])
     }
 }
 

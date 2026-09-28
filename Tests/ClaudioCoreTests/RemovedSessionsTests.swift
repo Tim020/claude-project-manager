@@ -14,7 +14,7 @@ final class RemovedSessionsTests: XCTestCase {
 
     private func discovered(_ claudeID: String) -> DiscoveredSession {
         DiscoveredSession(claudeSessionID: claudeID, title: "found", firstPrompt: "p", summary: "", model: nil,
-                          workingDirectory: "/code/app", lastActivity: t0, pullRequestURLs: [], status: .completed)
+                          workingDirectory: "/code/app", lastActivity: t0, pullRequests: [], status: .completed)
     }
 
     func testRemovedSessionIsNotImportedAgainAndRestoresToItsFolder() throws {

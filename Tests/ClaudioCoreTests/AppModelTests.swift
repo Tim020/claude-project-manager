@@ -291,10 +291,12 @@ final class AppModelTests: XCTestCase {
             XCTAssertEqual(model.awaitingInputCount, 1)
             XCTAssertEqual(store.state.workspace.session(id)?.status, .awaitingInput)
 
-            try appendHook(id, #"{"hook_event_name":"Stop","last_assistant_message":"Opened https://github.com/a/b/pull/7"}"#)
+            try appendHook(id, #"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"gh pr create --fill"},"tool_response":{"stdout":"https://github.com/a/b/pull/7\n"}}"#)
+            try appendHook(id, #"{"hook_event_name":"Stop","last_assistant_message":"Opened https://github.com/a/b/pull/7, see also https://github.com/a/b/pull/8"}"#)
             model.pollHookEvents()
             XCTAssertEqual(model.workspace.session(id)?.status, .completed)
-            XCTAssertEqual(model.workspace.session(id)?.pullRequestURLs, ["https://github.com/a/b/pull/7"])
+            XCTAssertEqual(model.workspace.session(id)?.pullRequests, [PullRequestLink("https://github.com/a/b/pull/7", .opened)],
+                           "the one it created; a link in its reply doesn't count")
         }
     }
 

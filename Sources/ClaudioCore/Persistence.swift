@@ -201,7 +201,12 @@ extension Session {
             summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "",
             model: try c.decodeIfPresent(String.self, forKey: .model),
             permissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode) ?? .standard,
-            pullRequestURLs: try c.decodeIfPresent([String].self, forKey: .pullRequestURLs) ?? [],
+            // Earlier versions kept every pull request link a session saw
+            // (`pullRequestURLs`); those aren't carried over, and history
+            // discovery finds the ones it acted on again.
+            // Tolerant: they can be found again, so a newer build's values
+            // mustn't fail the whole state.
+            pullRequests: ((try? c.decodeIfPresent([PullRequestLink].self, forKey: .pullRequests)) ?? nil) ?? [],
             createdAt: createdAt,
             lastActivity: try c.decodeIfPresent(Date.self, forKey: .lastActivity) ?? createdAt,
             isArchived: try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false)

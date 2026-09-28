@@ -160,6 +160,24 @@ public final class AppModel {
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
     @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
     public static let pullRequestCacheInterval: TimeInterval = 300
+    /// Each project's GitHub repository ("owner/repo") from its `origin` remote.
+    public internal(set) var remoteRepositories: [UUID: String] = [:]
+    @ObservationIgnored var checkedRemotes = Set<UUID>()
+    /// Each project's pull requests from GitHub (Pull Requests overviews).
+    public internal(set) var projectPullRequests: [UUID: ProjectPullRequests] = [:]
+    /// Unresolved review threads per pull request (by key), loaded when shown.
+    public internal(set) var reviewThreads: [String: [ReviewThread]] = [:]
+    @ObservationIgnored var reviewThreadsLoaded: [String: Date] = [:]
+    /// How many views show each pull request's review threads (by key).
+    @ObservationIgnored var shownReviewThreads: [String: Int] = [:]
+    /// Pull requests whose review threads are loading now.
+    @ObservationIgnored var loadingReviewThreads = Set<String>()
+    /// Pull requests (by key) whose review threads failed to load.
+    public internal(set) var reviewThreadFailures = Set<String>()
+    @ObservationIgnored var refreshingPullRequests = Set<UUID>()
+    public internal(set) var loadingPullRequests = Set<UUID>()
+    public var pullRequestFilter: PullRequestFilter = .needsAttention
+    public var includeUnlinkedPullRequests = true
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored private let shell: String
     @ObservationIgnored let now: () -> Date
@@ -242,8 +260,15 @@ public final class AppModel {
         selectedSessionID.flatMap { state.workspace.session($0) }
     }
 
+    /// The selected session's group; for an overview tab, its folder (or its
+    /// project's Unfiled), so New Session starts there.
     public var selectedGroup: SessionGroup? {
-        selectedSessionID.flatMap { state.workspace.group(of: $0) }
+        guard let id = selectedSessionID else { return nil }
+        switch state.workspace.overviewTab(id)?.overview {
+        case .folder(let group)?: return group
+        case .project(let projectID)?: return .unfiled(projectID: projectID)
+        case nil: return state.workspace.group(of: id)
+        }
     }
 
     /// Open tabs, across folders and projects, in the order they were opened.
@@ -267,7 +292,16 @@ public final class AppModel {
     /// How the open tabs are arranged into panes.
     public var panes: PaneLayout { state.workspace.panes }
 
-    /// A pane's tabs, in its order (archived sessions left out).
+    /// A pane's tabs, sessions and overviews, in its order (archived sessions
+    /// left out).
+    public func paneTabs(inPane group: PaneGroup) -> [PaneTab] {
+        group.tabIDs.compactMap { id in
+            if let session = state.workspace.session(id) { return session.isArchived ? nil : .session(session) }
+            return state.workspace.overviewTab(id).map(PaneTab.overview)
+        }
+    }
+
+    /// A pane's session tabs, in its order (archived sessions left out).
     public func tabs(inPane group: PaneGroup) -> [Session] {
         group.tabIDs.compactMap { state.workspace.session($0) }.filter { !$0.isArchived }
     }
@@ -689,7 +723,7 @@ public final class AppModel {
     /// Selects a session: shows its tab and focuses its pane, opening the tab
     /// in the focused pane if it isn't open.
     public func select(_ sessionID: UUID?) {
-        guard let sessionID, state.workspace.session(sessionID) != nil else { return }
+        guard let sessionID, state.workspace.isTab(sessionID) else { return }
         if !running.contains(sessionID) && isAgentAlive(sessionID) {
             // Reopening a live agent reattaches rather than showing the old terminal.
             exitCodes[sessionID] = nil
@@ -710,7 +744,7 @@ public final class AppModel {
     /// that wouldn't change anything (a tab let go over its own pane, or a
     /// pane's only tab on its own edge) just shows the tab.
     public func dropTab(_ sessionID: UUID, on groupID: UUID, zone: PaneDropZone) {
-        guard state.workspace.session(sessionID) != nil else { return }
+        guard state.workspace.isTab(sessionID) else { return }
         let owner = state.workspace.panes.group(containing: sessionID)
         switch zone {
         case .center where owner?.id == groupID:
@@ -727,14 +761,14 @@ public final class AppModel {
     /// Moves a tab (from any pane, or a session from the sidebar) into a pane,
     /// before `index` or at the end.
     public func moveTab(_ sessionID: UUID, toPane groupID: UUID, at index: Int? = nil) {
-        guard state.workspace.session(sessionID) != nil else { return }
+        guard state.workspace.isTab(sessionID) else { return }
         updatePanes { $0.moveTab(sessionID, toPane: groupID, at: index) }
     }
 
     /// Moves a tab (or a session from the sidebar) into a new pane docked to an
     /// edge of a pane: side by side, or one above the other.
     public func splitTab(_ sessionID: UUID, to edge: PaneEdge, of groupID: UUID) {
-        guard state.workspace.session(sessionID) != nil else { return }
+        guard state.workspace.isTab(sessionID) else { return }
         updatePanes { $0.splitTab(sessionID, to: edge, of: groupID) }
     }
 
@@ -751,7 +785,7 @@ public final class AppModel {
     }
 
     /// Changes the pane layout, saving (unless `saving` is false) only if it changed.
-    private func updatePanes(saving: Bool = true, _ body: (inout Workspace) -> Void) {
+    func updatePanes(saving: Bool = true, _ body: (inout Workspace) -> Void) {
         var workspace = state.workspace
         body(&workspace)
         guard workspace != state.workspace else { return }
@@ -789,7 +823,7 @@ public final class AppModel {
 
     /// Closes every tab. Sessions keep running.
     public func closeAllTabs() {
-        closeTabs(tabs.map(\.id), fallback: nil)
+        closeTabs(state.workspace.openTabIDs, fallback: nil)
     }
 
     /// Closes several tabs, detaching from their agents; if the selected tab
@@ -1498,6 +1532,9 @@ public final class AppModel {
             flags.hasSelection = true
             flags.canResumeSelected = !running.contains(id)
             flags.canStopSelected = running.contains(id) || isAgentAlive(id)
+            flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
+        } else if let id = selectedSessionID, state.workspace.overviewTab(id) != nil {
+            // An overview tab docks like any other.
             flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         }
         if flags != menuFlags { menuFlags = flags }

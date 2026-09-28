@@ -115,14 +115,15 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var workingDirectory: String
     public var model: String?
     public var permissionMode: PermissionMode
-    public var pullRequestURLs: [String]
+    /// Pull requests the session opened or reviewed (see `PullRequestActivity`).
+    public var pullRequests: [PullRequestLink]
     public var createdAt: Date
     public var lastActivity: Date
     public var isArchived: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
-        case workingDirectory, model, permissionMode, pullRequestURLs, createdAt, lastActivity, isArchived
+        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived
     }
 
     public init(
@@ -137,7 +138,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         summary: String = "",
         model: String? = nil,
         permissionMode: PermissionMode = .standard,
-        pullRequestURLs: [String] = [],
+        pullRequests: [PullRequestLink] = [],
         createdAt: Date = Date(),
         lastActivity: Date? = nil,
         isArchived: Bool = false
@@ -156,7 +157,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         self.hasCustomName = false
         self.model = model
         self.permissionMode = permissionMode
-        self.pullRequestURLs = pullRequestURLs
+        self.pullRequests = pullRequests
         self.createdAt = createdAt
         self.lastActivity = lastActivity ?? createdAt
         self.isArchived = isArchived
