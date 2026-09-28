@@ -11,8 +11,8 @@ public struct ShellCloseConfirmation: Equatable, Sendable {
 /// window under all panes. A new shell starts in the selected session's
 /// folder, or its worktree when it has one.
 extension AppModel {
-    /// A shell that exits this soon after starting is taken to have failed
-    /// to start (a missing `$SHELL`, or one that dies in its rc files).
+    /// A shell that exits unsuccessfully this soon after starting is taken
+    /// to have failed to start (a missing `$SHELL`, or rc files that fail).
     public static let shellStartupWindow: TimeInterval = 2
 
     /// Where a new shell would start, best first: the selected session's
@@ -110,17 +110,18 @@ extension AppModel {
     }
 
     /// Called by the UI when a shell's process exits (`exit`, or after
-    /// `closeShell`, when its tab is already gone).
+    /// `closeShell`, when its tab is already gone). `exitCode` is decoded
+    /// (see `ProcessExitStatus`), not SwiftTerm's raw status.
     public func shellExited(_ shellID: UUID, exitCode: Int32?) {
         // An exit answers any pending "still running" question about it.
         if shellCloseConfirmation?.shellID == shellID { shellCloseConfirmation = nil }
         let started = shellStartTimes.removeValue(forKey: shellID)
         guard let tab = shellPanel.tabs.first(where: { $0.id == shellID }) else { return }
-        if let started, now().timeIntervalSince(started) < Self.shellStartupWindow {
-            // Gone at once: most likely `$SHELL` can't run, or its rc files exit.
+        // A quick ⌃D or `exit` (status 0) is just the user closing it.
+        if let started, let exitCode, exitCode != 0, now().timeIntervalSince(started) < Self.shellStartupWindow {
+            // Gone at once: most likely `$SHELL` can't run, or its rc files fail.
             report("Couldn't start \(shell)"
-                + (exitCode.map { " (exit code \($0))" } ?? "")
-                + ". Check that $SHELL names a shell that's installed, and that its startup files don't exit.")
+                + " (exit code \(exitCode)). Check that $SHELL names a shell that's installed, and that its startup files don't fail.")
         }
         removeShell(tab, message: exitCode.map { "Shell exited (code \($0))" } ?? "Shell exited")
     }

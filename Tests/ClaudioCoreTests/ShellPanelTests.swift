@@ -99,6 +99,27 @@ final class ShellPanelTests: XCTestCase {
         }
     }
 
+    func testStartDirectoryPrefersTheSessionsWorktree() throws {
+        try MainActor.assumeIsolated {
+            let worktree = projectPath + "/.claude/worktrees/grid-system-ui"
+            existing = [projectPath, worktree]
+            let (model, session) = try modelWithSession()
+            model.sessionChanges[session.id] = SessionChangeState(directory: worktree)
+            XCTAssertEqual(model.shellStartCandidates, [worktree, projectPath])
+            XCTAssertEqual(model.shellStartDirectory, worktree)
+        }
+    }
+
+    func testARemovedWorktreeFallsBackToTheSessionsFolder() throws {
+        try MainActor.assumeIsolated {
+            let worktree = projectPath + "/.claude/worktrees/grid-system-ui"
+            existing = [projectPath]
+            let (model, session) = try modelWithSession()
+            model.sessionChanges[session.id] = SessionChangeState(directory: worktree)
+            XCTAssertEqual(model.shellStartDirectory, projectPath, "the folder, not home")
+        }
+    }
+
     func testStartDirectoryFallsBackToHomeWhenTheFolderIsGone() throws {
         try MainActor.assumeIsolated {
             existing = []
@@ -172,6 +193,8 @@ final class ShellPanelTests: XCTestCase {
             XCTAssertEqual(terminals.terminatedShells, [id])
             XCTAssertTrue(model.shellPanel.tabs.isEmpty)
             XCTAssertNil(model.shellCloseConfirmation)
+            XCTAssertFalse(model.shellHasFocus, "the last shell closing hands the keyboard back")
+            XCTAssertFalse(model.menuFlags.isShellOpen)
             // The terminal then reports its exit; the tab is already gone.
             model.shellExited(id, exitCode: 0)
             XCTAssertTrue(model.shellPanel.tabs.isEmpty)
@@ -212,11 +235,35 @@ final class ShellPanelTests: XCTestCase {
             let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
             model.shellStarted(id, launch: launch)
             clock += 0.2
-            model.shellExited(id, exitCode: 127)
+            // $SHELL can't be run: the child exits 127, raw status 32512.
+            model.shellExited(id, exitCode: ProcessExitStatus.exitCode(fromWaitStatus: 32512))
             XCTAssertTrue(model.shellPanel.tabs.isEmpty)
             let message = try XCTUnwrap(model.errorMessage)
             XCTAssertTrue(message.contains("Couldn't start /bin/zsh (exit code 127)"), message)
         }
+    }
+
+    func testAQuickCleanExitIsNotAnError() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let id = model.newShell()
+            let launch = try XCTUnwrap(model.takePendingShellLaunch(id))
+            model.shellStarted(id, launch: launch)
+            clock += 0.5
+            // ⌃` then ⌃D straight away.
+            model.shellExited(id, exitCode: ProcessExitStatus.exitCode(fromWaitStatus: 0))
+            XCTAssertNil(model.errorMessage)
+            XCTAssertTrue(model.shellPanel.tabs.isEmpty)
+        }
+    }
+
+    func testWaitStatusIsDecoded() {
+        // Raw `waitpid` statuses, as SwiftTerm 1.20.0 passes them on.
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 0), 0)
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 32512), 127, "exit 127: command not found")
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 256), 1)
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 9), 137, "killed by SIGKILL")
+        XCTAssertEqual(ProcessExitStatus.exitCode(fromWaitStatus: 15), 143, "killed by SIGTERM")
     }
 
     func testALaterExitIsNotAnError() throws {
@@ -280,11 +327,29 @@ final class ShellPanelTests: XCTestCase {
     func testShellsAreNotSaved() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()
+            let saved = store.state
             model.newShell()
-            model.setShellPanelHeight(10)
-            XCTAssertEqual(store.state.settings.shellPanelHeight, AppSettings.shellPanelHeightRange.lowerBound)
+            model.toggleShellPanel()
+            XCTAssertEqual(store.state, saved, "opening and hiding shells writes nothing")
             XCTAssertTrue(model.workspace.sessions.isEmpty, "shells aren't sessions")
         }
+    }
+
+    func testPanelHeightIsClampedAndSaved() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            model.setShellPanelHeight(10)
+            XCTAssertEqual(store.state.settings.shellPanelHeight, AppSettings.shellPanelHeightRange.lowerBound)
+            model.setShellPanelHeight(400)
+            XCTAssertEqual(store.state.settings.shellPanelHeight, 400)
+        }
+    }
+
+    func testPanelHeightDecodesWithDefaultAndIsClamped() throws {
+        let missing = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        XCTAssertEqual(missing.shellPanelHeight, AppSettings.defaultShellPanelHeight)
+        let huge = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"shellPanelHeight": 5000}"#.utf8))
+        XCTAssertEqual(huge.shellPanelHeight, AppSettings.shellPanelHeightRange.upperBound)
     }
 
     // MARK: Git branch
@@ -305,6 +370,25 @@ final class ShellPanelTests: XCTestCase {
         try "gitdir: \(gitDirectory.path)\n".write(to: worktree.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
 
         XCTAssertEqual(GitHead.branch(atDirectory: worktree.appendingPathComponent("Sources").path), "grid-system-ui")
+        XCTAssertNil(GitHead.branch(atDirectory: root.path))
+    }
+
+    func testBranchFollowsARelativeGitdir() throws {
+        // Submodules, and worktrees made by git 2.48+ with relative paths.
+        let root = try makeTemporaryDirectory()
+        let gitDirectory = root.appendingPathComponent(".git/modules/lib")
+        try FileManager.default.createDirectory(at: gitDirectory, withIntermediateDirectories: true)
+        try "ref: refs/heads/dev\n".write(to: gitDirectory.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+        let module = root.appendingPathComponent("lib")
+        try FileManager.default.createDirectory(at: module, withIntermediateDirectories: true)
+        try "gitdir: ../.git/modules/lib\n".write(to: module.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(GitHead.branch(atDirectory: module.path), "dev")
+    }
+
+    func testMalformedGitFileHasNoBranch() throws {
+        let root = try makeTemporaryDirectory()
+        try "not a gitdir line\n".write(to: root.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
         XCTAssertNil(GitHead.branch(atDirectory: root.path))
     }
 }

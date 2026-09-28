@@ -88,6 +88,18 @@ extension TerminalLaunch {
     }
 }
 
+/// What a terminal's process ended with. SwiftTerm reports the raw
+/// `waitpid` status (SwiftTerm 1.20.0, `LocalProcess.processTerminated`),
+/// so `exit 127` arrives as 32512.
+public enum ProcessExitStatus {
+    /// The exit code for a raw `waitpid` status, the way shells report it:
+    /// the process's own code, or 128 + the signal that killed it.
+    public static func exitCode(fromWaitStatus status: Int32) -> Int32 {
+        let signal = status & 0x7F
+        return signal == 0 ? (status >> 8) & 0xFF : 128 + signal
+    }
+}
+
 /// Reads a directory's git branch straight from `.git/HEAD`, without running
 /// git (a worktree's `.git` is a file naming its git directory).
 public enum GitHead {

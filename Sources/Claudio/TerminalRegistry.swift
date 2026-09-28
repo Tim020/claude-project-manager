@@ -203,7 +203,8 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         views.first { $0.value === source }?.key
     }
 
-    fileprivate func processExited(_ source: AnyObject, exitCode: Int32?) {
+    fileprivate func processExited(_ source: AnyObject, exitCode rawStatus: Int32?) {
+        let exitCode = rawStatus.map(ProcessExitStatus.exitCode(fromWaitStatus:))
         if let shellID = shells.first(where: { $0.value === source })?.key {
             shells[shellID] = nil
             model.shellExited(shellID, exitCode: exitCode)
