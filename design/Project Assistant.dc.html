@@ -18,16 +18,16 @@
   <div style="padding:7px 12px;border-top:1px solid #444;font-weight:700">New or changed skill</div><div style="padding:7px 12px;border-top:1px solid #444">It learns something the hard way</div><div style="padding:7px 12px;border-top:1px solid #444">Count on the Assistant rail, Needs You</div><div style="padding:7px 12px;border-top:1px solid #444">Yes, and you can edit it</div>
   <div style="padding:7px 12px;border-top:1px solid #444;font-weight:700">GitHub triage</div><div style="padding:7px 12px;border-top:1px solid #444">New issues on the repo</div><div style="padding:7px 12px;border-top:1px solid #444">Count on the Assistant rail, Needs You</div><div style="padding:7px 12px;border-top:1px solid #444">Yes; nothing is written to GitHub until you export</div>
 </div>
-<p style="margin:0;max-width:1100px;color:#adb5bd;font-size:13px;line-height:1.55;text-wrap:pretty">Both concepts use the shipped two-rail layout. Pick a journey under each window and click through it. <b style="color:#fff">⌘⇧N</b> captures a note in whichever window your pointer is over. <b style="color:#fff">9a</b> keeps everything in the narrow left panel next to the terminal. <b style="color:#fff">9b</b> opens the assistant as a wide project page in a pinned tab, and captures from a floating box. The backend isn't designed yet; see the handover notes.</p>
+<p style="margin:0;max-width:1100px;color:#adb5bd;font-size:13px;line-height:1.55;text-wrap:pretty">Both concepts use the shipped two-rail layout. Pick a journey under each window and click through it. <b style="color:#fff">⌘⇧N</b> captures a note in whichever window your pointer is over. <b style="color:#fff">9a</b> keeps everything in the narrow left panel next to the terminal. <b style="color:#fff">9b</b> opens the assistant as a wide project page in a pinned tab, and captures from a floating box. The handover notes cover how the backend works, and the states added for it are in 9a's journeys 6 to 9.</p>
 
 <div style="display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start">
 
 <div id="9a" style="display:flex;flex-direction:column;gap:12px;flex:none;width:1280px">
 <div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:#adb5bd"><a href="#9a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">9a</a><span style="font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 8px;border-radius:12px;background:#00bc8c;color:#fff">CHOSEN</span><span><b style="color:#fff">Side notebook.</b> The Assistant tool fills the left panel: Needs You, then Plan and Notes, then Ask at the bottom. Items and suggestions open in the panel, so the terminal stays in view.</span></div>
 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-  <sc-for list="{{ a.journeys }}" as="j" hint-placeholder-count="5"><span onClick="{{ j.onClick }}" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:4px;font-size:12.5px;cursor:pointer;background:{{ j.bg }};color:{{ j.fg }};border:1px solid #444"><b style="font:700 11px ui-monospace,Menlo,monospace;color:{{ j.nc }}">{{ j.n }}</b>{{ j.t }}</span></sc-for>
+  <sc-for list="{{ a.journeys }}" as="j" hint-placeholder-count="9"><span onClick="{{ j.onClick }}" style="display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:4px;font-size:12.5px;cursor:pointer;background:{{ j.bg }};color:{{ j.fg }};border:1px solid #444"><b style="font:700 11px ui-monospace,Menlo,monospace;color:{{ j.nc }}">{{ j.n }}</b>{{ j.t }}</span></sc-for>
 </div>
-<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#adb5bd;min-height:24px"><i class="mdi mdi-gesture-tap" style="font-size:16px;color:#00bc8c"></i><span>{{ a.hint }}</span><sc-if value="{{ a.hintKey }}" hint-placeholder-val="{{ false }}"><span onClick="{{ a.onCapture }}" style="font:700 11.5px ui-monospace,Menlo,monospace;padding:2px 8px;border:1px solid #6c757d;border-radius:4px;color:#fff;cursor:pointer">⌘⇧N</span></sc-if></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#adb5bd;min-height:24px;max-width:1280px"><i class="mdi mdi-gesture-tap" style="font-size:16px;color:#00bc8c"></i><span style="text-wrap:pretty">{{ a.hint }}</span><sc-if value="{{ a.hintKey }}" hint-placeholder-val="{{ false }}"><span onClick="{{ a.onCapBug }}" style="flex:none;font-size:12px;padding:2px 9px;border:1px solid #6c757d;border-radius:4px;color:#fff;cursor:pointer;white-space:nowrap"><b style="font:700 11px ui-monospace,Menlo,monospace">⌘⇧N</b> New Bug</span><span onClick="{{ a.onCapDup }}" style="flex:none;font-size:12px;padding:2px 9px;border:1px solid #6c757d;border-radius:4px;color:#fff;cursor:pointer;white-space:nowrap"><b style="font:700 11px ui-monospace,Menlo,monospace">⌘⇧N</b> Repeat of a Plan Item</span></sc-if></div>
 <div onMouseEnter="{{ a.hover }}" style="width:1280px;height:800px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column;position:relative">
   <div style="height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#2b2b2b;border-bottom:1px solid #444"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span><span style="flex:1;text-align:center;font-size:12px;color:#adb5bd;margin-right:52px">Claudio</span></div>
   <div style="flex:1;min-height:0;display:flex">
@@ -46,7 +46,16 @@
     <sc-if value="{{ a.isAsst }}" hint-placeholder-val="{{ true }}">
     <div style="width:330px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0">
       <div style="height:40px;flex:none;display:flex;align-items:center;gap:10px;padding:0 10px 0 14px"><sc-if value="{{ a.notList }}" hint-placeholder-val="{{ false }}"><span onClick="{{ a.onBack }}" title="Back" style="display:flex;cursor:pointer;color:#adb5bd;margin-left:-4px"><i class="mdi mdi-chevron-left" style="font-size:20px"></i></span></sc-if><b style="font-size:11.5px;letter-spacing:.06em;color:#adb5bd">{{ a.panelTitle }}</b><span style="flex:1"></span><span onClick="{{ a.onCapture }}" title="New Note (⌘⇧N)" style="display:flex;padding:3px;cursor:pointer;color:#adb5bd;border-radius:4px" style-hover="background:#444;color:#fff"><i class="mdi mdi-note-plus-outline" style="font-size:18px"></i></span><span onClick="{{ a.onMenu }}" title="More" style="display:flex;padding:3px;cursor:pointer;color:#adb5bd;border-radius:4px;background:{{ a.menuBg }}" style-hover="background:#444;color:#fff"><i class="mdi mdi-dots-horizontal" style="font-size:18px"></i></span></div>
-      <sc-if value="{{ a.menuOpen }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;left:158px;top:68px;z-index:15;width:210px;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:5px;font-size:13px;display:flex;flex-direction:column"><div onClick="{{ a.onImport }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-github" style="color:#adb5bd"></i>Import Issues…</div><div onClick="{{ a.onSkills }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-school-outline" style="color:#adb5bd"></i><span style="flex:1">Skills</span><span style="color:#6c757d">{{ a.skillCount }}</span></div><div style="height:1px;background:#444;margin:4px 6px"></div><div style="display:flex;align-items:center;gap:8px;padding:5px 10px;color:#adb5bd"><i class="mdi mdi-cog-outline"></i>Assistant Settings…</div></div></sc-if>
+      <sc-if value="{{ a.menuOpen }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;left:158px;top:68px;z-index:15;width:210px;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:5px;font-size:13px;display:flex;flex-direction:column">
+        <div onClick="{{ a.onImport }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-github" style="color:#adb5bd"></i>Import Issues…</div>
+        <div onClick="{{ a.onSkills }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-school-outline" style="color:#adb5bd"></i><span style="flex:1">Skills</span><span style="color:#6c757d">{{ a.skillCount }}</span></div>
+        <div onClick="{{ a.onLog }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-history" style="color:#adb5bd"></i>Activity Log</div>
+        <div style="height:1px;background:#444;margin:4px 6px"></div>
+        <div onClick="{{ a.onSettings }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-cog-outline" style="color:#adb5bd"></i>Assistant Settings…</div>
+      </div></sc-if>
+      <sc-if value="{{ a.showOff }}" hint-placeholder-val="{{ false }}"><div style="margin:0 10px 10px;display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid #444;border-radius:4px;background:#303030;font-size:12.5px;line-height:1.45"><i class="mdi mdi-power" style="font-size:15px;color:#6c757d"></i><span style="flex:1;color:#adb5bd">{{ a.offText }}</span><span onClick="{{ a.onTurnOn }}" style="flex:none;color:#00bc8c;cursor:pointer;font-weight:700">Turn On</span></div></sc-if>
+      <sc-if value="{{ a.showPaused }}" hint-placeholder-val="{{ false }}"><div style="margin:0 14px 8px;display:flex;align-items:center;gap:7px;font-size:12px;color:#adb5bd"><i class="mdi mdi-pause-circle-outline" style="font-size:14px;color:#f39c12"></i><span style="flex:1">{{ a.pausedText }}</span><span onClick="{{ a.onOpenApp }}" style="color:#6c757d;cursor:pointer" style-hover="color:#fff">Limits…</span></div></sc-if>
+      <sc-if value="{{ a.showManual }}" hint-placeholder-val="{{ false }}"><div style="margin:0 14px 8px;display:flex;align-items:center;gap:7px;font-size:12px;color:#adb5bd"><i class="mdi mdi-hand-back-right-outline" style="font-size:14px;color:#6c757d"></i><span style="flex:1">Manual: it only works when you ask.</span></div></sc-if>
       <sc-if value="{{ a.capEdit }}" hint-placeholder-val="{{ false }}">
         <div style="margin:0 10px 10px;padding:10px;border:1px solid #3498db;border-radius:4px;background:#222;display:flex;flex-direction:column;gap:8px">
           <textarea value="{{ a.text }}" onChange="{{ a.onText }}" rows="3" style="background:transparent;border:none;outline:none;color:#fff;font-size:13px;line-height:1.45;resize:none;padding:0"></textarea>
@@ -58,7 +67,7 @@
           <sc-if value="{{ a.hasInbox }}" hint-placeholder-val="{{ true }}">
             <div style="padding:2px 14px 6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">NEEDS YOU · {{ a.inboxCount }}</div>
             <div style="display:flex;flex-direction:column;gap:6px;padding:0 10px 12px">
-              <sc-for list="{{ a.inbox }}" as="x" hint-placeholder-count="2"><div onClick="{{ x.onClick }}" style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:4px;background:{{ x.bg }};border:1px solid #444;cursor:pointer"><i class="mdi {{ x.icon }}" style="font-size:17px;color:{{ x.ic }};margin-top:1px"></i><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:13px;font-weight:700">{{ x.title }}</span><span style="font-size:11.5px;color:#adb5bd;line-height:1.4">{{ x.sub }}</span></div><i class="mdi mdi-chevron-right" style="color:#6c757d"></i></div></sc-for>
+              <sc-for list="{{ a.inbox }}" as="x" hint-placeholder-count="2"><div onClick="{{ x.onClick }}" style="display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:4px;background:{{ x.bg }};border:{{ x.border }};cursor:{{ x.cur }}"><i class="mdi {{ x.icon }}" style="font-size:17px;color:{{ x.ic }};margin-top:1px"></i><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><span style="font-size:13px;font-weight:700">{{ x.title }}</span><span style="font-size:11.5px;color:#adb5bd;line-height:1.4">{{ x.sub }}</span></div><sc-if value="{{ x.chev }}" hint-placeholder-val="{{ true }}"><i class="mdi mdi-chevron-right" style="color:#6c757d"></i></sc-if></div></sc-for>
             </div>
           </sc-if>
           <sc-if value="{{ a.noInbox }}" hint-placeholder-val="{{ false }}"><div style="margin:0 10px 12px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px dashed #444;border-radius:4px;font-size:12.5px;color:#6c757d"><i class="mdi mdi-check-circle-outline" style="font-size:15px;color:#00bc8c"></i>Nothing needs you.</div></sc-if>
@@ -69,12 +78,15 @@
             <sc-for list="{{ a.plan }}" as="g" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:1px;padding:4px 6px 8px"><div style="padding:4px 10px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ g.name }}</div><sc-for list="{{ g.items }}" as="i" hint-placeholder-count="2"><div onClick="{{ i.onClick }}" style="display:flex;align-items:flex-start;gap:9px;padding:6px 10px;border-radius:4px;background:{{ i.bg }};cursor:default"><span style="flex:none;width:7px;height:7px;border-radius:50%;background:{{ i.dot }};margin-top:6px"></span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px">{{ i.title }}</span><span style="font-size:11.5px;color:#6c757d">{{ i.meta }}</span></div></div></sc-for></div></sc-for>
           </sc-if>
           <sc-if value="{{ a.isNotes }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:12px;padding:0 14px 8px;font-size:11.5px;color:#6c757d"><span style="display:flex;align-items:center;gap:4px"><i class="mdi mdi-account-outline" style="font-size:13px"></i>You</span><span style="display:flex;align-items:center;gap:4px"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db"></i>Assistant</span><span style="display:flex;align-items:center;gap:4px"><i class="mdi mdi-console-line" style="font-size:13px;color:#00bc8c"></i>A session</span></div>
             <div style="display:flex;flex-direction:column;gap:6px;padding:0 10px 12px">
               <sc-for list="{{ a.notes }}" as="n" hint-placeholder-count="4"><div style="padding:9px 10px;border-radius:4px;background:{{ n.bg }};border:1px solid {{ n.border }};display:flex;flex-direction:column;gap:6px">
                 <div style="font-size:13px;line-height:1.45;text-wrap:pretty">{{ n.text }}</div>
-                <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6c757d"><sc-if value="{{ n.byAsst }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db"></i></sc-if><span>{{ n.meta }}</span><span style="flex:1"></span><sc-if value="{{ n.byAsst }}" hint-placeholder-val="{{ false }}"><span onClick="{{ n.onUndo }}" style="color:#adb5bd;cursor:pointer">Undo</span></sc-if></div>
+                <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6c757d"><sc-if value="{{ n.byYou }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-account-outline" style="font-size:13px"></i></sc-if><sc-if value="{{ n.byAsst }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db"></i></sc-if><sc-if value="{{ n.bySession }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-console-line" style="font-size:13px;color:#00bc8c"></i></sc-if><span style="flex:1;min-width:0">{{ n.meta }}</span><sc-if value="{{ n.canPromote }}" hint-placeholder-val="{{ false }}"><span onClick="{{ n.onPromoteAsk }}" style="color:#adb5bd;cursor:pointer" style-hover="color:#fff">Promote…</span></sc-if><sc-if value="{{ n.canUndo }}" hint-placeholder-val="{{ false }}"><span onClick="{{ n.onUndo }}" style="color:#adb5bd;cursor:pointer" style-hover="color:#fff">Undo</span></sc-if></div>
                 <sc-if value="{{ n.hasItem }}" hint-placeholder-val="{{ false }}"><span onClick="{{ n.onItem }}" style="align-self:flex-start;display:flex;align-items:center;gap:5px;font-size:11.5px;padding:1px 8px;border-radius:12px;background:#444;cursor:pointer"><i class="mdi mdi-format-list-checks" style="font-size:12px"></i>{{ n.itemLabel }}</span></sc-if>
-                <sc-if value="{{ n.hasSuggest }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:4px;background:#222;font-size:12.5px"><i class="mdi mdi-creation" style="color:#3498db"></i><span style="flex:1">Reads like a bug. Promote it to the plan?</span><span onClick="{{ n.onPromote }}" style="cursor:pointer;padding:2px 9px;border-radius:4px;background:#00bc8c;font-weight:700">Promote</span><span onClick="{{ n.onDismiss }}" style="cursor:pointer;color:#adb5bd">Keep as Note</span></div></sc-if>
+                <sc-if value="{{ n.sThinking }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:4px;padding:7px 9px;border-radius:4px;background:#222;font-size:12.5px;color:#adb5bd"><div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-loading mdi-spin" style="color:#3498db"></i>Checking it against the plan…</div><sc-if value="{{ n.showHigh }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px;color:#6c757d">{{ a.highText }}</span></sc-if></div></sc-if>
+                <sc-if value="{{ n.sPromote }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:4px;background:#222;font-size:12.5px"><i class="mdi mdi-creation" style="color:#3498db"></i><span style="flex:1">Reads like a bug. Promote it to the plan?</span><span onClick="{{ n.onPromote }}" style="cursor:pointer;padding:2px 9px;border-radius:4px;background:#00bc8c;font-weight:700">Promote</span><span onClick="{{ n.onDismiss }}" style="cursor:pointer;color:#adb5bd">Keep as Note</span></div></sc-if>
+                <sc-if value="{{ n.sDup }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:7px;padding:8px 9px;border-radius:4px;background:#222;font-size:12.5px"><div style="display:flex;gap:8px;line-height:1.45"><i class="mdi mdi-creation" style="color:#3498db"></i><span>Looks like "Remember Shell panel height per project". Attach it?</span></div><div style="display:flex;gap:10px;align-items:center;padding-left:22px"><span onClick="{{ n.onAttach }}" style="cursor:pointer;padding:2px 9px;border-radius:4px;background:#00bc8c;font-weight:700">Attach</span><span onClick="{{ n.onDismiss }}" style="cursor:pointer;color:#adb5bd">Keep as Note</span></div></div></sc-if>
               </div></sc-for>
             </div>
           </sc-if>
@@ -85,9 +97,9 @@
             <div style="font-size:17px;font-weight:700;line-height:1.35">{{ a.dTitle }}</div>
             <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#adb5bd"><i class="mdi mdi-folder-outline" style="color:#3498db"></i>{{ a.dFolder }}</div>
             <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">ATTACHED NOTES</div><sc-if value="{{ a.noDNotes }}" hint-placeholder-val="{{ false }}"><span style="font-size:12.5px;color:#6c757d">No notes attached.</span></sc-if><sc-for list="{{ a.dNotes }}" as="n" hint-placeholder-count="2"><div style="padding:8px 10px;border-left:2px solid #444;font-size:12.5px;line-height:1.45;display:flex;flex-direction:column;gap:3px"><span>{{ n.text }}</span><span style="font-size:11px;color:#6c757d">{{ n.meta }}</span></div></sc-for></div>
-            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">SKILLS IT WILL USE</div><div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ a.dSkills }}" as="k" hint-placeholder-count="2"><span style="display:flex;align-items:center;gap:5px;font-size:12px;padding:1px 9px;border-radius:12px;background:#444"><i class="mdi mdi-school-outline" style="font-size:12px"></i>{{ k }}</span></sc-for></div></div>
+            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ a.dSkillLabel }}</div><sc-if value="{{ a.hasDSkills }}" hint-placeholder-val="{{ true }}"><div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ a.dSkills }}" as="k" hint-placeholder-count="2"><span style="display:flex;align-items:center;gap:5px;font-size:12px;padding:1px 9px;border-radius:12px;background:#444"><i class="mdi mdi-school-outline" style="font-size:12px"></i>{{ k }}</span></sc-for></div></sc-if><sc-if value="{{ a.dOld }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:7px;font-size:12px;color:#adb5bd;line-height:1.45"><i class="mdi mdi-information-outline" style="font-size:14px;color:#6c757d"></i><span>Started before the assistant, so it can't use its skills or write notes. New sessions get its skills.</span></div></sc-if></div>
             <sc-if value="{{ a.isInSession }}" hint-placeholder-val="{{ false }}"><div onClick="{{ a.onGoSession }}" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:4px;background:#303030;border:1px solid #444;font-size:13px;cursor:pointer"><span style="width:7px;height:7px;border-radius:50%;background:#00bc8c"></span><span style="flex:1">In session: <b>{{ a.dSession }}</b></span><i class="mdi mdi-arrow-right" style="color:#adb5bd"></i></div></sc-if>
-            <sc-if value="{{ a.canStart }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:6px"><span onClick="{{ a.onStart }}" style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer"><i class="mdi mdi-play" style="font-size:15px"></i>Start Session</span><span style="font-size:11.5px;color:#6c757d;text-align:center">Opens with this item, its notes and those skills.</span></div></sc-if>
+            <sc-if value="{{ a.canStart }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:6px"><span onClick="{{ a.onStart }}" style="display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer"><i class="mdi mdi-play" style="font-size:15px"></i>Start Session</span><span style="font-size:11.5px;color:#6c757d;text-align:center">Opens with this item, its notes and those skills named.</span></div></sc-if>
           </div>
         </sc-if>
         <sc-if value="{{ a.vSkill }}" hint-placeholder-val="{{ false }}">
@@ -98,6 +110,44 @@
             <sc-if value="{{ a.skView }}" hint-placeholder-val="{{ true }}"><div style="border:1px solid #444;border-radius:4px;overflow:hidden;font:11.5px/1.6 ui-monospace,Menlo,monospace"><sc-for list="{{ a.skLines }}" as="l" hint-placeholder-count="6"><div style="display:flex;background:rgba(0,188,140,.12)"><span style="flex:none;width:18px;text-align:center;color:#00bc8c">+</span><span style="white-space:pre-wrap;padding-right:8px">{{ l }}</span></div></sc-for></div></sc-if>
             <sc-if value="{{ a.skEdit }}" hint-placeholder-val="{{ false }}"><textarea value="{{ a.skText }}" onChange="{{ a.onSkText }}" rows="11" style="background:#222;border:1px solid #3498db;border-radius:4px;outline:none;color:#fff;font:11.5px/1.6 ui-monospace,Menlo,monospace;resize:none;padding:8px"></textarea></sc-if>
             <div style="display:flex;gap:8px;align-items:center"><span onClick="{{ a.onApprove }}" style="padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Approve</span><span onClick="{{ a.onToggleEdit }}" style="padding:4px 12px;border-radius:4px;border:1px solid #f39c12;color:#f39c12;font-size:13px;cursor:pointer">{{ a.editLabel }}</span><span style="flex:1"></span><span onClick="{{ a.onLater }}" style="font-size:13px;color:#adb5bd;cursor:pointer">Not Now</span></div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vChg }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 9px;border-radius:12px;background:#3498db">CHANGED SKILL</span><span style="font-size:12px;color:#adb5bd">The current version stays in use until you approve</span></div>
+            <div style="font-size:17px;font-weight:700">Worktree setup</div>
+            <div style="font-size:12.5px;color:#adb5bd;line-height:1.5;text-wrap:pretty"><b style="color:#fff">Why:</b> in Shell Follow Up, the new worktree started from a stale local main and missed PR #14. Fetching first would have caught it.</div>
+            <sc-if value="{{ a.edOff }}" hint-placeholder-val="{{ true }}"><div style="border:1px solid #444;border-radius:4px;overflow:hidden;font:11.5px/1.6 ui-monospace,Menlo,monospace"><sc-for list="{{ a.chgDiff }}" as="l" hint-placeholder-count="5"><div style="display:flex;background:{{ l.bg }}"><span style="flex:none;width:18px;text-align:center;color:{{ l.sc }}">{{ l.s }}</span><span style="white-space:pre-wrap;padding-right:8px;color:{{ l.c }};text-decoration:{{ l.td }}">{{ l.t }}</span></div></sc-for></div></sc-if>
+            <sc-if value="{{ a.ed }}" hint-placeholder-val="{{ false }}"><textarea value="{{ a.edText }}" onChange="{{ a.onEdText }}" rows="6" style="background:#222;border:1px solid #3498db;border-radius:4px;outline:none;color:#fff;font:11.5px/1.6 ui-monospace,Menlo,monospace;resize:none;padding:8px"></textarea></sc-if>
+            <div style="display:flex;gap:8px;align-items:center"><span onClick="{{ a.onChgApprove }}" style="padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Approve</span><span onClick="{{ a.onEdToggle }}" style="padding:4px 12px;border-radius:4px;border:1px solid #f39c12;color:#f39c12;font-size:13px;cursor:pointer">{{ a.edLabel }}</span><span style="flex:1"></span><span onClick="{{ a.onChgLater }}" style="font-size:13px;color:#adb5bd;cursor:pointer">Not Now</span></div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vExt }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 9px;border-radius:12px;background:#f39c12">EDITED OUTSIDE CLAUDIO</span></div>
+            <div style="font-size:17px;font-weight:700">README style</div>
+            <div style="display:flex;gap:7px;font-size:12.5px;color:#adb5bd;line-height:1.5"><i class="mdi mdi-console-line" style="font-size:14px;color:#00bc8c"></i><span>The Update PR session changed <span style="font:12px ui-monospace,Menlo,monospace;color:#fff">.claude/skills/readme-style/SKILL.md</span> 10h ago.</span></div>
+            <div style="border:1px solid #444;border-radius:4px;overflow:hidden;font:11.5px/1.6 ui-monospace,Menlo,monospace"><sc-for list="{{ a.extDiff }}" as="l" hint-placeholder-count="4"><div style="display:flex;background:{{ l.bg }}"><span style="flex:none;width:18px;text-align:center;color:{{ l.sc }}">{{ l.s }}</span><span style="white-space:pre-wrap;padding-right:8px;color:{{ l.c }};text-decoration:{{ l.td }}">{{ l.t }}</span></div></sc-for></div>
+            <div style="display:flex;gap:8px;align-items:center"><span onClick="{{ a.onExtKeep }}" style="padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Keep Change</span><span onClick="{{ a.onExtRevert }}" style="padding:4px 12px;border-radius:4px;border:1px solid #e74c3c;color:#e74c3c;font-size:13px;cursor:pointer">Revert</span></div>
+            <span style="font-size:11.5px;color:#6c757d;line-height:1.45">Revert puts back the approved version and rewrites the file. Commit it afterwards.</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vUnused }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 9px;border-radius:12px;background:#444">UNUSED SKILL</span></div>
+            <div style="font-size:17px;font-weight:700">Swift test conventions</div>
+            <div style="font-size:12.5px;color:#adb5bd;line-height:1.5;text-wrap:pretty">Not used by any session for 30 days. It was last used on 29 Aug, in Grid System UI.</div>
+            <div style="border:1px solid #444;border-radius:4px;padding:6px 10px;font:11.5px/1.6 ui-monospace,Menlo,monospace;color:#adb5bd;display:flex;flex-direction:column"><sc-for list="{{ a.unusedLines }}" as="l" hint-placeholder-count="3"><span>{{ l }}</span></sc-for></div>
+            <div style="display:flex;gap:8px;align-items:center"><span onClick="{{ a.onRetire }}" style="padding:4px 12px;border-radius:4px;border:1px solid #e74c3c;color:#e74c3c;font-size:13px;cursor:pointer">Retire</span><span onClick="{{ a.onKeepSkill }}" style="padding:5px 14px;border-radius:4px;background:#444;font-size:13px;cursor:pointer">Keep</span></div>
+            <span style="font-size:11.5px;color:#6c757d;line-height:1.45">Retired skills aren't used by sessions. You can restore one from Skills.</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vDone }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:12px;font-weight:700;padding:1px 10px;border-radius:12px;background:#00bc8c">In Session</span><i class="mdi mdi-arrow-right" style="color:#6c757d"></i><span style="font-size:12px;font-weight:700;padding:1px 10px;border-radius:12px;background:#444">Done</span></div>
+            <div style="font-size:17px;font-weight:700;line-height:1.35">{{ a.doneTitle }}</div>
+            <div style="display:flex;gap:8px;padding:9px 10px;border:1px solid #444;border-radius:4px;background:#303030;font-size:12.5px;line-height:1.45"><i class="mdi {{ a.doneIcon }}" style="font-size:15px"></i><span>{{ a.doneEv }}</span></div>
+            <div style="display:flex;gap:8px;align-items:center"><span onClick="{{ a.onMarkDone }}" style="padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Mark Done</span><span onClick="{{ a.onNotYet }}" style="padding:5px 14px;border-radius:4px;background:#444;font-size:13px;cursor:pointer">Not Yet</span></div>
           </div>
         </sc-if>
         <sc-if value="{{ a.vTriage }}" hint-placeholder-val="{{ false }}">
@@ -114,25 +164,69 @@
         </sc-if>
         <sc-if value="{{ a.vSkills }}" hint-placeholder-val="{{ false }}">
           <div style="display:flex;flex-direction:column;gap:6px;padding:4px 10px 16px">
-            <div style="font-size:12px;color:#adb5bd;line-height:1.5;padding:0 4px 4px">Approved skills. The assistant attaches them to sessions and proposes changes when one goes wrong.</div>
-            <sc-for list="{{ a.skills }}" as="k" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #444;border-radius:4px;background:#303030"><i class="mdi mdi-school-outline" style="color:#3498db;font-size:16px"></i><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px;font-weight:700">{{ k.name }}</span><span style="font-size:11.5px;color:#6c757d">{{ k.meta }}</span></div><i class="mdi mdi-chevron-right" style="color:#6c757d"></i></div></sc-for>
+            <div style="font-size:12px;color:#adb5bd;line-height:1.5;padding:0 4px 4px">Approved skills. Sessions use them when they're relevant, and the assistant proposes changes when one goes wrong.</div>
+            <sc-for list="{{ a.skills }}" as="k" hint-placeholder-count="4"><div onClick="{{ k.onClick }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #444;border-radius:4px;background:#303030;cursor:pointer" style-hover="border-color:#6c757d"><i class="mdi mdi-school-outline" style="color:{{ k.ic }};font-size:16px"></i><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px;font-weight:700;color:{{ k.fg }}">{{ k.name }}</span><span style="font-size:11.5px;color:#6c757d">{{ k.meta }}</span></div><span style="font-size:10.5px;font-weight:800;letter-spacing:.04em;padding:0 7px;border-radius:12px;background:{{ k.locBg }}">{{ k.loc }}</span></div></sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vSkillD }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 9px;border-radius:12px;background:{{ a.sdLocBg }}">{{ a.sdLoc }}</span><span style="font-size:12px;color:#6c757d">{{ a.sdUsed }}</span></div>
+            <div style="font-size:17px;font-weight:700;color:{{ a.sdFg }}">{{ a.sdName }}</div>
+            <div style="border:1px solid #444;border-radius:4px;padding:6px 10px;font:11.5px/1.6 ui-monospace,Menlo,monospace;display:flex;flex-direction:column"><sc-for list="{{ a.sdLines }}" as="l" hint-placeholder-count="3"><span style="white-space:pre-wrap">{{ l }}</span></sc-for></div>
+            <sc-if value="{{ a.sdCanSave }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:6px"><span onClick="{{ a.onSaveRepo }}" style="align-self:flex-start;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;border:1px solid #3498db;color:#3498db;font-size:13px;cursor:pointer"><i class="mdi mdi-source-repository"></i>Save to Repository</span><span style="font-size:11.5px;color:#6c757d;line-height:1.45">Stored by Claudio. Save it to the repository to commit and share it.</span></div></sc-if>
+            <sc-if value="{{ a.confirmRepo }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid #3498db;border-radius:4px;background:#303030"><b style="font-size:13px">Save to Repository?</b><span style="font-size:12.5px;color:#adb5bd;line-height:1.5">Claudio copies this skill to <span style="font:12px ui-monospace,Menlo,monospace;color:#fff">{{ a.sdPath }}</span> in claude-project-manager. Commit it to share it with anyone who clones the repository. From then on Claudio uses the repository copy.</span><div style="display:flex;gap:8px;justify-content:flex-end"><span onClick="{{ a.onCancelRepo }}" style="padding:4px 12px;border-radius:4px;background:#444;font-size:13px;cursor:pointer">Cancel</span><span onClick="{{ a.onConfirmRepo }}" style="padding:4px 12px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Save to Repository</span></div></div></sc-if>
+            <sc-if value="{{ a.sdIsRepo }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:7px;font-size:12px;color:#adb5bd;line-height:1.5"><i class="mdi mdi-source-repository" style="font-size:14px;color:#3498db"></i><span>In the repository at <span style="font:11.5px ui-monospace,Menlo,monospace;color:#fff">{{ a.sdPath }}</span>. Edits made there show up in Needs You for review.</span></div></sc-if>
+            <sc-if value="{{ a.sdRetired }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#adb5bd"><span style="flex:1">Retired. Sessions don't use it.</span><span onClick="{{ a.onRestore }}" style="padding:4px 12px;border-radius:4px;background:#444;color:#fff;font-size:13px;cursor:pointer">Restore</span></div></sc-if>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vSettings }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:14px;padding:4px 14px 16px">
+            <div style="font-size:12px;color:#adb5bd">For claude-project-manager only.</div>
+            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">MODE</div>
+              <sc-for list="{{ a.modes }}" as="o" hint-placeholder-count="3"><div onClick="{{ o.onClick }}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid {{ o.border }};border-radius:4px;background:{{ o.bg }};cursor:pointer"><i class="mdi {{ o.icon }}" style="font-size:17px;color:{{ o.ic }}"></i><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px"><div style="display:flex;align-items:center;gap:6px"><b style="font-size:13px">{{ o.t }}</b><sc-if value="{{ o.isDefault }}" hint-placeholder-val="{{ false }}"><span style="font-size:10.5px;color:#6c757d">Default</span></sc-if></div><span style="font-size:12px;color:#adb5bd;line-height:1.45">{{ o.d }}</span></div></div></sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">PRIVACY</div>
+              <div style="display:flex;align-items:flex-start;gap:10px"><div style="flex:1;display:flex;flex-direction:column;gap:2px"><span style="font-size:13px">Don't send transcripts</span><span style="font-size:12px;color:#adb5bd;line-height:1.45">Follow-ups then use only the final message and the files changed.</span></div><span onClick="{{ a.onNoTx }}" style="flex:none;width:30px;height:17px;border-radius:9px;background:{{ a.noTxBg }};display:flex;justify-content:{{ a.noTxJust }};padding:2px;box-sizing:border-box;cursor:pointer;margin-top:2px"><span style="width:13px;height:13px;border-radius:50%;background:#fff"></span></span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">MODELS</div>
+              <sc-for list="{{ a.models }}" as="md" hint-placeholder-count="2"><div style="display:flex;align-items:center;gap:10px;font-size:13px"><span style="flex:1">{{ md.t }}</span><span onClick="{{ md.onClick }}" style="display:flex;align-items:center;gap:4px;padding:2px 6px 2px 10px;border:1px solid #444;border-radius:4px;background:#222;cursor:pointer">{{ md.v }}<i class="mdi mdi-chevron-down" style="color:#adb5bd"></i></span></div></sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">STORAGE</div><div style="display:flex;gap:7px;font-size:12.5px;color:#adb5bd;line-height:1.45"><i class="mdi mdi-lock-outline" style="font-size:14px;color:#6c757d"></i><span>Skills are stored by Claudio, not in the repository.</span></div></div>
+            <span onClick="{{ a.onOpenApp }}" style="align-self:flex-start;font-size:12.5px;color:#00bc8c;cursor:pointer">Usage limits for all projects: Settings › Assistant…</span>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vLog }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;padding:0 0 16px">
+            <div style="font-size:12px;color:#adb5bd;line-height:1.5;padding:0 14px 8px">Every Claude call the assistant made for this project, newest first.</div>
+            <sc-for list="{{ a.logRows }}" as="r" hint-placeholder-count="5"><div style="display:flex;flex-direction:column;gap:2px;padding:7px 14px;border-top:1px solid #333"><div style="display:flex;align-items:center;gap:8px;font-size:12.5px"><span style="font:11.5px ui-monospace,Menlo,monospace;color:#6c757d">{{ r.time }}</span><b>{{ r.job }}</b><span style="flex:1;min-width:0;color:#adb5bd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.what }}</span><span style="font-size:11px;color:#6c757d">{{ r.model }}</span></div><span style="font-size:11.5px;color:{{ r.rc }};padding-left:46px">{{ r.res }}</span></div></sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ a.vErr }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:12px;padding:4px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-alert-circle-outline" style="font-size:18px;color:#e74c3c"></i><b style="font-size:15px">{{ a.errTitle }}</b></div>
+            <div style="font-size:12.5px;color:#adb5bd;line-height:1.5;text-wrap:pretty">{{ a.errDesc }}</div>
+            <div style="font:11.5px ui-monospace,Menlo,monospace;color:#6c757d">{{ a.errJob }}</div>
+            <div style="display:flex;gap:10px;align-items:center"><span onClick="{{ a.onRetry }}" style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer"><i class="mdi mdi-refresh"></i>Try Again</span><span onClick="{{ a.onLog }}" style="font-size:13px;color:#00bc8c;cursor:pointer">Open Activity Log</span></div>
           </div>
         </sc-if>
         <sc-if value="{{ a.vChat }}" hint-placeholder-val="{{ false }}">
           <div style="display:flex;flex-direction:column;gap:12px;padding:4px 14px 16px">
             <div style="align-self:flex-end;max-width:85%;padding:7px 11px;border-radius:4px;background:#444;font-size:13px">{{ a.chatQ }}</div>
-            <div style="display:flex;gap:8px;font-size:13px;line-height:1.5"><i class="mdi mdi-creation" style="color:#3498db;margin-top:2px"></i><span style="text-wrap:pretty">{{ a.chatA }}</span></div>
-            <div style="display:flex;flex-direction:column;gap:6px;padding-left:22px"><sc-for list="{{ a.chatRefs }}" as="r" hint-placeholder-count="2"><span onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 9px;border:1px solid #444;border-radius:4px;cursor:pointer"><i class="mdi mdi-format-list-checks" style="font-size:13px;color:#adb5bd"></i>{{ r.t }}</span></sc-for></div>
+            <sc-if value="{{ a.chatThinking }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:#adb5bd"><div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-loading mdi-spin" style="color:#3498db;font-size:15px"></i>Reading the plan, notes and recent sessions…</div><span style="font-size:11.5px;color:#6c757d;padding-left:23px">Answers take a few seconds, up to about 30.</span><sc-if value="{{ a.askHigh }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px;color:#6c757d;padding-left:23px">{{ a.highText }}</span></sc-if></div></sc-if>
+            <sc-if value="{{ a.chatDone }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex;gap:8px;font-size:13px;line-height:1.5"><i class="mdi mdi-creation" style="color:#3498db;margin-top:2px"></i><span style="text-wrap:pretty">{{ a.chatA }}</span></div>
+              <div style="display:flex;flex-direction:column;gap:6px;padding-left:22px"><sc-for list="{{ a.chatRefs }}" as="r" hint-placeholder-count="2"><span onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:5px 9px;border:1px solid #444;border-radius:4px;cursor:pointer"><i class="mdi mdi-format-list-checks" style="font-size:13px;color:#adb5bd"></i>{{ r.t }}</span></sc-for></div>
+            </sc-if>
           </div>
         </sc-if>
       </div>
       <div style="flex:none;padding:10px;border-top:1px solid #444;display:flex;flex-direction:column;gap:7px">
-        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #444;border-radius:4px;background:#222;font-size:13px;color:#6c757d"><i class="mdi mdi-creation" style="font-size:14px;color:#3498db"></i>Ask about this project…</div>
-        <sc-if value="{{ a.showAskChip }}" hint-placeholder-val="{{ true }}"><span onClick="{{ a.onAsk }}" style="align-self:flex-start;font-size:12px;padding:2px 9px;border-radius:12px;border:1px solid #444;color:#adb5bd;cursor:pointer">What's left on the Shell work?</span></sc-if>
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #444;border-radius:4px;background:#222;font-size:13px;color:#6c757d;opacity:{{ a.askOpacity }}"><i class="mdi mdi-creation" style="font-size:14px;color:#3498db"></i>{{ a.askText }}</div>
+        <sc-if value="{{ a.showAskChip }}" hint-placeholder-val="{{ true }}"><span onClick="{{ a.onAsk }}" style="align-self:flex-start;font-size:12px;padding:2px 9px;border-radius:12px;border:1px solid #444;color:#adb5bd;cursor:pointer" style-hover="color:#fff;border-color:#6c757d">What's left on the Shell work?</span></sc-if>
       </div>
     </div>
     </sc-if>
-    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;position:relative">
       <div style="height:38px;flex:none;display:flex;align-items:stretch;border-bottom:1px solid #444;background:#2b2b2b;font-size:13px;overflow:hidden">
         <sc-for list="{{ a.tabs }}" as="t" hint-placeholder-count="3"><div onClick="{{ t.onClick }}" style="display:flex;align-items:center;gap:7px;padding:0 14px;color:{{ t.fg }};background:{{ t.bg }};box-shadow:inset 0 -2px 0 {{ t.line }};border-right:1px solid #444;white-space:nowrap;cursor:default"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.dot }}"></span>{{ t.name }}<span style="font-size:10.5px;font-weight:700;color:#6c757d;letter-spacing:.04em">{{ t.role }}</span></div></sc-for>
         <span style="flex:1"></span><span style="display:flex;align-items:center;padding:0 12px;color:#adb5bd"><i class="mdi mdi-plus" style="font-size:16px"></i></span>
@@ -143,16 +237,28 @@
         <span style="flex:1"></span>
         <span style="display:flex;align-items:center;gap:6px"><span style="width:36px;height:4px;border-radius:2px;background:#444;display:flex"><span style="width:{{ a.ctxW }};background:#00bc8c;border-radius:2px"></span></span><span style="font-size:11.5px;font-weight:600;color:#adb5bd">{{ a.ctx }}</span></span>
         <span style="font-size:12px;font-weight:700;padding:1px 10px;border-radius:12px;background:{{ a.statusBg }};white-space:nowrap">{{ a.statusT }}</span>
-        <i class="mdi mdi-dots-horizontal" style="font-size:18px;color:#adb5bd"></i>
+        <span onClick="{{ a.onSMenu }}" title="Session actions" style="display:flex;padding:2px 4px;border-radius:4px;cursor:pointer;background:{{ a.smenuBg }}" style-hover="background:#444"><i class="mdi mdi-dots-horizontal" style="font-size:18px;color:#adb5bd"></i></span>
       </div>
+      <sc-if value="{{ a.smenuOpen }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;right:10px;top:74px;z-index:15;width:230px;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:5px;font-size:13px;display:flex;flex-direction:column">
+        <div style="padding:5px 10px;color:#adb5bd">Rename…</div><div style="padding:5px 10px;color:#adb5bd;display:flex;justify-content:space-between">Move to Folder<i class="mdi mdi-chevron-right"></i></div>
+        <div style="height:1px;background:#444;margin:4px 6px"></div>
+        <div onClick="{{ a.onReview }}" style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:4px;cursor:pointer" style-hover="background:rgba(52,152,219,.35)"><i class="mdi mdi-creation" style="color:#3498db"></i>Review This Session</div>
+        <div style="height:1px;background:#444;margin:4px 6px"></div>
+        <div style="padding:5px 10px;color:#adb5bd">Stop Session</div>
+      </div></sc-if>
       <div style="flex:1;min-height:0;overflow:hidden;padding:14px 18px;display:flex;flex-direction:column;gap:10px;font:12.5px/1.5 ui-monospace,'SF Mono',Menlo,monospace">
         <sc-for list="{{ a.lines }}" as="l" hint-placeholder-count="6"><div style="display:flex;gap:10px;padding:{{ l.pad }};background:{{ l.bg }}"><span style="flex:none;width:12px;color:{{ l.mc }}">{{ l.m }}</span><span style="color:{{ l.c }};white-space:pre-wrap">{{ l.t }}</span></div></sc-for>
       </div>
       <sc-if value="{{ a.showInline }}" hint-placeholder-val="{{ false }}">
         <div style="margin:0 16px 14px;border:1px solid #444;border-radius:6px;background:#303030;display:flex;flex-direction:column;flex:none">
-          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:13px"><i class="mdi mdi-creation" style="color:#3498db;font-size:16px"></i><b>Assistant</b><span style="color:#adb5bd">Shell Terminal finished. Here's what I'd keep.</span><span style="flex:1"></span><span onClick="{{ a.onFollowLater }}" title="Keep in Needs You" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-close" style="font-size:15px"></i></span></div>
-          <sc-for list="{{ a.follow }}" as="f" hint-placeholder-count="4"><div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-top:1px solid #444"><span onClick="{{ f.onToggle }}" style="display:flex;cursor:pointer"><i class="mdi {{ f.box }}" style="font-size:17px;color:{{ f.boxC }}"></i></span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px">{{ f.t }}</span><span style="font-size:11.5px;color:#6c757d">{{ f.sub }}</span></div><span style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#adb5bd">{{ f.tag }}</span></div></sc-for>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #444;font-size:12px;color:#adb5bd"><i class="mdi mdi-school-outline" style="color:#3498db"></i><span style="flex:1">It also learned a skill. It's waiting in Needs You.</span><span onClick="{{ a.onFollowLater }}" style="cursor:pointer;font-size:13px">Later</span><span onClick="{{ a.onApply }}" style="padding:4px 12px;border-radius:4px;background:#00bc8c;color:#fff;font-size:13px;font-weight:700;cursor:pointer">{{ a.applyLabel }}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:13px"><i class="mdi mdi-creation" style="color:#3498db;font-size:16px"></i><b>Assistant</b><span style="color:#adb5bd">{{ a.inTitle }}</span><span style="flex:1"></span><span onClick="{{ a.onFollowLater }}" title="Keep in Needs You" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-close" style="font-size:15px"></i></span></div>
+          <sc-if value="{{ a.inWorking }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:3px;padding:10px 14px;border-top:1px solid #444;font-size:12.5px;color:#adb5bd"><div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-loading mdi-spin" style="color:#3498db;font-size:15px"></i>{{ a.inWorkText }}</div><span style="font-size:11.5px;color:#6c757d;padding-left:23px">This can take up to about 30 seconds. You can keep working.</span><sc-if value="{{ a.inHigh }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px;color:#6c757d;padding-left:23px">{{ a.highText }}</span></sc-if></div></sc-if>
+          <sc-if value="{{ a.inReady }}" hint-placeholder-val="{{ false }}">
+            <sc-for list="{{ a.inFollow }}" as="f" hint-placeholder-count="3"><div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-top:1px solid #444"><span onClick="{{ f.onToggle }}" style="display:flex;cursor:pointer"><i class="mdi {{ f.box }}" style="font-size:17px;color:{{ f.boxC }}"></i></span><div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px"><span style="font-size:13px">{{ f.t }}</span><span style="font-size:11.5px;color:#6c757d">{{ f.sub }}</span></div><span style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#adb5bd">{{ f.tag }}</span></div></sc-for>
+            <sc-if value="{{ a.inEmpty }}" hint-placeholder-val="{{ false }}"><div style="padding:8px 14px;border-top:1px solid #444;font-size:12.5px;color:#adb5bd">Nothing new to keep from this session.</div></sc-if>
+            <sc-if value="{{ a.inOld }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:7px;padding:8px 14px;border-top:1px solid #444;font-size:12px;color:#adb5bd"><i class="mdi mdi-information-outline" style="font-size:14px;color:#6c757d"></i>Started before the assistant, so this is from its final message and changed files only. New sessions get its skills.</div></sc-if>
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #444;font-size:12px;color:#adb5bd"><sc-if value="{{ a.inSkill }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-school-outline" style="color:#3498db"></i><span>It also learned a skill. It's waiting in Needs You.</span></sc-if><span style="flex:1"></span><span onClick="{{ a.onFollowLater }}" style="cursor:pointer;font-size:13px">Later</span><span onClick="{{ a.onApply }}" style="padding:4px 12px;border-radius:4px;background:#00bc8c;color:#fff;font-size:13px;font-weight:700;cursor:pointer">{{ a.applyLabel }}</span></div>
+          </sc-if>
         </div>
       </sc-if>
     </div>
@@ -160,7 +266,7 @@
   </div>
   <div style="height:28px;flex:none;display:flex;align-items:center;gap:14px;padding:0 12px;background:#2b2b2b;border-top:1px solid #444;font-size:12px;color:#adb5bd">
     <span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#00bc8c"></span>{{ a.cWork }}</span><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#f39c12"></span>{{ a.cWait }}</span><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:#6c757d"></span>{{ a.cDone }}</span>
-    <span style="flex:1"></span><span>Session <b style="color:#f39c12">80%</b> · Week <b style="color:#00bc8c">11%</b></span>
+    <span style="flex:1"></span><span onClick="{{ a.onOpenApp }}" style="cursor:pointer">Session <b style="color:{{ a.uC }}">{{ a.u5 }}</b> · Week <b style="color:#00bc8c">{{ a.uw }}</b></span>
   </div>
   <sc-if value="{{ a.showSheet }}" hint-placeholder-val="{{ false }}">
     <div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding-top:80px;z-index:20">
@@ -173,14 +279,29 @@
             <span style="color:#adb5bd">Role</span><div style="display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12.5px;justify-self:start"><sc-for list="{{ a.roles }}" as="r" hint-placeholder-count="2"><span onClick="{{ r.onClick }}" style="padding:4px 14px;background:{{ r.bg }};color:{{ r.fg }};cursor:pointer">{{ r.t }}</span></sc-for></div>
             <span style="color:#adb5bd">Worktree</span><div style="display:flex;align-items:center;gap:10px"><span onClick="{{ a.onWt }}" style="width:30px;height:17px;border-radius:9px;background:{{ a.wtBg }};display:flex;justify-content:{{ a.wtJust }};padding:2px;box-sizing:border-box;cursor:pointer"><span style="width:13px;height:13px;border-radius:50%;background:#fff"></span></span><span style="font:12px ui-monospace,Menlo,monospace;color:#adb5bd">{{ a.wtText }}</span></div>
           </div>
-          <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">OPENING PROMPT</span><div style="padding:9px 11px;border:1px solid #444;border-radius:4px;background:#222;font:12px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:#dee2e6">{{ a.shPrompt }}</div></div>
-          <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">SKILLS</span><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><sc-for list="{{ a.shSkills }}" as="k" hint-placeholder-count="2"><span style="display:flex;align-items:center;gap:5px;font-size:12px;padding:1px 4px 1px 9px;border-radius:12px;background:#444"><i class="mdi mdi-school-outline" style="font-size:12px"></i>{{ k.name }}<span onClick="{{ k.onRemove }}" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-close" style="font-size:12px"></i></span></span></sc-for><span style="font-size:11.5px;color:#6c757d">Picked from the files this item touches.</span></div></div>
+          <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">OPENING PROMPT</span><div style="padding:9px 11px;border:1px solid #444;border-radius:4px;background:#222;font:12px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap;color:#dee2e6"><span>{{ a.shPrompt }}</span><sc-if value="{{ a.shHasSkills }}" hint-placeholder-val="{{ true }}"><span style="display:block;margin-top:10px">Use these skills: <span style="color:#3498db">{{ a.shSkillText }}</span></span></sc-if></div></div>
+          <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">SKILLS</span><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><sc-for list="{{ a.shSkills }}" as="k" hint-placeholder-count="2"><span style="display:flex;align-items:center;gap:5px;font-size:12px;padding:1px 4px 1px 9px;border-radius:12px;background:rgba(52,152,219,.35)"><i class="mdi mdi-school-outline" style="font-size:12px"></i>{{ k.name }}<span onClick="{{ k.onRemove }}" title="Leave out of the prompt" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-close" style="font-size:12px"></i></span></span></sc-for></div><span style="font-size:11.5px;color:#6c757d">Named in the opening prompt. Other approved skills stay available.</span></div>
         </div>
         <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #444"><span onClick="{{ a.onCancelSheet }}" style="padding:5px 14px;border-radius:4px;background:#444;font-size:13px;cursor:pointer">Cancel</span><span onClick="{{ a.onConfirm }}" style="padding:5px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Start Session</span></div>
       </div>
     </div>
   </sc-if>
-  <sc-if value="{{ a.hasToast }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;left:50%;bottom:44px;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.4)"><i class="mdi mdi-check" style="font-size:15px"></i>{{ a.toast }}</div></sc-if>
+  <sc-if value="{{ a.appOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-start;justify-content:center;padding-top:70px;z-index:22">
+      <div style="width:580px;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 20px 60px rgba(0,0,0,.6);display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;padding:12px 18px 0"><span style="font-size:17px;flex:1">Settings</span><span onClick="{{ a.onCloseApp }}" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-close" style="font-size:18px"></i></span></div>
+        <div style="display:flex;gap:4px;padding:10px 18px 0;border-bottom:1px solid #444;font-size:13px"><span style="padding:6px 12px;color:#adb5bd">General</span><span style="padding:6px 12px;color:#adb5bd">Sessions</span><span style="padding:6px 12px;color:#adb5bd">GitHub</span><span style="padding:6px 12px;box-shadow:inset 0 -2px 0 #00bc8c">Assistant</span></div>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:16px;font-size:13px">
+          <div style="display:flex;align-items:flex-start;gap:12px"><div style="flex:1;display:flex;flex-direction:column;gap:2px"><span>Use the assistant</span><span style="font-size:12px;color:#adb5bd">Off turns it off in every project. Notes and plans stay.</span></div><span onClick="{{ a.onAppOn }}" style="flex:none;width:30px;height:17px;border-radius:9px;background:{{ a.appOnBg }};display:flex;justify-content:{{ a.appOnJust }};padding:2px;box-sizing:border-box;cursor:pointer;margin-top:2px"><span style="width:13px;height:13px;border-radius:50%;background:#fff"></span></span></div>
+          <div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span>Pause background work at</span><input type="number" value="{{ a.th }}" onChange="{{ a.onTh }}" min="50" max="100" step="5" style="width:54px;background:#222;border:1px solid #444;border-radius:4px;color:#fff;font:inherit;padding:3px 6px"><span>% of the 5-hour or weekly limit</span></div><span style="font-size:12px;color:#adb5bd">Now: 5-hour {{ a.u5 }}, weekly {{ a.uw }}.</span></div>
+          <div style="display:flex;align-items:flex-start;gap:12px"><div style="flex:1;display:flex;flex-direction:column;gap:2px"><span>Allow background work while using credits</span><span style="font-size:12px;color:#adb5bd">Off by default, so background work never spends credits.</span></div><span onClick="{{ a.onCred }}" style="flex:none;width:30px;height:17px;border-radius:9px;background:{{ a.credBg }};display:flex;justify-content:{{ a.credJust }};padding:2px;box-sizing:border-box;cursor:pointer;margin-top:2px"><span style="width:13px;height:13px;border-radius:50%;background:#fff"></span></span></div>
+          <div style="display:flex;gap:8px;padding:9px 11px;border-radius:4px;background:#222;font-size:12.5px;color:#adb5bd;line-height:1.45"><i class="mdi mdi-information-outline" style="font-size:15px;color:#6c757d"></i><span>Things you start yourself always run: Ask, Promote, Review This Session and Import Issues.</span></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;padding:12px 18px;border-top:1px solid #444"><span onClick="{{ a.onCloseApp }}" style="padding:5px 16px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;cursor:pointer">Done</span></div>
+      </div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ a.hasToast }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;left:50%;bottom:44px;transform:translateX(-50%);z-index:30;display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:4px;background:#00bc8c;font-size:13px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.4);white-space:nowrap"><i class="mdi mdi-check" style="font-size:15px"></i>{{ a.toast }}</div></sc-if>
 </div>
 <ul style="margin:0;padding-left:18px;color:#adb5bd;font-size:13px;line-height:1.65"><li><b style="color:#fff">Good:</b> the terminal stays in view whatever you're doing, and capture, triage and review all happen beside the work. <b style="color:#fff">Trade-off:</b> 330px is tight for skill text and long notes, and the panel replaces the session tree while it's open.</li></ul>
 </div>
@@ -402,9 +523,11 @@ const FOLLOW={
   f4:{t:'Mark "Shell panel" as Done',sub:'PR #14 is merged',tag:'PLAN'},
 };
 const CAP='Maximising the Shell panel flickers once while SwiftTerm resizes.';
+const CAP_DUP='The Shell panel should come back at the same height after a relaunch.';
 const JOURNEYS=[[1,'Capture a note'],[2,'Start from the plan'],[3,'Session finishes'],[4,'Review a skill'],[5,'GitHub issues']];
+const JOURNEYS_A=[...JOURNEYS,[6,'Settings and usage'],[7,'Skill upkeep'],[8,'Manual mode'],[9,'Waiting and errors']];
 const HINTS={
-  a:{1:"You're working in Shell Follow Up. Capture a thought without leaving it, save it, then answer the assistant's suggestion on the note.",2:'Open "Remember Shell panel height per project" under Planned, then start a session from it.',3:'Shell Terminal is finishing its post-merge work. Wait a moment for the follow-ups to appear, then choose what to keep.',4:'The assistant wrote a skill from a hard lesson. Open it in Needs You, then edit it, approve it or put it off.',5:'Two new GitHub issues were triaged. Handle both, then open an idea in the plan and create an issue from it.'},
+  a:{1:"You're working in Shell Follow Up. Capture a new bug, then a note that repeats a plan item, and answer each suggestion. Notes shows yours, the assistant's and ones sessions wrote themselves.",2:'Open "Remember Shell panel height per project" under Planned and start a session from it. The skill chips are named in the opening prompt.',3:'Shell Terminal is finishing its post-merge work. Watch the assistant review it, then choose what to keep.',4:'The assistant wrote a skill from a hard lesson. Open it in Needs You, then edit it, approve it or put it off.',5:'Two issues were triaged, a PR merged and an issue closed. Handle them, then open an idea in the plan and create an issue from it.',6:'Background work is paused because 5-hour usage is 84%. Open ⋯ › Assistant Settings to try the modes, then Settings to change the limit.',7:'Work through the three skill cards. Then open ⋯ › Skills and save one to the repository.',8:'Manual mode: nothing appears when Shell Terminal finishes. Choose Review This Session from ⋯ in the session header. Try Cmd + Enter too, which started before the assistant.',9:'Two jobs are running and three have failed. Let the running ones finish, open a failure and choose Try Again, or ask a question and wait for the answer.'},
   b:{1:"You're working in Shell Follow Up. Capture a thought from anywhere, save it, then answer the suggestion that appears.",2:'The Assistant page is open. Click "Remember Shell panel height per project" and start a session from it.',3:'Shell Terminal is finishing its post-merge work. Wait a moment for the card at the bottom right, then review it.',4:'Open the new skill in Needs You, then edit it, approve it or put it off.',5:'Open the triaged issues, or use Import Issues. Afterwards, open an idea and create an issue from it.'},
 };
 const base=()=>({
@@ -433,16 +556,83 @@ const base=()=>({
   inbox:['x1','x2'],triage:{},follow:{f1:true,f2:true,f3:true,f4:true},
 });
 
+// 9a only
+const SESSION_NOTES=[
+  {id:'n5',text:'ShellPanelTests need a fake PTY. The real one hangs on CI.',from:'Shell Follow Up',when:'2m',by:'session'},
+  {id:'n6',text:'SIGPIPE exits report 141. Decode them as 128 + signal.',from:'Shell Follow Up',when:'6m',by:'session'},
+];
+const SKILLS0=[
+  {id:'wt',name:'Worktree setup',loc:'claudio',used:'Used in 9 sessions · changed 12 Sep',lines:['Create worktrees under .claude/worktrees/<name>.','Branch from local main.','Run swift build once before handing over.']},
+  {id:'sp',name:'Shell panel code map',loc:'claudio',used:'Used in 4 sessions · written 26 Sep',lines:['ShellPanel.swift holds tabs and state.','ShellPanelViews.swift draws the panel.','AppModel+Shells.swift starts and closes shells.']},
+  {id:'rd',name:'README style',loc:'repo',used:'Used in 2 sessions · written 14 Sep',lines:['Keep sections short. One table per section at most.','List shortcuts in a table.','British English.']},
+  {id:'sw',name:'Swift test conventions',loc:'claudio',used:'Last used 29 Aug',lines:['One test file per source file.','Name tests test_<behaviour>.','Prefer fakes over mocks.']},
+];
+const CHG_DIFF=[[' ','Create worktrees under .claude/worktrees/<name>.'],['-','Branch from local main.'],['+','Run git fetch origin first.'],['+','Branch from origin/main, not local main.'],[' ','Run swift build once before handing over.']];
+const EXT_DIFF=[[' ','Keep sections short. One table per section at most.'],['-','List shortcuts in a table.'],['+','List shortcuts as bullets, grouped by panel.'],[' ','British English.']];
+const INBOX_A={
+  xc:{icon:'mdi-school-outline',ic:BLUE,title:'Changed skill: Worktree setup',sub:'Proposed after Shell Follow Up. Needs your approval.',view:'chg'},
+  xe:{icon:'mdi-file-document-edit-outline',ic:WARN,title:'README style was edited outside Claudio',sub:'A session changed its file. Keep or revert the change.',view:'ext'},
+  xu:{icon:'mdi-sleep',ic:SUB,title:'Unused skill: Swift test conventions',sub:'Not used by any session for 30 days.',view:'unused'},
+  xm1:{icon:'mdi-source-merge',ic:'#fff',title:'PR #14 merged',sub:'Mark "Shell panel" as Done?',view:'done',vid:'i6'},
+  xm2:{icon:'mdi-github',ic:'#fff',title:'Issue #19 was closed',sub:'Mark "⌘↩ inserts a newline" as Done?',view:'done',vid:'i2'},
+  p1:{prog:true,title:'Drafting a skill from Shell Terminal…'},
+  p2:{prog:true,title:'Triaging 2 new issues…'},
+  p_e1:{prog:true,title:'Reviewing Update PR…'},
+  p_e2:{prog:true,title:'Drafting a skill from Shell Terminal…'},
+  p_e3:{prog:true,title:'Triaging new issues…'},
+  e1:{err:true,title:'Follow-up for Update PR failed',sub:"You're signed out of Claude Code.",view:'err',vid:'e1'},
+  e2:{err:true,title:'Skill draft failed',sub:'The call to Claude timed out.',view:'err',vid:'e2'},
+  e3:{err:true,title:'Issue triage failed',sub:"Claude Code wasn't found.",view:'err',vid:'e3'},
+};
+const DONE_EV={i6:['mdi-source-merge','PR #14 was merged into main as 352ddc7 on 28 Sep.'],i2:['mdi-github','Issue #19 was closed on GitHub 12 minutes ago.']};
+const ERRS={
+  e1:{t:"You're signed out of Claude Code",d:'Claude Code is installed but not signed in. Run claude in a Shell and sign in, then try again.',job:'Follow-up · Update PR · Sonnet · 09:58'},
+  e2:{t:'The call to Claude timed out',d:'No answer came back within 60 seconds. Nothing was changed.',job:'Skill draft · Shell Terminal · Sonnet · 09:31'},
+  e3:{t:"Claude Code wasn't found",d:"Claudio couldn't find the claude command. Install Claude Code, or set its path in Settings › General.",job:'Triage · 2 issues · Haiku · 09:40'},
+};
+const RETRY={e1:'xf_upr',e2:'x1',e3:'x2'};
+const FOLLOWS={
+  st:[{id:'f1',tag:'NOTE',t:FOLLOW.f1.t},
+      {id:'f2',tag:'PLAN',t:FOLLOW.f2.t,sub:FOLLOW.f2.sub,apply:m=>m.items.push({id:'iw',title:FOLLOW.f2.t,status:'planned',issue:null,notes:[],folder:'In-built Shell'})},
+      {id:'f3',tag:'PLAN',t:FOLLOW.f3.t,sub:FOLLOW.f3.sub,apply:m=>{const i=m.items.find(x=>x.id==='i5');if(i)i.status='planned';}},
+      {id:'f4',tag:'PLAN',t:FOLLOW.f4.t,sub:FOLLOW.f4.sub,apply:m=>{const i=m.items.find(x=>x.id==='i6');if(i){i.status='done';i.session=null;}}}],
+  ce:[{id:'g1',tag:'NOTE',t:'⌘↩ reuses the ESC + CR bytes that ⇧↩ already sends.'},
+      {id:'g2',tag:'PLAN',t:'Test ⌘↩ in NewlineKeyTests',sub:'New plan item in Bug Fixes',apply:m=>m.items.push({id:'ig',title:'Test ⌘↩ in NewlineKeyTests',status:'planned',issue:null,notes:[],folder:'Bug Fixes'})}],
+  upr:[{id:'u1',tag:'NOTE',t:'The PR #13 description now lists the Shell panel shortcuts.'},
+      {id:'u2',tag:'PLAN',t:'Add screenshots to PR descriptions',sub:'New idea in Github Integration',apply:m=>m.items.push({id:'iu',title:'Add screenshots to PR descriptions',status:'idea',issue:null,notes:[],folder:'Github Integration'})}],
+  sfu:[{id:'h1',tag:'NOTE',t:'The core-dump bit was already masked. It only needed a test.'},
+      {id:'h2',tag:'PLAN',t:'Add exit-status tests for signals',sub:'New plan item in In-built Shell',apply:m=>m.items.push({id:'ih',title:'Add exit-status tests for signals',status:'planned',issue:null,notes:[],folder:'In-built Shell'})}],
+};
+const LOG0=[['10:12','Quick check','Note from Shell Follow Up','Haiku','Done'],['09:58','Follow-up','Cmd + Enter','Sonnet','Done'],['09:31','Triage','2 issues','Haiku','Done']];
+const LOG_PAUSED=[['10:44','Follow-up','Shell Follow Up','Sonnet','Skipped: 5-hour usage 84%'],['10:30','Triage','1 new issue','Haiku','Skipped: 5-hour usage 84%']];
+const LOG_FAILED=[['09:58','Follow-up','Update PR','Sonnet',"Failed: signed out of Claude Code"],['09:40','Triage','2 issues','Haiku',"Failed: claude command not found"],['09:31','Skill draft','Shell Terminal','Sonnet','Failed: timed out after 60 s']];
+const _nowHHMM=()=>{const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
+const _slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+const _shorten=t=>{const w=t.replace(/\.$/,'').split(' ');return w.length>9?w.slice(0,9).join(' ')+'…':w.join(' ');};
+
 class Component extends DCLogic {
+  _timers = { a: [], b: [] };
+  _noteSeq = 0;
   state = { a: this.preset(1,'a'), b: this.preset(2,'b') };
   preset(j,k){
-    const m=base();
-    const s={j,m,tool:'assistant',page:false,sel:'sfu',mode:'plan',view:'list',vid:null,cap:null,text:CAP,sheet:null,toast:'',sessToast:false,inline:false,skEdit:false,skText:SKILL.join('\n')};
+    const m=base(),A=k==='a';
+    const s={j,m,tool:'assistant',page:false,sel:'sfu',mode:'plan',view:'list',vid:null,cap:null,text:CAP,sheet:null,toast:'',sessToast:false,inline:A?null:false,skEdit:false,skText:SKILL.join('\n'),menu:false,smenu:false,ed:false,edText:'',confirmRepo:false,appSheet:false,chatPhase:'done'};
+    if(A){
+      m.notes.splice(0,0,SESSION_NOTES[0]);m.notes.splice(2,0,SESSION_NOTES[1]);
+      m.skills=structuredClone(SKILLS0);m.set={mode:'auto',noTx:false,quick:'Haiku',main:'Sonnet'};m.app={on:true,th:80,credits:false};
+      m.u5=62;m.uw=41;m.log=LOG0.map(r=>[...r]);m.sess.ce.old=true;m.sess.upr.old=true;
+    }
     if(j===1){s.tool='sessions';}
     if(j===2){s.page=true;}
     if(j===3){s.sel='st';m.sess.st.status='working';m.inbox=['x2'];s.tool='assistant';}
     if(j===4){s.page=true;}
-    if(j===5){s.page=true;m.inbox=['x2','x1'];}
+    if(j===5){s.page=true;m.inbox=A?['x2','xm1','xm2']:['x2','x1'];}
+    if(A){
+      if(j===6){m.u5=84;m.inbox=['x2'];m.log=[...LOG_PAUSED,...m.log];}
+      if(j===7){m.inbox=['xc','xe','xu'];}
+      if(j===8){m.set.mode='manual';s.sel='st';m.sess.st.status='working';m.inbox=[];}
+      if(j===9){m.inbox=['p1','p2','e1','e2','e3'];m.log=[...LOG_FAILED,...m.log];}
+    }
     if(k==='b')s.tool='sessions';
     return s;
   }
@@ -451,57 +641,131 @@ class Component extends DCLogic {
     window.addEventListener('keydown',this.kd);
     this.go('a',1);this.go('b',2);
   }
-  componentWillUnmount(){window.removeEventListener('keydown',this.kd);['a','b'].forEach(k=>{clearTimeout(this['ft'+k]);clearTimeout(this['tt'+k]);clearTimeout(this['ct'+k]);});}
+  componentWillUnmount(){window.removeEventListener('keydown',this.kd);['a','b'].forEach(k=>{this.clearT(k);clearTimeout(this['tt'+k]);});}
+  addT(k,fn,ms){this._timers[k].push(setTimeout(fn,ms));}
+  clearT(k){this._timers[k].forEach(clearTimeout);this._timers[k]=[];}
   set(k,p){this.setState(st=>({[k]:{...st[k],...(typeof p==='function'?p(st[k]):p)}}));}
   mut(k,fn){this.setState(st=>{const s={...st[k],m:structuredClone(st[k].m)};const r=fn(s.m,s)||{};return {[k]:{...s,...r}};});}
   toast(k,t){this.set(k,{toast:t});clearTimeout(this['tt'+k]);this['tt'+k]=setTimeout(()=>this.set(k,{toast:''}),2600);}
+  logA(m,job,what,model,res){if(m.log)m.log.unshift([_nowHHMM(),job,what,model,res]);}
+  isOn(m){return m.app.on&&m.set.mode!=='off';}
+  isPaused(m){return this.isOn(m)&&m.set.mode==='auto'&&m.u5>=m.app.th;}
   go(k,j){
-    ['ft','ct'].forEach(p=>clearTimeout(this[p+k]));
+    this.clearT(k);
     this.setState({[k]:this.preset(j,k)});
-    if(j===3)this['ft'+k]=setTimeout(()=>this.finish(k),1800);
+    if(j===3)this.addT(k,()=>this.finish(k),1800);
+    if(k==='a'&&j===8)this.addT(k,()=>this.finish(k),1800);
+    if(k==='a'&&j===9){
+      this.addT(k,()=>this.resolveProg(k,'p1','x1','Skill draft','Shell Terminal','Sonnet'),4500);
+      this.addT(k,()=>this.resolveProg(k,'p2','x2','Triage','2 issues','Haiku'),7000);
+    }
+  }
+  resolveProg(k,pid,to,job,what,model){
+    this.mut(k,m=>{const i=m.inbox.indexOf(pid);if(i<0)return;m.inbox.splice(i,1,to);
+      if(to.startsWith('xf_'))this.addFollowNotes(m,to.slice(3));
+      this.logA(m,job,what,model,'Done');});
   }
   finish(k){
+    if(k==='a'){
+      const m0=this.state.a.m,auto=this.isOn(m0)&&m0.set.mode==='auto',paused=this.isPaused(m0);
+      this.mut(k,m=>{m.sess.st.status='done';m.term.st=[...TERM0.st,...ST_DONE];if(paused)this.logA(m,'Follow-up','Shell Terminal','Sonnet','Skipped: 5-hour usage '+m.u5+'%');});
+      if(auto&&!paused){this.set(k,{inline:{sid:'st',phase:'working'}});this.addT(k,()=>this.followReady(k,'st',false),1600);}
+      return;
+    }
     this.mut(k,m=>{
       m.sess.st.status='done';m.term.st=[...TERM0.st,...ST_DONE];
       m.notes.unshift({id:'nf',text:FOLLOW.f1.t,from:'Shell Terminal',when:'now',by:'asst'});
       m.inbox=['x3','x1',...m.inbox];
-      return k==='a'?{inline:true}:{sessToast:true};
+      return {sessToast:true};
     });
   }
-  openCapture(k){
-    clearTimeout(this['ct'+k]);
-    this.set(k,s=>({cap:'edit',text:CAP,...(k==='a'?{tool:'assistant',view:'list',mode:'notes'}:{})}));
+  addFollowNotes(m,sid){
+    (FOLLOWS[sid]||[]).filter(f=>f.tag==='NOTE'&&m.follow[f.id]!==false).forEach(f=>{if(!m.notes.find(n=>n.id==='fn_'+f.id))m.notes.unshift({id:'fn_'+f.id,text:f.t,from:m.sess[sid].name,when:'now',by:'asst'});});
+  }
+  followReady(k,sid,manual){
+    this.mut(k,m=>{
+      this.addFollowNotes(m,sid);
+      if((FOLLOWS[sid]||[]).length&&!m.inbox.includes('xf_'+sid))m.inbox.unshift('xf_'+sid);
+      if(sid==='st'&&!m.skillOk&&!m.inbox.includes('x1'))m.inbox.splice(1,0,'x1');
+      this.logA(m,'Follow-up',m.sess[sid].name,m.set.main,'Done');
+      return {inline:{sid,phase:'ready',manual}};
+    });
+  }
+  review(k){
+    const s=this.state[k];
+    if(!this.isOn(s.m)){this.set(k,{smenu:false});this.toast(k,'The assistant is off for this project.');return;}
+    const sid=s.sel;
+    this.set(k,{smenu:false,inline:{sid,phase:'working',manual:true}});
+    this.addT(k,()=>this.followReady(k,sid,true),2600);
+  }
+  toggleFollowA(k,f,sid){
+    this.mut(k,m=>{const on=m.follow[f.id]!==false;m.follow[f.id]=!on;
+      if(f.tag==='NOTE'){if(on)m.notes=m.notes.filter(n=>n.id!=='fn_'+f.id);else if(!m.notes.find(n=>n.id==='fn_'+f.id))m.notes.unshift({id:'fn_'+f.id,text:f.t,from:m.sess[sid].name,when:'now',by:'asst'});}});
+  }
+  applyFollowA(k){
+    const s=this.state[k],sid=s.inline&&s.inline.sid;if(!sid)return;
+    const fl=FOLLOWS[sid]||[],picked=fl.filter(f=>f.tag==='PLAN'&&s.m.follow[f.id]!==false);
+    this.mut(k,m=>{picked.forEach(f=>f.apply(m));m.inbox=m.inbox.filter(x=>x!=='xf_'+sid);return {inline:null};});
+    if(fl.length)this.toast(k,picked.length?`Applied ${picked.length} change${picked.length===1?'':'s'} to the plan`:'Nothing changed in the plan');
+  }
+  openCapture(k,variant){
+    this.set(k,s=>({cap:'edit',text:variant==='dup'?CAP_DUP:CAP,...(k==='a'?{tool:'assistant',view:'list',mode:'notes',menu:false}:{})}));
   }
   saveCapture(k){
-    this.mut(k,(m,s)=>{m.notes.unshift({id:'nc',text:s.text,from:m.sess[s.sel].name,when:'now',by:'you'});return k==='a'?{cap:null,mode:'notes',view:'list'}:{cap:'saved'};});
-    if(k==='a')this.toast(k,'Saved to Notes');
-    this['ct'+k]=setTimeout(()=>{
-      if(k==='a')this.mut(k,m=>{const n=m.notes.find(x=>x.id==='nc');if(n)n.suggest=true;});
-      else this.set(k,s=>s.cap==='saved'?{cap:'suggest'}:{});
-    },1300);
+    if(k==='a'){
+      const s=this.state.a,m0=s.m,auto=this.isOn(m0)&&m0.set.mode==='auto'&&!this.isPaused(m0),id='nc'+(++this._noteSeq),text=s.text;
+      this.mut(k,(m,st)=>{m.notes.unshift({id,text,from:m.sess[st.sel].name,when:'now',by:'you',suggest:auto?'thinking':null});return {cap:null,mode:'notes',view:'list'};});
+      this.toast(k,'Saved to Notes');
+      if(auto)this.addT(k,()=>this.mut(k,m=>{const n=m.notes.find(x=>x.id===id);if(n&&n.suggest==='thinking')n.suggest=/height|relaunch/i.test(n.text)?'dup':'promote';this.logA(m,'Quick check','Your note',m.set.quick,'Done');}),1400);
+      return;
+    }
+    this.mut(k,(m,s)=>{m.notes.unshift({id:'nc',text:s.text,from:m.sess[s.sel].name,when:'now',by:'you'});return {cap:'saved'};});
+    this.addT(k,()=>this.set(k,s=>s.cap==='saved'?{cap:'suggest'}:{}),1300);
+  }
+  promoteAsk(k,nid){
+    const m0=this.state[k].m;
+    if(!this.isOn(m0)){
+      this.mut(k,m=>{const n=m.notes.find(x=>x.id===nid);if(!n)return;const id='ip'+nid;m.items.push({id,title:_shorten(n.text),status:'idea',issue:null,notes:[nid],folder:'In-built Shell'});n.item=id;});
+      this.toast(k,'Added to Plan as an Idea');return;
+    }
+    this.mut(k,m=>{const n=m.notes.find(x=>x.id===nid);if(n){n.suggest='thinking';n.manual=true;}});
+    this.addT(k,()=>this.mut(k,m=>{const n=m.notes.find(x=>x.id===nid);if(n&&n.suggest==='thinking')n.suggest=/height|relaunch/i.test(n.text)?'dup':'promote';this.logA(m,'Quick check','Promote a note',m.set.quick,'Done');}),1600);
   }
   promote(k,nid){
     this.mut(k,m=>{const n=m.notes.find(x=>x.id===nid);if(!n)return;
-      const id='ip'+nid;m.items.push({id,title:nid==='nc'?'Shell panel flickers when maximised':n.text.slice(0,48),status:'planned',issue:null,notes:[nid],folder:'In-built Shell'});
+      const id='ip'+nid;m.items.push({id,title:n.text===CAP?'Shell panel flickers when maximised':_shorten(n.text),status:'planned',issue:null,notes:[nid],folder:'In-built Shell'});
       n.item=id;n.suggest=false;return {cap:null};});
     this.toast(k,'Added to Plan as Planned');
   }
-  openItem(k,id){this.set(k,{view:'item',vid:id,mode:'plan',...(k==='b'?{page:true}:{tool:'assistant'})});}
+  attachDup(k,nid){
+    this.mut(k,m=>{const n=m.notes.find(x=>x.id===nid),i=m.items.find(x=>x.id==='i3');if(!n||!i)return;n.item='i3';n.suggest=false;i.notes.push(nid);});
+    this.toast(k,'Attached to "Remember Shell panel height per project"');
+  }
+  openItem(k,id){this.set(k,{view:'item',vid:id,mode:'plan',menu:false,...(k==='b'?{page:true}:{tool:'assistant'})});}
   openInbox(k,x){
     if(x==='x3'&&k==='a'){this.set(k,{sel:'st',inline:true});return;}
     this.set(k,{view:INBOX[x].view,vid:null,skEdit:false,...(k==='b'?{page:true,sessToast:false}:{tool:'assistant'})});
   }
+  openCardA(k,id){
+    if(id.startsWith('xf_')){const sid=id.slice(3);this.set(k,{sel:sid,inline:{sid,phase:'ready'}});return;}
+    const c=INBOX_A[id]||INBOX[id];if(!c||c.prog)return;
+    this.set(k,{view:c.view,vid:c.vid||null,ed:false,skEdit:false,menu:false,tool:'assistant',confirmRepo:false,edText:c.view==='chg'?CHG_DIFF.filter(d=>d[0]!=='-').map(d=>d[1]).join('\n'):''});
+  }
+  retry(k,eid){
+    this.mut(k,m=>{const i=m.inbox.indexOf(eid);if(i>=0)m.inbox.splice(i,1,'p_'+eid);return {view:'list',vid:null};});
+    const job={e1:['Follow-up','Update PR','Sonnet'],e2:['Skill draft','Shell Terminal','Sonnet'],e3:['Triage','2 issues','Haiku']}[eid];
+    this.addT(k,()=>this.resolveProg(k,'p_'+eid,RETRY[eid],...job),2800);
+  }
   applyFollow(k){
-    let n=0;
     this.mut(k,m=>{const f=m.follow;
       if(!f.f1)m.notes=m.notes.filter(x=>x.id!=='nf');
-      if(f.f2){n++;m.items.push({id:'iw',title:FOLLOW.f2.t,status:'planned',issue:null,notes:['nf'].filter(()=>f.f1),folder:'In-built Shell'});}
-      if(f.f3){n++;const i=m.items.find(x=>x.id==='i5');if(i)i.status='planned';}
-      if(f.f4){n++;const i=m.items.find(x=>x.id==='i6');if(i){i.status='done';i.session=null;}}
+      if(f.f2){m.items.push({id:'iw',title:FOLLOW.f2.t,status:'planned',issue:null,notes:['nf'].filter(()=>f.f1),folder:'In-built Shell'});}
+      if(f.f3){const i=m.items.find(x=>x.id==='i5');if(i)i.status='planned';}
+      if(f.f4){const i=m.items.find(x=>x.id==='i6');if(i){i.status='done';i.session=null;}}
       m.inbox=m.inbox.filter(x=>x!=='x3');
       return {inline:false,sessToast:false,view:'list',mode:'plan'};
     });
-    const f=this.state[k].m.follow;n=['f2','f3','f4'].filter(x=>f[x]).length;
+    const f=this.state[k].m.follow,n=['f2','f3','f4'].filter(x=>f[x]).length;
     this.toast(k,n?`Applied ${n} change${n===1?'':'s'} to the plan`:'Nothing changed in the plan');
   }
   triage(k,num,what){
@@ -512,11 +776,14 @@ class Component extends DCLogic {
     });
   }
   confirmStart(k){
-    const s=this.state[k],it=s.m.items.find(x=>x.id===s.sheet.id),name=SHNAME[it.id]||it.title;
+    const s=this.state[k],it=s.m.items.find(x=>x.id===s.sheet.id),name=SHNAME[it.id]||it.title,A=k==='a';
     this.mut(k,m=>{const i=m.items.find(x=>x.id===it.id);const id='s_'+it.id;
       m.sess[id]={name,folder:i.folder||'In-built Shell',role:s.sheet.role,status:'working',ctx:3,age:'now'};
       m.order.push(id);m.tabs.push(id);
-      m.term[id]=[U(i.title+`\n(${i.notes.length} note${i.notes.length===1?'':'s'} and ${s.sheet.skills.length} skill${s.sheet.skills.length===1?'':'s'} attached)`),L(`Reading the attached notes, then ShellPanelViews.swift and ShellPanel.swift.`),M('Read 3 files'),Z('Working… (6s)',TEAL)];
+      const nn=i.notes.length,ns=s.sheet.skills.length;
+      m.term[id]=A
+        ?[U(i.title+`\n(${nn} note${nn===1?'':'s'} attached${ns?'; skills named: '+s.sheet.skills.join(', '):''})`),L(`Reading the attached notes${ns?' and the '+ns+' named skill'+(ns===1?'':'s'):''}, then ShellPanelViews.swift and ShellPanel.swift.`),M('Read 3 files'),Z('Working… (6s)',TEAL)]
+        :[U(i.title+`\n(${nn} note${nn===1?'':'s'} and ${ns} skill${ns===1?'':'s'} attached)`),L(`Reading the attached notes, then ShellPanelViews.swift and ShellPanel.swift.`),M('Read 3 files'),Z('Working… (6s)',TEAL)];
       i.status='insession';i.session=id;
       return {sheet:null,sel:id,page:false};
     });
@@ -528,7 +795,7 @@ class Component extends DCLogic {
     const notesById=Object.fromEntries(m.notes.map(n=>[n.id,n]));
     const itemsById=Object.fromEntries(m.items.map(i=>[i.id,i]));
     const noteMeta=n=>(n.by==='asst'?'Assistant':'You')+(n.from?' · '+n.from:'')+' · '+n.when;
-    const inbox=m.inbox.map(x=>({...INBOX[x],onClick:()=>this.openInbox(k,x),bg:s.view===INBOX[x].view?SEL:'#303030'}));
+    const inbox=m.inbox.filter(x=>INBOX[x]).map(x=>({...INBOX[x],onClick:()=>this.openInbox(k,x),bg:s.view===INBOX[x].view?SEL:'#303030'}));
     const cnt=st=>Object.values(m.sess).filter(x=>x.status===st).length;
     const it=s.view==='item'?itemsById[s.vid]:null;
     const sheetItem=s.sheet?itemsById[s.sheet.id]:null;
@@ -536,7 +803,7 @@ class Component extends DCLogic {
     const panelTitle={list:'ASSISTANT',item:'PLAN ITEM',skill:'SKILL',skills:'SKILLS',triage:'GITHUB ISSUES',chat:'ASK',follow:'FOLLOW-UPS'}[vw];
     const f=m.follow;
     const back=()=>this.set(k,{view:'list',vid:null,skEdit:false,menu:false});
-    return {
+    const out={
       journeys:JOURNEYS.map(([n,t])=>({n,t,onClick:()=>this.go(k,n),bg:s.j===n?SEL:'transparent',fg:s.j===n?'#fff':'#adb5bd',nc:s.j===n?'#fff':TEAL})),
       hint:HINTS[k][s.j],hintKey:s.j===1,
       hover:()=>{this.lastK=k;},
@@ -548,7 +815,7 @@ class Component extends DCLogic {
       }),
       isSessions:A&&s.tool==='sessions',isAsst:A&&s.tool==='assistant',
       tree:FOLDERS.map(fn=>({name:fn,sessions:m.order.filter(id=>m.sess[id].folder===fn).map(id=>{const on=id===s.sel&&!(!A&&s.page);return {name:m.sess[id].name,age:m.sess[id].age,dot:DOT[m.sess[id].status],bg:on?SEL:'transparent',fw:on?700:400,onClick:()=>this.set(k,{sel:id,page:false})};})})),
-      tabs:m.tabs.map(id=>{const on=id===s.sel&&!(!A&&s.page);const x=m.sess[id];return {name:x.name,role:x.role,dot:DOT[x.status],fg:on?'#fff':'#adb5bd',bg:on?'#222':'transparent',line:on?TEAL:'transparent',onClick:()=>this.set(k,{sel:id,page:false})};}),
+      tabs:m.tabs.map(id=>{const on=id===s.sel&&!(!A&&s.page);const x=m.sess[id];return {name:x.name,role:x.role,dot:DOT[x.status],fg:on?'#fff':'#adb5bd',bg:on?'#222':'transparent',line:on?TEAL:'transparent',onClick:()=>this.set(k,{sel:id,page:false,smenu:false})};}),
       pageTab:{fg:s.page?'#fff':'#adb5bd',bg:s.page?'#222':'transparent',line:s.page?BLUE:'transparent',onClick:()=>this.set(k,{page:true})},
       page:!A&&s.page,inSession:A||!s.page,
       name:cur.name,folder:cur.folder,role:cur.role,statusT:STATUS[cur.status][0],statusBg:STATUS[cur.status][1],ctx:cur.ctx+'%',ctxW:Math.round(36*cur.ctx/100)+'px',
@@ -594,9 +861,9 @@ class Component extends DCLogic {
       chatQ:"What's left on the Shell work?",
       chatA:'Exit-status follow-ups are being done in Shell Follow Up right now. "Remember Shell panel height per project" is planned with 2 notes and hasn\'t started. Issue #23 from GitHub may belong here too; it\'s waiting in Needs You.',
       chatRefs:[['i1','Exit-status follow-ups from PR #14'],['i3','Remember Shell panel height per project']].map(([id,t])=>({t,onClick:()=>this.openItem(k,id)})),
-      capEdit:A?s.cap==='edit':s.cap==='edit',capOpen:!A&&!!s.cap,capSaved:!A&&(s.cap==='saved'||s.cap==='suggest'),capSuggest:s.cap==='suggest',capThinking:s.cap==='saved',
+      capEdit:s.cap==='edit',capOpen:!A&&!!s.cap,capSaved:!A&&(s.cap==='saved'||s.cap==='suggest'),capSuggest:s.cap==='suggest',capThinking:s.cap==='saved',
       text:s.text,onText:e=>this.set(k,{text:e.target.value}),capFrom:'Linked to '+cur.name,
-      onSaveCap:()=>this.saveCapture(k),onCancelCap:()=>{clearTimeout(this['ct'+k]);this.set(k,{cap:null});},
+      onSaveCap:()=>this.saveCapture(k),onCancelCap:()=>this.set(k,{cap:null}),
       onCapture:()=>this.openCapture(k),onCapPromote:()=>this.promote(k,'nc'),
       showSheet:!!sheetItem,shName:sheetItem?(SHNAME[sheetItem.id]||sheetItem.title):'',shFolder:sheetItem?sheetItem.folder:'',
       roles:['CODE','REVIEW'].map(t=>({t,bg:s.sheet&&s.sheet.role===t?'#444':'transparent',fg:s.sheet&&s.sheet.role===t?'#fff':'#adb5bd',onClick:()=>this.set(k,x=>({sheet:{...x.sheet,role:t}}))})),
@@ -613,6 +880,94 @@ class Component extends DCLogic {
       vSkills:vw==='skills',
       skills:[['Worktree setup','Used in 9 sessions · last changed 12 Sep'],['Shell panel code map','Used in 4 sessions · written 26 Sep'],['README style','Used in 2 sessions · written 14 Sep'],...(m.skillOk?[['Squash-merge cleanup','Approved just now']]:[])].map(([name,meta])=>({name,meta})),
       skillCount:String(3+(m.skillOk?1:0)),
+    };
+    return A?{...out,...this.VA(k,s,m,cur,itemsById,out)}:out;
+  }
+  VA(k,s,m,cur,itemsById,out){
+    const on=this.isOn(m),mode=m.set.mode,high=m.u5>=m.app.th,paused=this.isPaused(m),vw=s.view;
+    const highText=`5-hour usage is ${m.u5}%. Things you start still run.`;
+    const card=id=>{if(id.startsWith('xf_')){const sid=id.slice(3),n=(FOLLOWS[sid]||[]).filter(f=>f.tag==='PLAN').length;return {icon:'mdi-playlist-check',ic:TEAL,title:m.sess[sid].name+' finished',sub:n+' follow-up'+(n===1?'':'s')+' suggested for the plan.',view:'inline'};}return INBOX_A[id]||INBOX[id];};
+    const cards=(on?m.inbox:[]).map(id=>{const c=card(id),sel=vw!=='list'&&vw===c.view&&(!c.vid||s.vid===c.vid);
+      return {icon:c.prog?'mdi-loading mdi-spin':c.err?'mdi-alert-circle-outline':c.icon,ic:c.prog?BLUE:c.err?RED:c.ic,title:c.title,sub:c.prog?'Usually a few seconds, up to about 30.':c.sub,
+        bg:c.prog?'transparent':sel?SEL:'#303030',border:c.prog?'1px dashed #444':c.err?'1px solid rgba(231,76,60,.6)':'1px solid #444',chev:!c.prog,cur:c.prog?'default':'pointer',prog:!!c.prog,onClick:()=>this.openCardA(k,id)};});
+    const need=cards.filter(c=>!c.prog).length;
+    const it=vw==='item'?itemsById[s.vid]:null,old=!!(it&&it.session&&m.sess[it.session]&&m.sess[it.session].old);
+    const diffRows=d=>d.map(([sg,t])=>({s:sg===' '?'':sg==='-'?'−':'+',t,bg:sg==='+'?'rgba(0,188,140,.12)':sg==='-'?'rgba(231,76,60,.14)':'transparent',sc:sg==='+'?TEAL:RED,c:sg==='-'?'#adb5bd':'#fff',td:sg==='-'?'line-through':'none'}));
+    const sk=vw==='skilld'?m.skills.find(x=>x.id===s.vid):null,skPath=sk?'.claude/skills/'+_slug(sk.name)+'/SKILL.md':'';
+    const inl=s.inline&&typeof s.inline==='object'?s.inline:null,inSid=inl&&inl.sid,fl=inSid?(FOLLOWS[inSid]||[]):[];
+    const nPlan=fl.filter(x=>x.tag==='PLAN'&&m.follow[x.id]!==false).length;
+    const noteMeta=n=>n.by==='session'?`${n.from} · ${n.when}`:n.by==='asst'?`Assistant · from ${n.from} · ${n.when}`:(n.from?`You · linked to ${n.from} · ${n.when}`:`You · ${n.when}`);
+    const tog=v=>({bg:v?TEAL:'#444',just:v?'flex-end':'flex-start'});
+    const ton=tog(m.app.on),tcr=tog(m.app.credits),ttx=tog(m.set.noTx);
+    const skillText=s.sheet?s.sheet.skills.join(', '):'';
+    const doneIt=vw==='done'?itemsById[s.vid]:null;
+    const err=vw==='err'?ERRS[s.vid]:null;
+    const TITLES={list:'ASSISTANT',item:'PLAN ITEM',skill:'NEW SKILL',chg:'CHANGED SKILL',ext:'SKILL CHANGE',unused:'UNUSED SKILL',done:'MARK DONE',triage:'GITHUB ISSUES',skills:'SKILLS',skilld:'SKILL',settings:'ASSISTANT SETTINGS',log:'ACTIVITY LOG',err:'JOB FAILED',chat:'ASK'};
+    const dropCard=(id,msg)=>{this.mut(k,mm=>{mm.inbox=mm.inbox.filter(x=>x!==id);return {view:'list',vid:null,ed:false};});if(msg)this.toast(k,msg);};
+    return {
+      journeys:JOURNEYS_A.map(([n,t])=>({n,t,onClick:()=>this.go(k,n),bg:s.j===n?SEL:'transparent',fg:s.j===n?'#fff':'#adb5bd',nc:s.j===n?'#fff':TEAL})),
+      onCapBug:()=>this.openCapture(k,'bug'),onCapDup:()=>this.openCapture(k,'dup'),
+      rail:out.rail.map(r=>r.label.startsWith('Assistant')?{...r,badge:String(need),hasBadge:need>0}:r),
+      panelTitle:TITLES[vw]||'ASSISTANT',
+      showOff:!on,offText:!m.app.on?'The assistant is turned off in Settings. Notes and the plan still work by hand.':'The assistant is off for this project. Notes and the plan still work by hand.',
+      onTurnOn:()=>this.mut(k,mm=>{mm.app.on=true;if(mm.set.mode==='off')mm.set.mode='auto';}),
+      showPaused:paused,pausedText:`Background work paused · 5-hour usage ${m.u5}%`,showManual:on&&mode==='manual',highText,
+      inbox:cards,hasInbox:cards.length>0,noInbox:on&&cards.length===0,inboxCount:need,
+      notes:m.notes.map(n=>{const i=n.item&&itemsById[n.item],fresh=/^(nc|fn_|n24)/.test(n.id);return {
+        text:n.text,meta:noteMeta(n),byYou:n.by==='you',byAsst:n.by==='asst',bySession:n.by==='session',canUndo:n.by!=='you',canPromote:!i&&!n.suggest,
+        hasItem:!!i,itemLabel:i?i.title:'',onItem:()=>this.openItem(k,n.item),
+        sThinking:n.suggest==='thinking',sPromote:n.suggest==='promote',sDup:n.suggest==='dup',showHigh:high&&!!n.manual,
+        onPromote:()=>this.promote(k,n.id),onAttach:()=>this.attachDup(k,n.id),onPromoteAsk:()=>this.promoteAsk(k,n.id),
+        onDismiss:()=>this.mut(k,mm=>{const x=mm.notes.find(y=>y.id===n.id);if(x)x.suggest=false;}),
+        onUndo:()=>this.mut(k,mm=>{mm.notes=mm.notes.filter(y=>y.id!==n.id);mm.items.forEach(ii=>{ii.notes=ii.notes.filter(y=>y!==n.id);});}),
+        bg:fresh?'rgba(52,152,219,.12)':'#303030',border:fresh?'rgba(52,152,219,.5)':'#444'};}),
+      dNotes:it?it.notes.filter(id=>m.notes.find(n=>n.id===id)).map(id=>{const n=m.notes.find(x=>x.id===id);return {text:n.text,meta:noteMeta(n)};}):[],
+      dSkillLabel:it&&it.status==='insession'?'SKILLS NAMED IN ITS PROMPT':'SKILLS FOR ITS PROMPT',hasDSkills:!old,dOld:old,
+      onLog:()=>this.set(k,{view:'log',vid:null,menu:false,tool:'assistant'}),
+      onSettings:()=>this.set(k,{view:'settings',vid:null,menu:false,tool:'assistant'}),
+      vChg:vw==='chg',vExt:vw==='ext',vUnused:vw==='unused',vDone:vw==='done'&&!!doneIt,vSkillD:vw==='skilld'&&!!sk,vSettings:vw==='settings',vLog:vw==='log',vErr:vw==='err'&&!!err,
+      chgDiff:diffRows(CHG_DIFF),extDiff:diffRows(EXT_DIFF),ed:s.ed,edOff:!s.ed,edText:s.edText,edLabel:s.ed?'Done Editing':'Edit',
+      onEdText:e=>this.set(k,{edText:e.target.value}),onEdToggle:()=>this.set(k,x=>({ed:!x.ed})),
+      onChgApprove:()=>{this.mut(k,mm=>{const w=mm.skills.find(x=>x.id==='wt');if(w){w.lines=s.edText.split('\n').filter(Boolean);w.used='Used in 9 sessions · changed just now';}});dropCard('xc','Worktree setup updated. Sessions use the new version from now on.');},
+      onChgLater:()=>dropCard('xc','Kept the current version.'),
+      onExtKeep:()=>{this.mut(k,mm=>{const r=mm.skills.find(x=>x.id==='rd');if(r){r.lines=EXT_DIFF.filter(d=>d[0]!=='-').map(d=>d[1]);r.used='Used in 2 sessions · changed 10h ago';}});dropCard('xe','Kept the change to README style.');},
+      onExtRevert:()=>dropCard('xe','Reverted README style. Commit the file to finish.'),
+      unusedLines:(m.skills.find(x=>x.id==='sw')||{lines:[]}).lines,
+      onRetire:()=>{this.mut(k,mm=>{const w=mm.skills.find(x=>x.id==='sw');if(w)w.retired=true;});dropCard('xu','Retired. You can restore it from Skills.');},
+      onKeepSkill:()=>dropCard('xu',"Kept. You'll be asked again in 30 days."),
+      doneTitle:doneIt?doneIt.title:'',doneIcon:doneIt?DONE_EV[doneIt.id][0]:'',doneEv:doneIt?DONE_EV[doneIt.id][1]:'',
+      onMarkDone:()=>{const id=s.vid,card=id==='i6'?'xm1':'xm2';this.mut(k,mm=>{const i=mm.items.find(x=>x.id===id);if(i){i.status='done';i.session=null;}});dropCard(card,'Marked as Done');},
+      onNotYet:()=>dropCard(s.vid==='i6'?'xm1':'xm2','Left as In Session'),
+      skills:m.skills.map(x=>({name:x.name,meta:x.retired?'Retired · not used by sessions':x.used,loc:x.loc==='repo'?'REPOSITORY':'CLAUDIO',locBg:x.loc==='repo'?'rgba(52,152,219,.35)':'#444',fg:x.retired?'#6c757d':'#fff',ic:x.retired?SUB:BLUE,onClick:()=>this.set(k,{view:'skilld',vid:x.id,confirmRepo:false})})),
+      skillCount:String(m.skills.filter(x=>!x.retired).length),
+      sdName:sk?sk.name:'',sdFg:sk&&sk.retired?'#adb5bd':'#fff',sdLoc:sk&&sk.loc==='repo'?'REPOSITORY':'CLAUDIO',sdLocBg:sk&&sk.loc==='repo'?'rgba(52,152,219,.35)':'#444',sdUsed:sk?(sk.retired?'Retired':sk.used):'',sdLines:sk?sk.lines:[],
+      sdCanSave:!!(sk&&sk.loc==='claudio'&&!sk.retired&&!s.confirmRepo),confirmRepo:!!(sk&&s.confirmRepo),sdIsRepo:!!(sk&&sk.loc==='repo'),sdPath:skPath,sdRetired:!!(sk&&sk.retired),
+      onSaveRepo:()=>this.set(k,{confirmRepo:true}),onCancelRepo:()=>this.set(k,{confirmRepo:false}),
+      onConfirmRepo:()=>{this.mut(k,mm=>{const x=mm.skills.find(y=>y.id===s.vid);if(x)x.loc='repo';return {confirmRepo:false};});this.toast(k,'Saved to '+skPath+'. Commit it to share it.');},
+      onRestore:()=>{this.mut(k,mm=>{const x=mm.skills.find(y=>y.id===s.vid);if(x)x.retired=false;});this.toast(k,'Restored');},
+      modes:[['auto','Automatic','Also works in the background: follow-ups when a session finishes, skill proposals and new GitHub issues. It only calls Claude when something new needs judgement.'],['manual','Manual','Only when you ask: Promote, Review This Session, Import Issues and Ask.'],['off','Off','Notes and the plan by hand. No Claude calls.']].map(([id,t,d])=>({t,d,isDefault:id==='auto',icon:mode===id?'mdi-radiobox-marked':'mdi-radiobox-blank',ic:mode===id?TEAL:'#adb5bd',bg:mode===id?'rgba(0,188,140,.08)':'transparent',border:mode===id?'rgba(0,188,140,.6)':'#444',onClick:()=>this.mut(k,mm=>{mm.set.mode=id;})})),
+      noTxBg:ttx.bg,noTxJust:ttx.just,onNoTx:()=>this.mut(k,mm=>{mm.set.noTx=!mm.set.noTx;}),
+      models:[['quick','Quick checks'],['main','Follow-ups, skills and Ask']].map(([key,t])=>({t,v:m.set[key],onClick:()=>this.mut(k,mm=>{const o=['Haiku','Sonnet','Opus'];mm.set[key]=o[(o.indexOf(mm.set[key])+1)%3];})})),
+      onOpenApp:()=>this.set(k,{appSheet:true,menu:false}),onCloseApp:()=>this.set(k,{appSheet:false}),appOpen:s.appSheet,
+      appOnBg:ton.bg,appOnJust:ton.just,onAppOn:()=>this.mut(k,mm=>{mm.app.on=!mm.app.on;}),
+      credBg:tcr.bg,credJust:tcr.just,onCred:()=>this.mut(k,mm=>{mm.app.credits=!mm.app.credits;}),
+      th:m.app.th,onTh:e=>{const v=Math.max(50,Math.min(100,Number(e.target.value)||80));this.mut(k,mm=>{mm.app.th=v;});},
+      u5:m.u5+'%',uw:m.uw+'%',uC:high?WARN:TEAL,
+      logRows:m.log.map(([time,job,what,model,res])=>({time,job,what,model,res,rc:res.startsWith('Done')?TEAL:res.startsWith('Skipped')?WARN:RED})),
+      errTitle:err?err.t:'',errDesc:err?err.d:'',errJob:err?err.job:'',onRetry:()=>this.retry(k,s.vid),
+      smenuOpen:s.smenu,smenuBg:s.smenu?'#444':'transparent',onSMenu:()=>this.set(k,x=>({smenu:!x.smenu})),onReview:()=>this.review(k),
+      showInline:!!inl&&s.sel===inSid,inWorking:!!inl&&inl.phase==='working',inReady:!!inl&&inl.phase==='ready',
+      inWorkText:inSid?'Reviewing '+m.sess[inSid].name+'…':'',
+      inTitle:inl?(inl.manual?'Review of '+m.sess[inSid].name+'.':m.sess[inSid].name+' finished.')+(inl.phase==='ready'&&fl.length?" Here's what I'd keep.":''):'',
+      inFollow:fl.map(x=>{const v=m.follow[x.id]!==false;return {t:x.t,tag:x.tag,sub:x.tag==='NOTE'?(v?'Saved to Notes. Untick to remove it.':'Removed from Notes'):x.sub,box:v?'mdi-checkbox-marked':'mdi-checkbox-blank-outline',boxC:v?TEAL:'#adb5bd',onToggle:()=>this.toggleFollowA(k,x,inSid)};}),
+      inEmpty:fl.length===0,inOld:!!(inSid&&m.sess[inSid].old),inSkill:inSid==='st'&&!m.skillOk,inHigh:high&&!!inl&&!!inl.manual,
+      applyLabel:fl.length?(nPlan?`Add ${nPlan} to Plan`:'Done'):'Close',
+      onApply:()=>this.applyFollowA(k),onFollowLater:()=>this.set(k,{inline:null}),
+      showSheet:!!s.sheet,shHasSkills:!!(s.sheet&&s.sheet.skills.length),shSkillText:skillText,
+      askText:on?'Ask about this project…':'Ask is off for this project',askOpacity:on?1:.5,showAskChip:on&&vw!=='chat',askHigh:high,
+      onAsk:()=>{this.set(k,{view:'chat',tool:'assistant',chatPhase:'thinking'});this.addT(k,()=>this.mut(k,mm=>{this.logA(mm,'Ask',"What's left on the Shell work?",mm.set.main,'Done');return {chatPhase:'done'};}),2600);},
+      chatThinking:s.chatPhase==='thinking',chatDone:s.chatPhase!=='thinking',
+      onApprove:()=>{this.mut(k,mm=>{mm.skillOk=true;mm.inbox=mm.inbox.filter(x=>x!=='x1');if(!mm.skills.find(x=>x.id==='sq'))mm.skills.push({id:'sq',name:'Squash-merge cleanup',loc:'claudio',used:'Approved just now',lines:s.skText.split('\n')});return {view:'list',skEdit:false};});this.toast(k,'Skill approved. Sessions can use it from now on.');},
     };
   }
   renderVals(){return {a:this.V('a'),b:this.V('b')};}

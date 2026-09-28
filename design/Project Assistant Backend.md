@@ -99,9 +99,10 @@ Why `--add-dir` rather than the other homes:
 
 - **Name and frontmatter.** `name` is a kebab-case slug. `description` plus `when_to_use` must fit in 1,536 characters (the listing truncates beyond that). Use `paths:` globs when the lesson is tied to files. Claudio's own data goes under `metadata:` (Claude Code ignores that key): `claudio-id`, `claudio-evidence` (session ids) and `claudio-version`.
 - **Versioning.** Each approval writes `history/<name>/<n>.md`. The model always returns the **whole proposed text**, never a diff. Claudio computes the "added lines" view with the existing `Diff.swift`, so the diff can't be wrong about what changes.
-- **Drift.** `--add-dir` also gives sessions write access to that folder, so a session could edit a skill. On each poll, Claudio hashes the approved files. If one changed outside Claudio, a Needs You card offers Keep or Revert. The same check covers skills saved to the repository.
+- **Drift.** `--add-dir` also gives sessions write access to that folder, so a session could edit a skill. On each poll, Claudio hashes the approved files. If one changed outside Claudio, a Needs You card offers Keep Change or Revert. The same check covers skills saved to the repository. The card says who made the change when Claudio can tell: a `PostToolUse` Edit or Write event whose `file_path` is the skill file names the session ("The Update PR session changed …"). Otherwise it just says the file changed. For a repository skill, only the main checkout's copy is watched, so an edit made on a worktree's branch shows up once it's merged.
 - **Loading.** The `.claude/skills` directory must exist before a session starts, or live detection needs `/reload-skills` (per the docs). Claudio creates it when the project is added.
-- **Save to Repository** copies the skill to `<repo>/.claude/skills/<name>/` and marks the record `location: repo`. The skill is then the user's to commit. Claudio stops managing it except for the drift check.
+- **Save to Repository** copies the skill to `<repo>/.claude/skills/<name>/`, removes Claudio's copy (so sessions don't load it twice), and marks the record `location: repo`. The skill is then the user's to commit. Claudio stops managing it except for the drift check and usage counts.
+- **Retire** moves the skill to `retired/<name>/`, outside the `--add-dir` root, so no session loads it. **Restore** moves it back.
 
 ### 3. Runtime
 
@@ -134,6 +135,14 @@ claude -p --model <haiku|sonnet> --output-format json \
 - **The result** is `structured_output` in the JSON (verified). Decode it into a `Codable` type per job, and reject anything that doesn't match. Also record `total_cost_usd`, `duration_ms` and `num_turns` in the audit entry.
 - **Models.** Haiku for classifying (promote a note, triage labels). Sonnet for follow-ups, skill drafts and Ask. These are Assistant Settings, per project.
 - **Concurrency:** one job at a time per project, and two at most overall. Jobs are coalesced: a newer follow-up job for the same session replaces a queued one.
+- **Timeouts and failures.** A job is killed after 60 seconds (120 for Ask, which reads code), and nothing is changed. The runner sorts failures into the reasons the Job Failed view shows:
+  - `claude` not found (`locateClaude` returned nil)
+  - signed out (checked with `claude auth status --json` after a failed call)
+  - timed out
+  - output that doesn't match the schema
+  - any other exit, with the first line of stderr
+
+  Try Again re-queues the same input.
 
 **Cost, measured and estimated** (`total_cost_usd` is the API-equivalent price; subscription users pay in plan usage instead):
 - A stripped classification call (empty directory, no tools, about 1.1k input tokens) cost $0.0039 on Haiku (6.2 s) and $0.0054 on Sonnet (1.5 s).
@@ -184,7 +193,7 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 **When each job runs:**
 
-- **Promote (right after capture):** one Haiku call per saved note. Input: the note, plus plan item titles for duplicates. Output: `{kind: bug|task|idea|fact, promote: Bool, reason, duplicateOf?}`. Measured at about 1.5–6 s, fast enough for the inline suggestion.
+- **Promote (right after capture):** in Automatic mode this is background work, so the usage gate applies. Promote… on a note is started by you, so it always runs. In Off mode, Promote… makes an Idea from the note in code, with no call. One Haiku call per saved note. Input: the note, plus plan item titles for duplicates. Output: `{kind: bug|task|idea|fact, promote: Bool, reason, duplicateOf?}`. Measured at about 1.5–6 s, fast enough for the inline suggestion.
 - **Follow-ups (when a session finishes):**
   - `Stop` fires at the end of *every turn*, so it isn't "finished". A session counts as finished when it's Completed (not Awaiting Input), has been quiet for 2 minutes, and has new turns since its last follow-up (a watermark per session: the count of Stop events). Stopping the agent or closing its tab brings the job forward.
   - **Substance check (code):** only call Claude if, since the last follow-up, the session changed files, had a tool failure, acted on a PR, made a commit, got a prompt matching a correction pattern ("no,", "don't", "instead", "next time", "remember"), or had 3 or more prompts. Otherwise there's nothing to follow up, and no call is made. A quick question and answer never costs a follow-up.
@@ -244,6 +253,7 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 - `audit.jsonl` gets one line per change: `{id, at, actor: user|assistant|session, action, entity, before, after, cause}`. `cause` is a job id, a session id or `ui`. Assistant job lines also carry the model, cost, duration and outcome.
 - Undo applies the inverse of an entry. It's shown for entries the assistant wrote, as designed. The mechanism is general, so the user's own changes could get Undo later.
+- The Assistant's own Activity Log view (⋯) lists the job entries from `audit.jsonl` for that project, as Done, Waiting (held by the usage gate) or Failed. Jobs a code check never started aren't listed, because nothing happened.
 - Each job and each export also gets one line in the Activity Log (`log.append`), for example "Assistant: suggested 3 follow-ups for Shell Terminal (Sonnet, 4.1 s)". Prompts and account details are never logged.
 
 ### 9. Privacy
