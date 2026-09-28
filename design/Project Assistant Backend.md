@@ -140,14 +140,13 @@ claude -p --model <haiku|sonnet> --output-format json \
 - A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. It hasn't been measured.
 
 **Plan-usage gate.** Before running a *background* job (follow-ups, skill drafts, retire checks, issue triage), `AssistantRunner` reads `AppModel.usage`. It defers the job if any of these holds:
-- the 5-hour window is at 80% or more
-- the weekly window is at 90% or more
-- `isUsingCredits` is true
+- the 5-hour or weekly window is at or above the **app-level** threshold (Settings, default 80%, one number for both windows)
+- `isUsingCredits` is true, unless the user has allowed background work on credits (an app-level toggle, off by default)
 - there's no reading yet, but one is expected (a subscription sign-in whose first `/usage` hasn't come back)
 
 Deferred jobs stay queued and are retried on the next usage refresh.
 
-Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call and a daily job limit set in Assistant Settings. Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The thresholds are settings.
+Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call and a daily job limit set in Assistant Settings. Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The threshold and the credits toggle are app-level settings in `AppSettings`, not per project, because plan usage belongs to the account, not the project.
 
 ### 4. The learning loop
 
@@ -259,10 +258,19 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
   - Commands:
     - `claudio plan`: prints `plan.md`
     - `claudio item <id>`: an item with its notes
-    - `claudio note "<text>"`: a note, saved at once and undoable
+    - `claudio note "<text>"`: a note, saved at once and undoable, and tagged as written by that session (see Notes and authorship)
     - `claudio suggest "<text>"`: a plan change that goes to Needs You
 - **`skills/note/SKILL.md`** (`/claudio:note`) tells the session when a note is worth writing: non-obvious, not in the code, not already in memory. It also says to use `claudio note`, and never to edit plan files.
-  - **To decide:** whether sessions should write notes on their own in v1. That's Open decision 4. If not, ship the skill with `disable-model-invocation: true`, so only the user's `/claudio:note` triggers it.
+  - **Decided:** sessions may write notes on their own, so the skill is model-invocable. Its description sets a high bar, so sessions don't write a note every turn.
+
+#### Notes and authorship
+
+Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
+- **user:** from the capture box (⌘⇧N). The note may still be *linked* to the focused session, but the author is you.
+- **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
+- **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. **UI gap:** the design has no marker for this author. It needs one that differs from ✦ (for example the session's role icon). Raise this with the design before step 3.
+
+Follow-up jobs get the notes that session already wrote, and don't repeat them.
 - **Why a file and not an MCP server:**
   - `bin/` needs no process management.
   - The inbox is ingested even if Claudio was closed when the note was written.
@@ -320,14 +328,17 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 
 ## Open decisions for Tim
 
-1. **Where approved skills live by default.**
-   - Claudio's folder via `--add-dir` (recommended; the repository stays clean).
-   - Or `<repo>/.claude/skills`, so they're shared through git from day one, at the cost of untracked files and the risk of accidental commits.
+Decided (2026-09-28):
+- **Where skills live:** Claudio's folder via `--add-dir`. Save to Repository stays as a per-skill action.
+- **Usage threshold:** app-level, user-configurable, default 80%.
+- **Session notes:** allowed, and tagged with the session as author.
+
+Still open:
+
 2. **What a removed skill chip means.**
    - "Not named in the opening prompt" (recommended for v1, with honest hint text).
    - Or a real skill set per session (more work, and depends on the symlink check).
-3. **The assistant's default for new projects:** Automatic, Manual or Off. Also the usage thresholds for background jobs (proposed: 80% of the 5-hour window, 90% of the week, never while using credits).
-4. **Whether sessions may write notes themselves** through `claudio note` in v1, or only when the user types `/claudio:note`. Self-written notes add signal, but overlap with auto memory.
+3. **The assistant's default for new projects:** Automatic, Manual or Off (see Privacy).
 5. **Plan data in git.** The proposal keeps it out and uses GitHub Issues for sharing. If you want a committed `PLAN.md` export as well, it should be a one-way export, never read back.
 
 ## Sources
