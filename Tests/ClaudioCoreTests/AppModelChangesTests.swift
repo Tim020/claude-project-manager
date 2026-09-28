@@ -79,25 +79,27 @@ final class AppModelChangesTests: XCTestCase {
         await MainActor.run { XCTAssertNotNil(model.sessionChanges[id]?.gitDiffs["x.txt"], "kept for next time") }
     }
 
-    func testViewStateAndOpenFullDiff() throws {
+    func testToolWindowsAndDiffs() throws {
         try MainActor.assumeIsolated {
             let home = try makeTemporaryDirectory()
             let (model, id) = try makeModel(home: home, workingDirectory: "/nowhere", runner: FakeRunner())
-            XCTAssertFalse(model.showsFilesInspector)
-            model.toggleFilesInspector()
-            XCTAssertTrue(model.showsFilesInspector)
-            XCTAssertTrue(model.settings.showFilesInspector, "remembered")
+            XCTAssertEqual(model.toolWindows.visibleLeft, .sessions, "the session tree shows at first")
+            XCTAssertNil(model.toolWindows.visibleRight)
+            model.toggleTool(.changes)
+            XCTAssertEqual(model.toolWindows.visibleRight, .changes)
+            XCTAssertEqual(model.settings.toolWindows.visibleRight, .changes, "remembered")
+            XCTAssertEqual(model.menuFlags.rightTool, .changes, "the menus follow at once")
+            model.toggleTool(.pullRequests)
+            XCTAssertEqual(model.menuFlags.leftTool, .pullRequests)
 
             XCTAssertEqual(model.paneMode(for: id), .terminal)
-            model.toggleExpandedChange("a.txt", for: id)
-            XCTAssertEqual(model.expandedChange(for: id), "a.txt")
-            model.toggleExpandedChange("a.txt", for: id)
-            XCTAssertNil(model.expandedChange(for: id))
-
-            model.openFullDiff("b.txt", for: id)
-            XCTAssertEqual(model.paneMode(for: id), .changes)
-            model.setPaneMode(.terminal, for: id)
+            XCTAssertNil(model.diffPath(for: id))
+            model.openDiff("b.txt", for: id)
+            XCTAssertEqual(model.paneMode(for: id), .diff)
+            XCTAssertEqual(model.diffPath(for: id), "b.txt", "kept even though no such file is listed")
+            model.closeDiff(for: id)
             XCTAssertEqual(model.paneMode(for: id), .terminal)
+            XCTAssertNil(model.diffPath(for: id))
         }
     }
 
@@ -123,9 +125,29 @@ final class AppModelChangesTests: XCTestCase {
         XCTAssertGreaterThan(runner.commands.count, first, "a tool call triggers a reload")
     }
 
-    func testSettingDecodesWithDefault() throws {
+    func testToolWindowsDecodeWithDefaults() throws {
         let decoded = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
-        XCTAssertFalse(decoded.showFilesInspector)
+        XCTAssertEqual(decoded.toolWindows, ToolWindows())
+        XCTAssertEqual(decoded.toolWindows.visibleLeft, .sessions)
+        XCTAssertNil(decoded.toolWindows.visibleRight)
+    }
+
+    func testOpenInspectorBecomesTheChangesTool() throws {
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"showFilesInspector":true}"#.utf8))
+        XCTAssertEqual(decoded.toolWindows.visibleRight, .changes)
+        XCTAssertEqual(decoded.toolWindows.visibleLeft, .sessions)
+    }
+
+    func testToolWindowsRoundTrip() throws {
+        var settings = AppSettings()
+        settings.toolWindows = ToolWindows(left: .pullRequests, isLeftOpen: false, right: .pullRequest, isRightOpen: true)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.toolWindows, settings.toolWindows)
+        XCTAssertNil(decoded.toolWindows.visibleLeft, "a hidden side stays hidden")
+
+        let unknown = try JSONDecoder().decode(ToolWindows.self, from: Data(#"{"left":"bookmarks","right":"pullRequest","isRightOpen":true}"#.utf8))
+        XCTAssertEqual(unknown.left, .sessions, "a tool from a newer version falls back")
+        XCTAssertEqual(unknown.visibleRight, .pullRequest)
     }
 }
 

@@ -117,10 +117,11 @@ extension AppModel {
         return result
     }
 
-    /// Whether the sidebar shows a project's Pull Requests row: when some
+    /// Whether a project's pull requests are loaded and polled, and listed in
+    /// the left rail's Pull Requests tool: when some
     /// have loaded, when gh can load them (unless it found no GitHub
     /// repository), or when a session has opened or reviewed one.
-    public func showsPullRequestsRow(projectID: UUID) -> Bool {
+    public func tracksPullRequests(projectID: UUID) -> Bool {
         if projectPullRequests[projectID]?.items.isEmpty == false { return true }
         if case .signedIn = environment.githubCLI, projectPullRequests[projectID]?.isNotGitHub != true { return true }
         return workspace.sessions.contains { $0.projectID == projectID && !$0.isArchived && !pullRequestLinks(ofSession: $0.id).isEmpty }
@@ -240,7 +241,7 @@ extension AppModel {
     /// Every project's pull requests (sidebar chips and counts).
     public func refreshAllPullRequests(force: Bool = false) async {
         await loadRemoteRepositories()
-        for project in workspace.projects where showsPullRequestsRow(projectID: project.id) {
+        for project in workspace.projects where tracksPullRequests(projectID: project.id) {
             await refreshPullRequests(project.id, force: force)
         }
     }

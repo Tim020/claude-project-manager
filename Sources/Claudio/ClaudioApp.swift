@@ -129,16 +129,17 @@ struct ClaudioApp: App {
                     .keyboardShortcut("\\", modifiers: [.command, .shift])
                     .disabled(!model.menuFlags.canSplitSelected)
                 Divider()
-                Button("Files Changed Inspector") { model.toggleFilesInspector() }
+                // The rails' tools (design 8c): left for projects, right for the session.
+                Button(model.menuFlags.leftTool == .sessions ? "Hide Sessions" : "Show Sessions") { model.toggleTool(.sessions) }
+                    .keyboardShortcut("1")
+                Button(model.menuFlags.leftTool == .pullRequests ? "Hide Pull Requests" : "Show Pull Requests") { model.toggleTool(.pullRequests) }
+                    .keyboardShortcut("2")
+                Button(model.menuFlags.rightTool == .changes ? "Hide Changes" : "Show Changes") { model.toggleTool(.changes) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
-                    .disabled(!model.menuFlags.hasSelection)
-                Button("Terminal / Changes") {
-                    if let id = model.selectedSessionID {
-                        model.setPaneMode(model.paneMode(for: id) == .changes ? .terminal : .changes, for: id)
-                    }
+                Button(model.menuFlags.rightTool == .pullRequest ? "Hide Session's Pull Request" : "Show Session's Pull Request") {
+                    model.toggleTool(.pullRequest)
                 }
-                .keyboardShortcut("c", modifiers: [.command, .option])
-                .disabled(!model.menuFlags.hasSelection)
+                .keyboardShortcut("p", modifiers: [.command, .option])
                 Divider()
                 // As in VS Code: ⌃` toggles the panel, ⌃⇧` opens another shell.
                 Button(model.menuFlags.isShellOpen ? "Hide Shell" : "Show Shell") { model.toggleShellPanel() }

@@ -40,14 +40,8 @@ struct DetailView: View {
                     OverviewHeader(overview: overview)
                 }
                 if showsPanes {
-                    HStack(spacing: 0) {
-                        PaneArea()
-                        // Files Changed inspector (design 4a), beside the terminal.
-                        if let session = model.selectedSession, model.showsFilesInspector && model.paneMode(for: session.id) == .terminal {
-                            FilesInspector(session: session)
-                        }
-                    }
-                    .frame(maxHeight: .infinity)
+                    PaneArea()
+                        .frame(maxHeight: .infinity)
                 }
             } else if showsPanes {
                 emptyState
@@ -101,16 +95,11 @@ private struct DetailHeader: View {
     @State private var newName = ""
     @State private var confirmDelete = false
 
+    /// Design 8c: only what's about the session itself (its name, role,
+    /// context and status, and ⋯). Its changes, branch and pull requests
+    /// are in the right rail; the Shell is in the left.
     var body: some View {
         HStack(spacing: 10) {
-            Button { model.showOverview(.project(session.projectID)) } label: {
-                Text(breadcrumb.project)
-                    .font(DS.font(13))
-                    .foregroundStyle(DS.muted)
-            }
-            .buttonStyle(.plain)
-            .help("Show \(breadcrumb.project)'s pull requests")
-            chevron
             Button {
                 if let group = model.workspace.group(of: session.id) { model.showOverview(.folder(group)) }
             } label: {
@@ -127,21 +116,12 @@ private struct DetailHeader: View {
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
             RoleChip(session: session)
-            // An agent that entered a worktree itself is still listed in the
-            // repository, so also go by where Files Changed found its edits.
-            if let worktree = Worktree.name(ofPath: session.workingDirectory)
-                ?? model.changesDirectory(for: session.id).flatMap(Worktree.name(ofPath:)) {
-                WorktreeChip(name: worktree)
-            }
             Spacer(minLength: 10)
             if let context = model.context(for: session.id) {
                 ContextMeter(context: context, compact: false)
             }
             StatusPill(status: session.status)
                 .help(SessionIndicators.statusHelp(session))
-            FilesButton(session: session)
-            ShellToggleButton()
-            SessionPullRequestButton(session: session)
             Menu {
                 SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete)
             } label: {
@@ -152,9 +132,10 @@ private struct DetailHeader: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More")
+            .help("Session actions")
         }
-        .padding(.horizontal, 20)
+        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.trailing, 20)
         .frame(height: Self.height)
         .background(DS.sidebar)
         .overlay(alignment: .bottom) { HorizontalRule() }
@@ -208,25 +189,6 @@ struct ContextMeter: View {
     }
 }
 
-/// Small badge naming the session's git worktree.
-struct WorktreeChip: View {
-    let name: String
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "arrow.triangle.branch").font(.system(size: 10))
-            Text(name).lineLimit(1)
-        }
-        .font(DS.font(11.5, .semibold))
-        .foregroundStyle(DS.muted)
-        .padding(.vertical, 2)
-        .padding(.horizontal, 8)
-        .background(Capsule().fill(DS.border))
-        .help("Runs in the git worktree .claude/worktrees/\(name)")
-        .fixedSize()
-    }
-}
-
 /// A pane's tabs. Drag a tab to reorder it, onto another pane's strip to move
 /// it there, or onto a pane's edge to dock it (see `PaneGroupView`).
 struct TabStrip: View {
@@ -272,10 +234,6 @@ struct TabStrip: View {
             .buttonStyle(.plain)
             .help("New Session in Folder")
             Spacer(minLength: 0)
-            if let selected = tabs.first(where: { $0.id == selectedID })?.session {
-                PaneModeSwitch(session: selected)
-                    .padding(.leading, 8)
-            }
         }
         .padding(.horizontal, model.panes.isSplit ? 12 : 20)
         .background(isDropTarget ? DS.selection.opacity(0.4) : .clear)
@@ -502,9 +460,10 @@ struct SessionPane: View {
         let running = model.isRunning(session.id)
         let exitCode = model.lastExitCode(session.id)
         VStack(spacing: 0) {
-            if model.paneMode(for: session.id) == .changes {
-                // Changes view (design 4b); the terminal keeps running meanwhile.
-                ChangesView(session: session)
+            if model.paneMode(for: session.id) == .diff {
+                // A file's diff, picked in the Changes tool (design 8c); the
+                // terminal keeps running meanwhile.
+                FileDiffPane(session: session)
             } else if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
                 // A shell with the keyboard keeps it (see `AppModel.shellHasFocus`).
                 TerminalPane(sessionID: session.id, registry: terminals.registry,

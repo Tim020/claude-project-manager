@@ -39,18 +39,35 @@ struct ContentView: View {
 
     var body: some View {
         @Bindable var commands = commands
-        HStack(spacing: 0) {
-            SidebarView(width: draggingWidth ?? model.settings.sidebarWidth)
-                .layoutPriority(1)
-            VerticalRule()
-                .overlay { sidebarResizeHandle }
-            VStack(spacing: 0) {
-                DetailView()
-                if commands.dismissedBannerProblems != model.environment.problems.map(\.title) && !commands.showSetup {
-                    EnvironmentBanner(onFix: { commands.showSetup = true },
-                                      onDismiss: { commands.dismissedBannerProblems = model.environment.problems.map(\.title) })
+        let tools = model.toolWindows
+        // Design 8c: left rail (projects) · its tool · the panes · the
+        // selected session's tool · right rail, over the app's status bar.
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                LeftRail()
+                VerticalRule()
+                if let tool = tools.visibleLeft {
+                    LeftToolPanel(tool: tool, width: draggingWidth ?? model.settings.sidebarWidth)
+                        .layoutPriority(1)
+                    VerticalRule()
+                        .overlay { sidebarResizeHandle }
                 }
+                VStack(spacing: 0) {
+                    DetailView()
+                    if commands.dismissedBannerProblems != model.environment.problems.map(\.title) && !commands.showSetup {
+                        EnvironmentBanner(onFix: { commands.showSetup = true },
+                                          onDismiss: { commands.dismissedBannerProblems = model.environment.problems.map(\.title) })
+                    }
+                }
+                if let tool = tools.visibleRight {
+                    VerticalRule()
+                    RightToolPanel(tool: tool)
+                        .layoutPriority(1)
+                }
+                VerticalRule()
+                RightRail()
             }
+            StatusBar()
         }
         .background(DS.window)
         .ignoresSafeArea(.container, edges: .top)

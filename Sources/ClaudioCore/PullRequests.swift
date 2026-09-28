@@ -176,6 +176,23 @@ public struct PullRequestInfo: Equatable, Sendable, Identifiable {
         }
     }
 
+    /// A few words for what most needs doing: "Checks failing", "Approved"…
+    public var attentionLabel: String {
+        switch attention {
+        case .failing: return "Checks failing"
+        case .changesRequested: return "Changes requested"
+        case .waiting: return state == .draft ? "Draft" : "Checks running"
+        case .ready:
+            switch reviewDecision {
+            case .approved: return "Approved"
+            case .reviewRequired: return "Review required"
+            case .changesRequested, .none: return "Open"
+            }
+        case .merged: return "Merged"
+        case .closed: return "Closed"
+        }
+    }
+
     public enum Attention: Equatable, Sendable {
         case failing, changesRequested, waiting, ready, merged, closed
 

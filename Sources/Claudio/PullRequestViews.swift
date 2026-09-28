@@ -293,7 +293,8 @@ struct OverviewHeader: View {
                     .help("Open the repository's pull requests in your browser")
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.trailing, 20)
         .frame(height: 52)
         .background(DS.sidebar)
         .overlay(alignment: .bottom) { HorizontalRule() }
@@ -329,7 +330,8 @@ struct OverviewHeader: View {
             Spacer(minLength: 10)
             if let projectID { PullRequestsFreshness(projectID: projectID) }
         }
-        .padding(.horizontal, 20)
+        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.trailing, 20)
         .frame(height: 52)
         .background(DS.sidebar)
         .overlay(alignment: .bottom) { Rectangle().fill(DS.blue).frame(height: 1.6) }
@@ -1027,69 +1029,50 @@ private struct UnresolvedComments: View {
     }
 }
 
-// MARK: - Session header (design 5c)
+// MARK: - Session (design 8c, right rail)
 
-/// The session header's pull request button: "#1427 +1" with a status dot,
-/// opening a popover with each pull request's state.
-struct SessionPullRequestButton: View {
+/// The right rail's Pull Request tool: the state, checks, review and
+/// unresolved comments of each of the selected session's pull requests,
+/// with the branch or worktree it works in.
+struct SessionPullRequestTool: View {
     @Environment(AppModel.self) private var model
     let session: Session
-    @State private var showing = false
-
-    var body: some View {
-        let known = model.pullRequests(ofSession: session.id)
-        let links = model.pullRequestLinks(ofSession: session.id)
-        if links.isEmpty {
-            Image(systemName: "arrow.triangle.pull")
-                .font(.system(size: 15))
-                .foregroundStyle(DS.dim.opacity(0.6))
-                .help("No pull requests yet")
-        } else {
-            Button { showing.toggle() } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.triangle.pull").font(.system(size: 12))
-                    Text(label(known: known, links: links))
-                    if let first = known.first {
-                        Circle().fill(DS.color(for: first.attention)).frame(width: 7, height: 7)
-                    }
-                }
-                .font(DS.font(12, .bold))
-                .foregroundStyle(DS.text)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 9)
-                .background(RoundedRectangle(cornerRadius: 4).fill(showing ? DS.blue : DS.border))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .help("Pull request status")
-            .popover(isPresented: $showing, arrowEdge: .bottom) {
-                SessionPullRequestPopover(session: session, close: { showing = false })
-                    .environment(model)
-            }
-        }
-    }
-
-    private func label(known: [PullRequestInfo], links: [SessionPullRequest]) -> String {
-        let first = known.first?.number ?? links[0].number
-        return links.count > 1 ? "#\(first) +\(links.count - 1)" : "#\(first)"
-    }
-}
-
-private struct SessionPullRequestPopover: View {
-    @Environment(AppModel.self) private var model
-    let session: Session
-    let close: () -> Void
 
     var body: some View {
         let known = model.pullRequests(ofSession: session.id)
         let knownKeys = Set(known.map(\.key))
-        let unknown = model.pullRequestLinks(ofSession: session.id).filter { link in
+        let links = model.pullRequestLinks(ofSession: session.id)
+        let unknown = links.filter { link in
             PullRequestKey.key(link.url).map { !knownKeys.contains($0) } ?? true
         }
         ScrollView {
             VStack(spacing: 0) {
-                if let problem = model.gitHubCLIProblem {
+                // The branch moved here from the session header.
+                if let worktree = Worktree.name(ofPath: session.workingDirectory)
+                    ?? model.changesDirectory(for: session.id).flatMap(Worktree.name(ofPath:)) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.triangle.branch").font(.system(size: 10))
+                        Text("In worktree \(worktree)")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                    .font(DS.mono(11.5))
+                    .foregroundStyle(DS.muted)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                    .help("Runs in the git worktree .claude/worktrees/\(worktree)")
+                }
+                if links.isEmpty {
+                    Text("No pull request for this session yet. One shows here once the session opens or reviews one.")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
+                }
+                if let problem = model.gitHubCLIProblem, !links.isEmpty {
                     Text(problem + " Set it up in Settings › Setup to see each pull request's checks and reviews.")
                         .font(DS.font(12))
                         .foregroundStyle(DS.muted)
@@ -1098,7 +1081,7 @@ private struct SessionPullRequestPopover: View {
                         .overlay(alignment: .bottom) { HorizontalRule() }
                 }
                 ForEach(known) { pullRequest in
-                    PopoverPullRequest(session: session, pullRequest: pullRequest, close: close)
+                    SessionPullRequestCard(session: session, pullRequest: pullRequest)
                 }
                 ForEach(unknown, id: \.url) { link in
                     HStack {
@@ -1114,22 +1097,19 @@ private struct SessionPullRequestPopover: View {
                 }
             }
         }
-        .frame(width: 400)
-        .frame(maxHeight: 660)
-        .fixedSize(horizontal: false, vertical: true)
-        .background(DS.input)
-        .task { await model.refreshPullRequests(session.projectID) }
+        .frame(maxHeight: .infinity)
+        .task(id: session.id) { await model.refreshPullRequests(session.projectID) }
+        // Review threads reload while the tool shows them.
         .task(id: model.pullRequests(ofSession: session.id).map(\.key)) {
             await model.watchReviewThreads(for: model.pullRequests(ofSession: session.id))
         }
     }
 }
 
-private struct PopoverPullRequest: View {
+private struct SessionPullRequestCard: View {
     @Environment(AppModel.self) private var model
     let session: Session
     let pullRequest: PullRequestInfo
-    let close: () -> Void
 
     var body: some View {
         let threads = model.reviewThreads[pullRequest.key]
@@ -1174,10 +1154,10 @@ private struct PopoverPullRequest: View {
             .padding(.horizontal, 16)
             .overlay(alignment: .bottom) { HorizontalRule() }
 
-            HStack(spacing: 8) {
+            // Stacked: the tool is narrower than the popover was.
+            VStack(spacing: 8) {
                 if let group = model.workspace.group(of: session.id) {
                     Button {
-                        close()
                         model.showOverview(.folder(group))
                     } label: {
                         Text("View Folder Overview").frame(maxWidth: .infinity)
@@ -1235,28 +1215,69 @@ private struct PopoverPullRequest: View {
     }
 }
 
-// MARK: - Sidebar
+// MARK: - Projects (design 8c, left rail)
 
-/// A project's "Pull Requests" row: how many need attention, how many are open.
-struct PullRequestsSidebarRow: View {
+/// The left rail's Pull Requests tool: each project's pull requests that its
+/// sessions opened or reviewed, most urgent first. Click one for its
+/// session; click a project for its full Pull Requests overview.
+struct ProjectPullRequestsTool: View {
     @Environment(AppModel.self) private var model
-    let projectID: UUID
+
+    var body: some View {
+        let groups = model.pullRequestPanel()
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                if let problem = model.gitHubCLIProblem {
+                    Text(problem + " Set it up in Settings › Setup.")
+                        .font(DS.font(12))
+                        .foregroundStyle(DS.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                } else if groups.isEmpty {
+                    Text(model.workspace.projects.isEmpty ? "No projects yet." : "None of your projects are on GitHub.")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.dim)
+                        .padding(.horizontal, 8)
+                }
+                ForEach(groups) { group in
+                    ProjectPullRequestsHeader(group: group)
+                    ForEach(group.items) { item in
+                        PanelPullRequestRow(projectID: group.projectID, item: item)
+                    }
+                    if group.items.isEmpty {
+                        Text(group.hasLoaded ? "No open pull requests from your sessions." : "Loading…")
+                            .font(DS.font(12))
+                            .foregroundStyle(DS.dim)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 4)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 12)
+        }
+        .task { await model.refreshAllPullRequests() }
+    }
+}
+
+/// A project's name, with how many need attention and how many are open;
+/// opens the project's Pull Requests overview.
+private struct ProjectPullRequestsHeader: View {
+    @Environment(AppModel.self) private var model
+    let group: PullRequestPanelGroup
     @State private var hovering = false
 
     var body: some View {
-        let items = model.pullRequests(forProject: projectID)?.items ?? []
+        let items = model.pullRequests(forProject: group.projectID)?.items ?? []
         let attention = items.filter(\.needsAttention).count
         let open = items.filter(\.isOpen).count
-        let selected = model.selectedOverview == .project(projectID)
-        HStack(spacing: 7) {
-            Spacer().frame(width: 8)
-            Image(systemName: "arrow.triangle.pull")
-                .font(.system(size: 13))
-                .foregroundStyle(DS.teal)
-                .frame(width: 16)
-            Text("Pull Requests")
-                .font(DS.font(13.5, .bold))
-                .foregroundStyle(DS.text)
+        let selected = model.selectedOverview == .project(group.projectID)
+        HStack(spacing: 6) {
+            Text(group.name.uppercased())
+                .font(DS.font(11, .extraBold))
+                .kerning(0.66)
+                .foregroundStyle(DS.muted)
                 .lineLimit(1)
             Spacer(minLength: 4)
             if attention > 0 {
@@ -1265,17 +1286,20 @@ struct PullRequestsSidebarRow: View {
             }
             if open > 0 {
                 countPill("\(open) open", color: DS.muted, background: DS.dim.opacity(0.25))
-                    .help("\(open) open pull \(open == 1 ? "request" : "requests")")
+                    .help("\(open) open pull \(open == 1 ? "request" : "requests") in the repository")
             }
+            Image(systemName: "arrow.up.forward.square")
+                .font(.system(size: 11))
+                .foregroundStyle(hovering ? DS.text : DS.dim)
         }
         .padding(.vertical, 5)
-        .padding(.leading, SidebarIndent.folder)
-        .padding(.trailing, 8)
+        .padding(.horizontal, 10)
         .background(RoundedRectangle(cornerRadius: 4).fill(selected ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { model.showOverview(.project(projectID)) }
-        .padding(.top, 2)
+        .onTapGesture { model.showOverview(.project(group.projectID)) }
+        .help("Show all of \(group.name)'s pull requests")
+        .padding(.top, 8)
     }
 
     private func countPill(_ text: String, color: Color, background: Color) -> some View {
@@ -1286,6 +1310,62 @@ struct PullRequestsSidebarRow: View {
             .frame(minHeight: 16)
             .background(Capsule().fill(background))
             .fixedSize()
+    }
+}
+
+/// "#1427 Handle websocket close state", over "● Changes requested · Folder".
+/// Highlighted when it's the selected session's.
+private struct PanelPullRequestRow: View {
+    @Environment(AppModel.self) private var model
+    let projectID: UUID
+    let item: PullRequestPanelItem
+    @State private var hovering = false
+
+    var body: some View {
+        let pullRequest = item.pullRequest
+        let selectedKeys = model.selectedSession.map { session in model.pullRequests(ofSession: session.id).map(\.key) } ?? []
+        let selected = selectedKeys.contains(pullRequest.key)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Text("#\(pullRequest.number)")
+                    .font(DS.mono(11.5))
+                    .foregroundStyle(DS.muted)
+                Text(pullRequest.title)
+                    .font(DS.font(13, .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            HStack(spacing: 6) {
+                Circle().fill(DS.color(for: pullRequest.attention)).frame(width: 7, height: 7)
+                Text(pullRequest.attentionLabel)
+                    .foregroundStyle(DS.muted)
+                Text("· \(item.folder ?? "No session")")
+                    .foregroundStyle(DS.dim)
+                    .lineLimit(1)
+            }
+            .font(DS.font(11.5))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 4).fill(selected ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            if let session = item.sessionID {
+                model.select(session)
+            } else {
+                model.showOverview(.project(projectID))
+            }
+        }
+        .help(item.sessionID == nil ? "No session here opened or reviewed it: show the project's pull requests" : "Open the session that worked on it")
+        .contextMenu {
+            Button("Open on GitHub") { openOnGitHub(pullRequest.url) }
+            Button("Show \(model.workspace.project(projectID)?.name ?? "Project")'s Pull Requests") {
+                model.showOverview(.project(projectID))
+            }
+        }
     }
 }
 

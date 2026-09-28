@@ -167,6 +167,18 @@ final class PullRequestStatusTests: XCTestCase {
         XCTAssertNil(pr().checkState)
     }
 
+    func testAttentionLabels() {
+        XCTAssertEqual(pr(checks: [.failing], decision: .approved).attentionLabel, "Checks failing")
+        XCTAssertEqual(pr(decision: .changesRequested).attentionLabel, "Changes requested")
+        XCTAssertEqual(pr(checks: [.running]).attentionLabel, "Checks running")
+        XCTAssertEqual(pr(.draft).attentionLabel, "Draft")
+        XCTAssertEqual(pr(checks: [.passing], decision: .approved).attentionLabel, "Approved")
+        XCTAssertEqual(pr(decision: .reviewRequired).attentionLabel, "Review required")
+        XCTAssertEqual(pr().attentionLabel, "Open")
+        XCTAssertEqual(pr(.merged, checks: [.failing]).attentionLabel, "Merged")
+        XCTAssertEqual(pr(.closed).attentionLabel, "Closed")
+    }
+
     func testNeedsAttention() {
         XCTAssertTrue(pr(checks: [.failing]).needsAttention)
         XCTAssertTrue(pr(decision: .changesRequested).needsAttention)
@@ -390,7 +402,7 @@ final class PullRequestModelTests: XCTestCase {
             XCTAssertEqual(loaded?.updatedAt, clock)
             XCTAssertNil(loaded?.error)
             XCTAssertEqual(model.pullRequests(ofSession: session).map(\.number), [900, 1427])
-            XCTAssertTrue(model.showsPullRequestsRow(projectID: project))
+            XCTAssertTrue(model.tracksPullRequests(projectID: project))
         }
 
         // Fresh: not reloaded until the interval passes, unless forced.

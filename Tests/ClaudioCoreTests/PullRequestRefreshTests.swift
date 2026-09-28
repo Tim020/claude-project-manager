@@ -95,7 +95,7 @@ final class PullRequestRefreshTests: XCTestCase {
         await model.refreshAllPullRequests()
         await MainActor.run {
             XCTAssertEqual(model.pullRequests(forProject: project)?.isNotGitHub, true)
-            XCTAssertFalse(model.showsPullRequestsRow(projectID: project))
+            XCTAssertFalse(model.tracksPullRequests(projectID: project))
         }
         XCTAssertEqual(runner.calls.filter { $0.starts(with: ["repo", "view"]) }.count, 1)
         await model.refreshPullRequests(project, force: true)

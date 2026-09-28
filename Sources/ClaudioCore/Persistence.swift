@@ -20,8 +20,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// The sidebar only shows sessions active within this many days (plus
     /// ones working, awaiting input or open in a tab). 0 shows every session.
     public var activityWindowDays = AppSettings.defaultActivityWindowDays
-    /// The Files Changed inspector beside the terminal is open.
-    public var showFilesInspector = false
+    /// The tools open on the left and right rails (design 8c).
+    public var toolWindows = ToolWindows()
     /// Height of the Shell panel under the panes, in points.
     public var shellPanelHeight = AppSettings.defaultShellPanelHeight
     public static let defaultActivityWindowDays = 14
@@ -80,6 +80,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.roles = AppSettings.cleanRoles(roles)
     }
 
+    private enum LegacyKeys: String, CodingKey {
+        case showFilesInspector
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -91,7 +95,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
             roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
         defaultBackgroundPermissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .defaultBackgroundPermissionMode) ?? .auto
-        showFilesInspector = try c.decodeIfPresent(Bool.self, forKey: .showFilesInspector) ?? false
+        if let tools = try c.decodeIfPresent(ToolWindows.self, forKey: .toolWindows) {
+            toolWindows = tools
+        } else {
+            // Before the rails, Files Changed was an inspector beside the
+            // terminal; it's the right rail's Changes tool now.
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            toolWindows.isRightOpen = try legacy.decodeIfPresent(Bool.self, forKey: .showFilesInspector) ?? false
+        }
         shellPanelHeight = AppSettings.clampShellPanelHeight(
             try c.decodeIfPresent(Double.self, forKey: .shellPanelHeight) ?? AppSettings.defaultShellPanelHeight)
         activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)

@@ -3,9 +3,9 @@ import AppKit
 import ClaudioCore
 import SwiftUI
 
-// Files Changed (design 4a + 4b): a header button with the totals, an
-// inspector beside the terminal with inline diff previews, and a Changes view
-// (file list + full diff) switched to from the tab strip.
+// Files Changed (designs 4 and 8c): the right rail's Changes tool lists the
+// selected session's files, and clicking one shows its diff in place of the
+// terminal until Close.
 
 extension FileChangeStatus {
     var color: Color {
@@ -166,83 +166,6 @@ struct ScopeToggle: View {
     }
 }
 
-/// Header button: "Files +379 −96"; shows or hides the inspector.
-struct FilesButton: View {
-    @Environment(AppModel.self) private var model
-    let session: Session
-
-    var body: some View {
-        let changes = model.currentChanges(for: session.id)
-        Button { model.toggleFilesInspector() } label: {
-            HStack(spacing: 6) {
-                Text("Files")
-                    .font(DS.font(12, .bold))
-                    .foregroundStyle(DS.text)
-                if model.showsChangesLoading(for: session.id) {
-                    ProgressView().controlSize(.mini)
-                } else if let changes, !changes.isEmpty {
-                    ChangeCounts(additions: changes.additions, deletions: changes.deletions)
-                }
-            }
-            .padding(.vertical, 4)
-            .padding(.horizontal, 10)
-            .background(RoundedRectangle(cornerRadius: 4).fill(model.showsFilesInspector ? DS.selection : DS.border))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help(changes))
-    }
-
-    private func help(_ changes: ChangeSet?) -> String {
-        let action = model.showsFilesInspector ? "Hide" : "Show"
-        guard let changes else { return "\(action) files changed" }
-        let count = changes.files.count
-        return "\(action) files changed (\(count) file\(count == 1 ? "" : "s"))"
-    }
-}
-
-/// "Terminal | Changes (10)" in the tab strip, for the selected session.
-struct PaneModeSwitch: View {
-    @Environment(AppModel.self) private var model
-    let session: Session
-
-    var body: some View {
-        let mode = model.paneMode(for: session.id)
-        let count = model.currentChanges(for: session.id)?.files.count ?? 0
-        HStack(spacing: 0) {
-            segment(active: mode == .terminal, help: "Show the session's terminal") {
-                Text("Terminal")
-            } action: { model.setPaneMode(.terminal, for: session.id) }
-            segment(active: mode == .changes, help: "Show the files this session changed, with full diffs") {
-                HStack(spacing: 6) {
-                    Text("Changes")
-                    Text("\(count)")
-                        .font(DS.font(11, .bold))
-                        .padding(.horizontal, 6)
-                        .background(Capsule().fill(DS.window))
-                }
-            } action: { model.setPaneMode(.changes, for: session.id) }
-        }
-        .font(DS.font(12))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-        .fixedSize()
-    }
-
-    private func segment<Label: View>(active: Bool, help: String, @ViewBuilder label: () -> Label, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            label()
-                .foregroundStyle(active ? DS.text : DS.muted)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 12)
-                .background(active ? DS.border : .clear)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-}
-
 /// "In worktree fix-ws-reconnect" when the session has been working somewhere
 /// other than the folder it started in, so Files Changed looks there.
 private struct ChangesLocation: View {
@@ -330,9 +253,11 @@ private struct ChangesPlaceholder: View {
     }
 }
 
-// MARK: - 4a Inspector
+// MARK: - Changes tool (right rail)
 
-struct FilesInspector: View {
+/// The right rail's Changes tool for the selected session: its scope, totals
+/// and files. Clicking a file shows its diff in place of the terminal.
+struct ChangesTool: View {
     @Environment(AppModel.self) private var model
     let session: Session
 
@@ -340,20 +265,6 @@ struct FilesInspector: View {
         let changes = model.currentChanges(for: session.id) ?? .empty
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Text("Files Changed")
-                        .font(DS.font(14, .bold))
-                        .foregroundStyle(DS.text)
-                    Spacer()
-                    Button { model.toggleFilesInspector() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(DS.dim)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Hide Files Changed")
-                }
                 ScopeToggle(session: session)
                 ChangesLocation(session: session)
                 HStack(spacing: 10) {
@@ -366,8 +277,8 @@ struct FilesInspector: View {
                 }
                 StatusLegend(changes: changes)
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 16)
+            .padding(.top, 2)
+            .padding(.horizontal, 12)
             .padding(.bottom, 12)
             .overlay(alignment: .bottom) { HorizontalRule() }
 
@@ -377,31 +288,17 @@ struct FilesInspector: View {
                 ChangesPlaceholder(session: session)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(changes.groupedByDirectory) { group in
-                            Text(group.directory.isEmpty ? "./" : group.directory + "/")
-                                .font(DS.mono(11))
-                                .foregroundStyle(DS.dim)
-                                .lineLimit(1)
-                                .truncationMode(.head)
-                                .padding(.top, 10)
-                                .padding(.horizontal, 8)
-                                .padding(.bottom, 3)
-                            ForEach(group.files) { file in
-                                InspectorRow(session: session, file: file)
-                            }
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(changes.files) { file in
+                            ChangeRow(session: session, file: file)
                         }
                     }
-                    .padding(.top, 6)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 12)
+                    .padding(6)
                 }
             }
         }
-        .frame(width: 360)
         .frame(maxHeight: .infinity)
-        .background(DS.sidebar)
-        .overlay(alignment: .leading) { VerticalRule() }
+        .task(id: session.id) { await model.refreshChanges(for: session.id) }
     }
 }
 
@@ -425,40 +322,47 @@ private struct StatusLegend: View {
     }
 }
 
-private struct InspectorRow: View {
+/// A file in the Changes tool: its name over its folder, and its counts.
+/// Highlighted while its diff is showing in the session's pane.
+private struct ChangeRow: View {
     @Environment(AppModel.self) private var model
     let session: Session
     let file: FileChange
+    @State private var hovering = false
 
     var body: some View {
-        let expanded = model.expandedChange(for: session.id) == file.path
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                StatusLetter(status: file.status)
+        let showing = model.diffPath(for: session.id) == file.path
+        HStack(spacing: 8) {
+            StatusLetter(status: file.status)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(file.name)
                     .font(DS.font(13))
                     .foregroundStyle(file.status == .deleted ? DS.muted : DS.text)
                     .strikethrough(file.status == .deleted)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 4)
-                FileCounts(file: file)
+                if !file.directory.isEmpty {
+                    Text(file.directory)
+                        .font(DS.mono(10.5))
+                        .foregroundStyle(DS.dim)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
             }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 8)
-            .background(RoundedRectangle(cornerRadius: 4).fill(expanded ? DS.selection : .clear))
-            .contentShape(Rectangle())
-            .onTapGesture { model.toggleExpandedChange(file.path, for: session.id) }
-            .help("\(file.status.word): \(file.path)")
-            .contextMenu { FileMenu(session: session, file: file) }
-
-            if expanded {
-                DiffPreview(session: session, file: file)
-                    .padding(.leading, 24)
-                    .padding(.top, 4)
-                    .padding(.bottom, 8)
-            }
+            Spacer(minLength: 4)
+            FileCounts(file: file)
         }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 4).fill(showing ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            model.select(session.id)
+            model.openDiff(file.path, for: session.id)
+        }
+        .help("\(file.status.word): \(file.path)")
+        .contextMenu { FileMenu(session: session, file: file) }
     }
 }
 
@@ -469,7 +373,7 @@ private struct FileMenu: View {
 
     var body: some View {
         let path = model.absolutePath(for: session.id, path: file.path, scope: model.changesScope)
-        Button("Open Full Diff") { model.openFullDiff(file.path, for: session.id) }
+        Button("Show Diff") { model.openDiff(file.path, for: session.id) }
         Divider()
         Button("Copy Path") {
             NSPasteboard.general.clearContents()
@@ -478,196 +382,71 @@ private struct FileMenu: View {
     }
 }
 
-/// The first few lines of a file's diff, with links to the full diff.
-private struct DiffPreview: View {
+// MARK: - A file's diff in the pane
+
+/// The diff of the file picked in the Changes tool, in place of the session's
+/// terminal (which keeps running). Close brings the terminal back.
+struct FileDiffPane: View {
     @Environment(AppModel.self) private var model
     let session: Session
-    let file: FileChange
-    @State private var diff: FileDiff?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let old = file.oldPath {
-                Text("from \(old)")
-                    .font(DS.mono(11))
-                    .foregroundStyle(DS.blue)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.vertical, 5)
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .bottom) { HorizontalRule() }
-            }
-            if file.isUntrackedFolder {
-                note("An untracked folder. Like git status, Claudio lists it as one entry rather than every file in it.")
-            } else if let diff {
-                if diff.isBinary {
-                    note("Binary file")
-                } else {
-                    let lines = Array(diff.lines.drop { $0.kind == .hunk }.prefix(8))
-                    if lines.isEmpty { note("No changes to show") }
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        HStack(spacing: 0) {
-                            Text(line.kind == .added ? "+" : line.kind == .removed ? "-" : "")
-                                .foregroundStyle(line.kind == .added ? DS.teal : DS.red)
-                                .frame(width: 14)
-                            Text(line.text)
-                                .foregroundStyle(line.kind == .context || line.kind == .hunk ? DS.muted : DS.text)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            Spacer(minLength: 0)
-                        }
-                        .font(DS.mono(11))
-                        .padding(.vertical, 1)
-                        .background(background(line))
-                    }
-                }
-            } else {
-                ProgressView().controlSize(.small).padding(8)
-            }
-            HStack(spacing: 14) {
-                Button("Open Full Diff") { model.openFullDiff(file.path, for: session.id) }
-                    .foregroundStyle(DS.teal)
-            }
-            .buttonStyle(.plain)
-            .font(DS.font(11.5))
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .top) { HorizontalRule() }
-        }
-        .background(DS.window)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-        .task(id: loadKey) { diff = await model.diff(for: session.id, path: file.path, scope: model.changesScope) }
-    }
-
-    private var loadKey: String {
-        "\(file.path)|\(model.changesScope)|\(model.sessionChanges[session.id]?.updatedAt?.timeIntervalSince1970 ?? 0)"
-    }
-
-    private func note(_ text: String) -> some View {
-        Text(text)
-            .font(DS.font(11.5, italic: true))
-            .foregroundStyle(DS.dim)
-            .padding(8)
-    }
-
-    private func background(_ line: DiffLine) -> Color {
-        switch line.kind {
-        case .added: return DiffStyle.addedBackground
-        case .removed: return DiffStyle.removedBackground
-        default: return .clear
-        }
-    }
-}
-
-// MARK: - 4b Changes view
-
-struct ChangesView: View {
-    @Environment(AppModel.self) private var model
-    let session: Session
-    @State private var filter = ""
 
     var body: some View {
         let changes = model.currentChanges(for: session.id) ?? .empty
-        HStack(spacing: 0) {
-            fileList(changes)
-            if model.showsChangesLoading(for: session.id) {
-                ChangesLoading(session: session)
-            } else if let path = model.selectedChange(for: session.id), let file = changes.files.first(where: { $0.path == path }) {
+        let path = model.diffPath(for: session.id)
+        Group {
+            if let path, let file = changes.files.first(where: { $0.path == path }) {
                 FullDiff(session: session, file: file)
             } else {
-                ChangesPlaceholder(session: session)
+                // Gone from the list (committed, reverted, or another scope):
+                // say so rather than show some other file.
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Text(path ?? "")
+                            .font(DS.mono(12.5))
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        Spacer(minLength: 8)
+                        DiffCloseButton(session: session)
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 18)
+                    .background(DS.input)
+                    .overlay(alignment: .bottom) { HorizontalRule() }
+                    Spacer()
+                    Text(model.showsChangesLoading(for: session.id) ? "Looking for changes…" : "This file isn't in the list of changes any more.")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.dim)
+                    Spacer()
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.window)
     }
+}
 
-    private func fileList(_ changes: ChangeSet) -> some View {
-        let query = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        let files = query.isEmpty ? changes.files : changes.files.filter { $0.path.lowercased().contains(query) }
-        let selected = model.selectedChange(for: session.id)
-        return VStack(spacing: 0) {
-            VStack(spacing: 10) {
-                ScopeToggle(session: session)
-                ChangesLocation(session: session)
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11))
-                    TextField("Filter files", text: $filter)
-                        .textFieldStyle(.plain)
-                        .font(DS.font(12.5))
-                        .foregroundStyle(DS.text)
-                }
-                .foregroundStyle(DS.dim)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 8)
-                .fieldChrome(background: DS.window)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .overlay(alignment: .bottom) { HorizontalRule() }
+/// "× Close" on a diff: back to the terminal.
+private struct DiffCloseButton: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
 
-            if model.showsChangesLoading(for: session.id) {
-                ChangesLoading(session: session)
-            } else {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(files) { file in
-                        HStack(spacing: 8) {
-                            StatusLetter(status: file.status)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(file.name)
-                                    .font(DS.font(13))
-                                    .foregroundStyle(file.status == .deleted ? DS.muted : DS.text)
-                                    .strikethrough(file.status == .deleted)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                if !file.directory.isEmpty {
-                                    Text(file.directory)
-                                        .font(DS.mono(10.5))
-                                        .foregroundStyle(DS.dim)
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
-                                }
-                            }
-                            Spacer(minLength: 4)
-                            FileCounts(file: file)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(selected == file.path ? DS.selection : .clear))
-                        .contentShape(Rectangle())
-                        .onTapGesture { model.selectChange(file.path, for: session.id) }
-                        .help("\(file.status.word): \(file.path)")
-                        .contextMenu { FileMenu(session: session, file: file) }
-                    }
-                    if files.isEmpty && !changes.isEmpty {
-                        Text("No files match “\(filter)”")
-                            .font(DS.font(12))
-                            .foregroundStyle(DS.dim)
-                            .padding(12)
-                    }
-                }
-                .padding(6)
+    var body: some View {
+        Button { model.closeDiff(for: session.id) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                Text("Close")
             }
-            }
-
-            HStack(spacing: 10) {
-                Text("\(changes.files.count) file\(changes.files.count == 1 ? "" : "s")")
-                    .font(DS.font(12.5, .bold))
-                    .foregroundStyle(DS.text)
-                ChangeCounts(additions: changes.additions, deletions: changes.deletions, size: 12)
-                Spacer()
-                ChangeBlocksView(additions: changes.additions, deletions: changes.deletions)
-            }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
-            .overlay(alignment: .top) { HorizontalRule() }
+            .font(DS.font(12))
+            .foregroundStyle(DS.text)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 8)
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
+            .contentShape(Rectangle())
         }
-        .frame(width: 320)
-        .background(DS.sidebar)
-        .overlay(alignment: .trailing) { VerticalRule() }
+        .buttonStyle(.plain)
+        // No Esc shortcut: it would take Esc from a Claude terminal in another pane.
+        .help("Back to the terminal")
     }
 }
 
@@ -695,6 +474,8 @@ private struct FullDiff: View {
                     .textSelection(.enabled)
                 Spacer(minLength: 8)
                 FileCounts(file: file, size: 12)
+                DiffCloseButton(session: session)
+                    .padding(.leading, 6)
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 18)
