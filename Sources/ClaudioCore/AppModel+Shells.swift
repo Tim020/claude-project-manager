@@ -12,7 +12,8 @@ public struct ShellCloseConfirmation: Equatable, Sendable {
 /// folder, or its worktree when it has one.
 extension AppModel {
     /// Where a new shell starts: the selected session's worktree (where Files
-    /// Changed found its edits), else its folder, else the home folder.
+    /// Changed found its edits), else its folder. With a Pull Requests
+    /// overview focused, its project's folder. Otherwise the home folder.
     /// A worktree `claude rm` removed can still be recorded, so each
     /// candidate has to exist.
     public var shellStartDirectory: String {
@@ -20,6 +21,9 @@ extension AppModel {
         if let session = selectedSession {
             if let changes = changesDirectory(for: session.id) { candidates.append(changes) }
             candidates.append(session.workingDirectory)
+        } else if let overview = selectedOverview,
+                  let project = workspace.projectID(of: overview).flatMap(workspace.project) {
+            candidates.append(project.path)
         }
         return candidates.first(where: directoryExists) ?? home
     }

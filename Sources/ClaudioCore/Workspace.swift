@@ -11,10 +11,20 @@ public struct Workspace: Codable, Equatable, Sendable {
     public private(set) var projects: [Project]
     public private(set) var sessions: [Session]
     /// Open tabs, in the order they were opened (like a browser). Closing a
-    /// tab never stops or removes the session.
+    /// tab never stops or removes the session. A tab is a session's id, or an
+    /// overview tab's (`overviewTabs`).
     public private(set) var openTabIDs: [UUID] {
-        didSet { panes.reconcile(openTabIDs: openTabIDs) }
+        didSet {
+            panes.reconcile(openTabIDs: openTabIDs)
+            // An overview tab lasts only while it's open.
+            if overviewTabs.contains(where: { !openTabIDs.contains($0.id) }) {
+                overviewTabs.removeAll { !openTabIDs.contains($0.id) }
+            }
+        }
     }
+    /// Open tabs that show a project's or folder's pull requests rather than a
+    /// session. They sit in panes like session tabs.
+    public private(set) var overviewTabs: [OverviewTab]
     /// How the open tabs are arranged into panes; always holds exactly the open tabs.
     public private(set) var panes: PaneLayout
 
@@ -32,13 +42,14 @@ public struct Workspace: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case projects, sessions, panes
         case openTabIDs = "openSessionIDs"
-        case removedSessions, deletedClaudeSessionIDs, deletedAgentIDs
+        case removedSessions, deletedClaudeSessionIDs, deletedAgentIDs, overviewTabs
     }
 
     public init(projects: [Project] = [], sessions: [Session] = [], openTabIDs: [UUID] = []) {
         self.projects = projects
         self.sessions = sessions
         self.openTabIDs = openTabIDs
+        overviewTabs = []
         removedSessions = []
         deletedClaudeSessionIDs = []
         deletedAgentIDs = []
@@ -50,15 +61,24 @@ public struct Workspace: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projects = try c.decode([Project].self, forKey: .projects)
         sessions = try c.decode([Session].self, forKey: .sessions)
-        // Older files kept archived sessions' tabs open (hidden); archiving closes
-        // them now, so drop those, and any id without a session.
-        let visible = Set(sessions.filter { !$0.isArchived }.map(\.id))
-        openTabIDs = (try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []).filter(visible.contains)
         removedSessions = try c.decodeIfPresent([RemovedSession].self, forKey: .removedSessions) ?? []
         deletedClaudeSessionIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedClaudeSessionIDs) ?? []
         deletedAgentIDs = try c.decodeIfPresent(Set<String>.self, forKey: .deletedAgentIDs) ?? []
+        overviewTabs = []
+        openTabIDs = []
         // A layout that doesn't decode just starts again as one pane.
         panes = ((try? c.decodeIfPresent(PaneLayout.self, forKey: .panes)) ?? nil) ?? PaneLayout()
+
+        // Older files kept archived sessions' tabs open (hidden); archiving closes
+        // them now, so drop those, and any id without a session. Overview tabs
+        // whose project or folder has gone are dropped too.
+        // Tolerant like `panes`: an overview tab is easily opened again.
+        let savedOverviews = ((try? c.decodeIfPresent([OverviewTab].self, forKey: .overviewTabs)) ?? nil) ?? []
+        let overviews = savedOverviews.filter { projectID(of: $0.overview) != nil }
+        let visible = Set(sessions.filter { !$0.isArchived }.map(\.id)).union(overviews.map(\.id))
+        let open = (try c.decodeIfPresent([UUID].self, forKey: .openTabIDs) ?? []).filter(visible.contains)
+        overviewTabs = overviews.filter { open.contains($0.id) }
+        openTabIDs = open
         panes.reconcile(openTabIDs: openTabIDs)
     }
 
@@ -114,8 +134,41 @@ public struct Workspace: Codable, Equatable, Sendable {
     }
 
     public mutating func openTab(_ sessionID: UUID) {
-        guard session(sessionID) != nil, !openTabIDs.contains(sessionID) else { return }
+        guard isTab(sessionID), !openTabIDs.contains(sessionID) else { return }
         openTabIDs.append(sessionID)
+    }
+
+    /// Whether `id` can be a tab: a session, or an open overview tab.
+    public func isTab(_ id: UUID) -> Bool {
+        session(id) != nil || overviewTab(id) != nil
+    }
+
+    public func overviewTab(_ id: UUID) -> OverviewTab? {
+        overviewTabs.first { $0.id == id }
+    }
+
+    /// Opens an overview in the focused pane, or shows it where it's already
+    /// open (one tab per overview), and focuses it. Returns the tab's id.
+    @discardableResult
+    public mutating func openOverview(_ overview: Overview) -> UUID? {
+        guard projectID(of: overview) != nil else { return nil }
+        let id: UUID
+        if let existing = overviewTabs.first(where: { $0.overview == overview }) {
+            id = existing.id
+        } else {
+            id = UUID()
+            overviewTabs.append(OverviewTab(id: id, overview: overview))
+        }
+        selectTab(id)
+        return id
+    }
+
+    /// The project an overview belongs to; nil once it (or its folder) is gone.
+    public func projectID(of overview: Overview) -> UUID? {
+        switch overview {
+        case .project(let id): return project(id) == nil ? nil : id
+        case .folder(let group): return projectID(of: group)
+        }
     }
 
     public mutating func closeTab(_ sessionID: UUID) {
@@ -261,8 +314,9 @@ public struct Workspace: Codable, Equatable, Sendable {
     }
 
     public mutating func removeProject(_ id: UUID) {
+        var removed = Set(sessions.filter { $0.projectID == id }.map(\.id))
+        removed.formUnion(overviewTabs.filter { projectID(of: $0.overview) == id }.map(\.id))
         projects.removeAll { $0.id == id }
-        let removed = Set(sessions.filter { $0.projectID == id }.map(\.id))
         openTabIDs.removeAll { removed.contains($0) }
         sessions.removeAll { $0.projectID == id }
         removedSessions.removeAll { $0.session.projectID == id }
@@ -312,6 +366,8 @@ public struct Workspace: Codable, Equatable, Sendable {
     public mutating func deleteFolder(_ id: UUID) {
         guard let (p, f) = folderIndex(id) else { return }
         projects[p].folders.remove(at: f)
+        let overviews = Set(overviewTabs.filter { $0.overview == .folder(.folder(id)) }.map(\.id))
+        if !overviews.isEmpty { openTabIDs.removeAll { overviews.contains($0) } }
     }
 
     public mutating func moveFolder(_ id: UUID, toProject projectID: UUID) throws {

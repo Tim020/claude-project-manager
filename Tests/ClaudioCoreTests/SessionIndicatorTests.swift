@@ -16,9 +16,9 @@ final class SessionIndicatorTests: XCTestCase {
     }
 
     func testIndicatorsInOrderWithPullRequestCount() {
-        var session = Session(projectID: UUID(), name: "s", workingDirectory: "/code/repo/.claude/worktrees/x")
-        session.pullRequestURLs = ["https://github.com/o/r/pull/1427", "https://github.com/o/r/pull/1430"]
-        let indicators = SessionIndicators.indicators(for: session, isOpenInTerminal: true)
+        let session = Session(projectID: UUID(), name: "s", workingDirectory: "/code/repo/.claude/worktrees/x")
+        let indicators = SessionIndicators.indicators(for: session, isOpenInTerminal: true,
+                                                      pullRequests: ["https://github.com/o/r/pull/1427", "https://github.com/o/r/pull/1430"])
         XCTAssertEqual(indicators.map(\.kind), [.terminal, .worktree, .pullRequests])
         XCTAssertEqual(indicators.last?.text, "2")
         XCTAssertEqual(indicators.last?.help, "2 pull requests: #1427, #1430")

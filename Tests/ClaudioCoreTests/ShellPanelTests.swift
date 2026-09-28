@@ -105,6 +105,17 @@ final class ShellPanelTests: XCTestCase {
         }
     }
 
+    func testStartDirectoryWithAnOverviewFocusedIsItsProject() throws {
+        try MainActor.assumeIsolated {
+            existing = [projectPath]
+            let model = try makeModel()
+            let p = model.addProject(path: projectPath)
+            model.showOverview(.project(p))
+            XCTAssertNotNil(model.selectedOverview)
+            XCTAssertEqual(model.shellStartDirectory, projectPath)
+        }
+    }
+
     func testStartDirectoryWithNoSelectionIsHome() throws {
         try MainActor.assumeIsolated {
             let model = try makeModel()

@@ -29,7 +29,7 @@ final class SessionDiscoveryTests: XCTestCase {
         XCTAssertEqual(first.summary, "2 agents in flight: storage fix (PR #1427) + Jump to Page regression.")
         XCTAssertEqual(first.model, "claude-opus-5-5")
         XCTAssertEqual(first.workingDirectory, projectPath)
-        XCTAssertEqual(first.pullRequestURLs, ["https://github.com/Tim020/DigiScript/pull/1427"])
+        XCTAssertEqual(first.pullRequests, [], "it only mentions #1427 (another agent opened it)")
         XCTAssertEqual(first.lastActivity, ISO8601DateFormatter().date(from: "2026-09-25T05:00:00Z"))
         XCTAssertEqual(first.status, .completed)
     }
@@ -93,9 +93,9 @@ final class WorkspaceImportTests: XCTestCase {
 
         let discovered = [
             DiscoveredSession(claudeSessionID: "known", title: "ai title", firstPrompt: "p", summary: "newer summary", model: "m",
-                              workingDirectory: "/code/app", lastActivity: new, pullRequestURLs: ["https://github.com/a/b/pull/1"], status: .awaitingInput),
+                              workingDirectory: "/code/app", lastActivity: new, pullRequests: [PullRequestLink("https://github.com/a/b/pull/1", .opened)], status: .awaitingInput),
             DiscoveredSession(claudeSessionID: "fresh", title: "fresh one", firstPrompt: "p", summary: "s", model: nil,
-                              workingDirectory: "/code/app", lastActivity: new, pullRequestURLs: [], status: .completed),
+                              workingDirectory: "/code/app", lastActivity: new, pullRequests: [], status: .completed),
         ]
         let added = ws.importDiscovered(discovered, into: p, skipping: [])
 
@@ -105,7 +105,7 @@ final class WorkspaceImportTests: XCTestCase {
         XCTAssertEqual(known.summary, "newer summary")
         XCTAssertEqual(known.status, .awaitingInput)
         XCTAssertEqual(known.lastActivity, new)
-        XCTAssertEqual(known.pullRequestURLs, ["https://github.com/a/b/pull/1"])
+        XCTAssertEqual(known.pullRequests, [PullRequestLink("https://github.com/a/b/pull/1", .opened)])
         XCTAssertEqual(ws.sessions(in: .unfiled(projectID: p)).map(\.name).sorted(), ["fresh one", "my name"])
     }
 
@@ -116,7 +116,7 @@ final class WorkspaceImportTests: XCTestCase {
                         status: .working, summary: "live", createdAt: Date(timeIntervalSince1970: 500))
         try ws.addSession(s)
         let stale = DiscoveredSession(claudeSessionID: "busy", title: "t", firstPrompt: "p", summary: "stale", model: nil,
-                                      workingDirectory: "/code/app", lastActivity: Date(timeIntervalSince1970: 900), pullRequestURLs: [], status: .completed)
+                                      workingDirectory: "/code/app", lastActivity: Date(timeIntervalSince1970: 900), pullRequests: [], status: .completed)
         _ = ws.importDiscovered([stale], into: p, skipping: [s.id])
         XCTAssertEqual(ws.session(s.id)?.summary, "live")
         XCTAssertEqual(ws.session(s.id)?.status, .working)

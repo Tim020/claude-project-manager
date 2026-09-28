@@ -12,7 +12,9 @@ public struct SessionIndicator: Equatable, Sendable {
 }
 
 public enum SessionIndicators {
-    public static func indicators(for session: Session, isOpenInTerminal: Bool) -> [SessionIndicator] {
+    /// `pullRequests` are the session's own, in its project's repository
+    /// (`AppModel.pullRequestLinks(ofSession:)`).
+    public static func indicators(for session: Session, isOpenInTerminal: Bool, pullRequests: [String] = []) -> [SessionIndicator] {
         var result: [SessionIndicator] = []
         if isOpenInTerminal {
             result.append(SessionIndicator(kind: .terminal, symbol: "terminal", text: nil,
@@ -22,7 +24,7 @@ public enum SessionIndicators {
             result.append(SessionIndicator(kind: .worktree, symbol: "arrow.triangle.branch", text: nil,
                                            help: "Runs in its own git worktree, “\(worktree)” (.claude/worktrees/\(worktree)), so its changes stay apart from your main checkout."))
         }
-        let prs = session.pullRequestURLs
+        let prs = pullRequests
         if !prs.isEmpty {
             result.append(SessionIndicator(kind: .pullRequests, symbol: "arrow.triangle.pull",
                                            text: prs.count > 1 ? "\(prs.count)" : nil, help: pullRequestHelp(prs)))

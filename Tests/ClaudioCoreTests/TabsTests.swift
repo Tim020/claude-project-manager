@@ -78,7 +78,7 @@ final class WorkspaceTabTests: XCTestCase {
         var ws = Workspace()
         let p = ws.addProject(path: "/code")
         ws.importDiscovered([DiscoveredSession(claudeSessionID: "x", title: "t", firstPrompt: "p", summary: "", model: nil,
-                                               workingDirectory: "/code", lastActivity: Date(), pullRequestURLs: [], status: .completed)],
+                                               workingDirectory: "/code", lastActivity: Date(), pullRequests: [], status: .completed)],
                             into: p, skipping: [])
         XCTAssertTrue(ws.openSessionIDs.isEmpty)
     }

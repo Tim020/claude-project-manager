@@ -230,6 +230,9 @@ private struct ProjectSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !project.isCollapsed && model.showsPullRequestsRow(projectID: project.id) {
+                PullRequestsSidebarRow(projectID: project.id)
+            }
             ForEach(project.folders) { folder in
                 FolderSection(folder: folder, projectID: project.id, now: now)
             }
@@ -384,12 +387,13 @@ private struct FolderSection: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            FolderPullRequestChip(group: folder.group)
             StatusCountPills(counts: folder.statusCounts)
         }
         .padding(.vertical, 5)
         .padding(.leading, SidebarIndent.folder)
         .padding(.trailing, 8)
-        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget ? DS.selection : .clear))
+        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget || model.selectedOverview == .folder(folder.group) ? DS.selection : .clear))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
@@ -533,7 +537,9 @@ private struct SessionRow: View {
                 .truncationMode(.tail)
                 .help(session.needsAction ?? (session.summary.isEmpty ? session.name : session.summary))
             Spacer(minLength: 4)
-            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id)), id: \.symbol) { indicator in
+            ForEach(SessionIndicators.indicators(for: session, isOpenInTerminal: model.isOpenInTerminal(session.id),
+                                                 pullRequests: model.pullRequestLinks(ofSession: session.id).map(\.url)),
+                    id: \.symbol) { indicator in
                 HStack(spacing: 2) {
                     Image(systemName: indicator.symbol)
                         .font(.system(size: 10))
@@ -541,7 +547,7 @@ private struct SessionRow: View {
                         Text(text).font(DS.font(10.5, .semibold))
                     }
                 }
-                .foregroundStyle(DS.dim)
+                .foregroundStyle(indicatorColor(indicator))
                 .help(indicator.help)
             }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
@@ -581,6 +587,12 @@ private struct SessionRow: View {
         }
         .deleteSessionConfirmation(session: session, isPresented: $confirmDelete)
     }
+
+    /// Pull requests take the colour of the first one's state, once loaded.
+    private func indicatorColor(_ indicator: SessionIndicator) -> Color {
+        guard indicator.kind == .pullRequests, let first = model.pullRequests(ofSession: session.id).first else { return DS.dim }
+        return DS.color(for: first.attention)
+    }
 }
 
 /// Actions for a session, shared by the sidebar row and the detail header.
@@ -609,11 +621,12 @@ struct SessionMenu: View {
                 Button("New Folder") { model.createFolder(in: project.id, containing: session.id) }
             }
         }
-        if !session.pullRequestURLs.isEmpty {
+        let pullRequests = model.pullRequestLinks(ofSession: session.id)
+        if !pullRequests.isEmpty {
             Menu("Open Pull Request") {
-                ForEach(session.pullRequestURLs, id: \.self) { url in
-                    Button(PullRequestDetector.number(from: url).map { "#\($0)" } ?? url) {
-                        if let link = URL(string: url) { NSWorkspace.shared.open(link) }
+                ForEach(pullRequests, id: \.url) { pullRequest in
+                    Button("#\(pullRequest.number)") {
+                        if let link = URL(string: pullRequest.url) { NSWorkspace.shared.open(link) }
                     }
                 }
             }

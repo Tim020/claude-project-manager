@@ -321,7 +321,7 @@ final class WorkspaceTests: XCTestCase {
         let p = ws.addProject(path: "/code/a")
         let f = try ws.createFolder(in: p, named: "F")
         var s = makeSession("s", project: p, status: .awaitingInput)
-        s.pullRequestURLs = ["https://github.com/o/r/pull/1"]
+        s.pullRequests = [PullRequestLink("https://github.com/o/r/pull/1", .opened), PullRequestLink("#2", .reviewed)]
         try ws.addSession(s, toFolder: f)
 
         let data = try JSONEncoder().encode(ws)
