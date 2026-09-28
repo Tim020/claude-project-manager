@@ -266,7 +266,12 @@ extension AppModel {
     /// pull request whose threads are already loading is skipped.
     public func loadReviewThreads(for pullRequests: [PullRequestInfo], force: Bool = false) async {
         guard gitHubCLIProblem == nil, let gh = locateGitHubCLI() else { return }
-        for pullRequest in pullRequests where pullRequest.isOpen || reviewThreads[pullRequest.key] == nil {
+        // Go by the latest refresh, not the caller's copy: a view keeps the
+        // pull requests it started with, and one may since have merged.
+        let latest = pullRequests.map { pullRequest in
+            projectPullRequests.values.lazy.compactMap { $0.items.first { $0.key == pullRequest.key } }.first ?? pullRequest
+        }
+        for pullRequest in latest where pullRequest.isOpen || reviewThreads[pullRequest.key] == nil {
             if !force, let loaded = reviewThreadsLoaded[pullRequest.key],
                now().timeIntervalSince(loaded) < AppModel.pullRequestRefreshInterval {
                 continue

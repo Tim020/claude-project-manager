@@ -169,6 +169,27 @@ final class PullRequestRefreshTests: XCTestCase {
         XCTAssertEqual(graphqlCalls(), 2, "no longer shown")
     }
 
+    /// A view keeps the pull requests it started with; one merged since
+    /// stops reloading all the same.
+    func testAMergedPullRequestStopsReloadingWhileShown() async throws {
+        let runner = FakeGitHub()
+        runner.open = "[\(PullRequestFixtures.pr(1427))]"
+        let (model, project, _) = try await MainActor.run { try makeModel(runner) }
+        await model.refreshPullRequests(project)
+        let shown = try await MainActor.run { try XCTUnwrap(model.pullRequests(forProject: project)?.items.first) }
+        func graphqlCalls() -> Int { runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count }
+        await model.loadReviewThreads(for: [shown])
+        XCTAssertEqual(graphqlCalls(), 1)
+
+        runner.open = "[]"
+        runner.recent = "[\(PullRequestFixtures.pr(1427, state: "MERGED"))]"
+        await later()
+        await model.refreshPullRequests(project)
+        await model.loadReviewThreads(for: [shown])
+        XCTAssertTrue(shown.isOpen, "the view's copy")
+        XCTAssertEqual(graphqlCalls(), 1, "merged now: its threads are kept, not reloaded")
+    }
+
     func testOverlappingLoadsShareOneCall() async throws {
         let runner = FakeGitHub()
         runner.threadsDelay = 50_000_000
