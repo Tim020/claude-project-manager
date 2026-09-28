@@ -172,3 +172,97 @@ final class NotificationTests: XCTestCase {
         }
     }
 }
+
+final class UsageResetNotificationTests: XCTestCase {
+    private let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func snapshot(session: Double?, week: Double?, sessionResets: Date? = nil) -> UsageSnapshot {
+        UsageSnapshot(fiveHour: session.map { UsageWindow(usedPercentage: $0, resetsAt: sessionResets) },
+                      sevenDay: week.map { UsageWindow(usedPercentage: $0, resetsAt: nil) },
+                      subscriptionType: nil, updatedAt: start)
+    }
+
+    func testOnlyALimitThatWasReachedCountsAsReset() {
+        var tracker = UsageResetTracker()
+        XCTAssertEqual(tracker.check(nil, now: start), [], "no reading yet")
+        XCTAssertEqual(tracker.check(snapshot(session: 100, week: 40), now: start), [], "the first reading is the baseline")
+        XCTAssertEqual(tracker.check(snapshot(session: 100, week: 30), now: start), [], "a lower figure under the limit isn't a reset")
+        XCTAssertEqual(tracker.check(snapshot(session: nil, week: 30), now: start), [], "a missing window tells us nothing")
+        XCTAssertEqual(tracker.check(snapshot(session: 2, week: 30), now: start), [.session])
+        XCTAssertEqual(tracker.check(snapshot(session: 2, week: 30), now: start), [], "once")
+    }
+
+    func testTheResetTimePassingCountsWithoutANewReading() {
+        var tracker = UsageResetTracker()
+        let resets = start.addingTimeInterval(600)
+        let reading = snapshot(session: 100, week: 100, sessionResets: resets)
+        XCTAssertEqual(tracker.check(reading, now: start), [])
+        XCTAssertEqual(tracker.check(reading, now: resets.addingTimeInterval(-1)), [])
+        XCTAssertEqual(tracker.check(reading, now: resets), [.session])
+        // Claude Code's cached answer from before the reset doesn't re-arm it.
+        XCTAssertEqual(tracker.check(reading, now: resets.addingTimeInterval(30)), [])
+    }
+
+    func testALimitReachedAtLaunchNotifiesWhenItResets() {
+        var tracker = UsageResetTracker()
+        XCTAssertEqual(tracker.check(snapshot(session: 100, week: nil), now: start), [])
+        XCTAssertEqual(tracker.check(snapshot(session: 0, week: nil), now: start), [.session])
+    }
+
+    func testTheModelPostsAndLogsResets() async throws {
+        try await checkModel(notify: true)
+    }
+
+    func testTurnedOffItIsOnlyLogged() async throws {
+        try await checkModel(notify: false)
+    }
+
+    func testTheSettingDefaultsOn() throws {
+        let decoded = try JSONDecoder().decode(NotificationSettings.self, from: Data(#"{"finished":false}"#.utf8))
+        XCTAssertTrue(decoded.usageReset, "on for settings saved before it existed")
+    }
+
+    private final class Clock: @unchecked Sendable {
+        var date = Date(timeIntervalSince1970: 1_800_000_000)
+    }
+
+    private func checkModel(notify: Bool) async throws {
+        let runner = FakeRunner()
+        // The fixture's weekly window resets on 2026-09-28; keep the clock before it.
+        let full = try Fixtures.string("usage-stream.jsonl").replacingOccurrences(of: #""percent":42"#, with: #""percent":100"#)
+        runner.usageOutput = full
+        let clock = Clock()
+        clock.date = ISO8601DateFormatter().date(from: "2026-09-27T12:00:00Z")!
+        let (model, notifier) = try await MainActor.run {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                                 locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh",
+                                 now: { clock.date }, home: "/")
+            let notifier = FakeNotifier()
+            model.notifier = notifier
+            var settings = model.settings
+            settings.notifications.usageReset = notify
+            model.updateSettings(settings)
+            return (model, notifier)
+        }
+        await model.refreshUsage()
+        await MainActor.run {
+            model.checkUsageNotifications()
+            XCTAssertTrue(notifier.posted.isEmpty, "at the limit: nothing to say yet")
+            runner.usageOutput = full.replacingOccurrences(of: #""percent":100"#, with: #""percent":1"#)
+            clock.date += 60
+        }
+        await model.refreshUsage()
+        await MainActor.run {
+            model.checkUsageNotifications()
+            XCTAssertTrue(model.log.entries.contains { $0.title == "Weekly limit reset" }, "logged either way")
+            if notify {
+                XCTAssertEqual(notifier.posted, [SessionNotification(usageReset: .week)])
+                XCTAssertNil(notifier.posted.first?.sessionID)
+                XCTAssertEqual(notifier.posted.first?.identifier, "usage-reset-week")
+            } else {
+                XCTAssertTrue(notifier.posted.isEmpty)
+            }
+        }
+    }
+}

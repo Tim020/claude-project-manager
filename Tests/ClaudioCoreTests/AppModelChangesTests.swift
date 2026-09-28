@@ -85,6 +85,7 @@ final class AppModelChangesTests: XCTestCase {
             let (model, id) = try makeModel(home: home, workingDirectory: "/nowhere", runner: FakeRunner())
             XCTAssertEqual(model.toolWindows.visibleLeft, .sessions, "the session tree shows at first")
             XCTAssertNil(model.toolWindows.visibleRight)
+            model.select(id)
             model.toggleTool(.changes)
             XCTAssertEqual(model.toolWindows.visibleRight, .changes)
             XCTAssertEqual(model.settings.toolWindows.visibleRight, .changes, "remembered")

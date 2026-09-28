@@ -356,3 +356,38 @@ public struct StatusLineCapture: Equatable, Sendable {
         return .object(object)
     }
 }
+
+/// Watches plan usage for a limit that was reached and has now reset, so
+/// Claudio can say you can work on your plan again.
+public struct UsageResetTracker: Equatable, Sendable {
+    public enum Window: String, Sendable, CaseIterable {
+        case session, week
+    }
+
+    /// Windows seen at their limit that haven't reset since.
+    private var atLimit: Set<Window> = []
+    private var hasBaseline = false
+
+    public init() {}
+
+    /// Checks the latest reading as it stands at `now`, so a reset time that
+    /// passes between readings counts at once (and a stale reading from
+    /// Claude Code's cache, whose reset has passed, doesn't count as at the
+    /// limit again). Returns the windows that were at their limit and no longer
+    /// are. The first check with a reading only records where things stand.
+    public mutating func check(_ snapshot: UsageSnapshot?, now: Date) -> [Window] {
+        guard let snapshot = snapshot?.current(at: now) else { return [] }
+        var reset: [Window] = []
+        for window in Window.allCases {
+            // A window missing from this reading tells us nothing.
+            guard let usage = window == .session ? snapshot.fiveHour : snapshot.sevenDay else { continue }
+            if usage.usedPercentage >= 100 {
+                atLimit.insert(window)
+            } else if atLimit.remove(window) != nil, hasBaseline {
+                reset.append(window)
+            }
+        }
+        hasBaseline = true
+        return reset
+    }
+}

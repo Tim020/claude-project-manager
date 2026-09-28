@@ -59,13 +59,16 @@ struct ContentView: View {
                                           onDismiss: { commands.dismissedBannerProblems = model.environment.problems.map(\.title) })
                     }
                 }
-                if let tool = tools.visibleRight {
+                // The session's rail shows only while a session's tab is selected.
+                if model.showsSessionTools {
+                    if let tool = model.visibleSessionTool {
+                        VerticalRule()
+                        RightToolPanel(tool: tool)
+                            .layoutPriority(1)
+                    }
                     VerticalRule()
-                    RightToolPanel(tool: tool)
-                        .layoutPriority(1)
+                    RightRail()
                 }
-                VerticalRule()
-                RightRail()
             }
             StatusBar()
         }
@@ -165,6 +168,7 @@ struct ContentView: View {
                 model.pollStatusLines()
                 model.updateMenuFlags()
                 model.checkNotifications()
+                model.checkUsageNotifications()
                 // Files Changed: reload visible sessions after their tool calls.
                 let visible = model.visibleSessionIDs
                 if !visible.isEmpty { Task { await model.refreshChangesIfNeeded(visible) } }

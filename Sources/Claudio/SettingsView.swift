@@ -341,7 +341,7 @@ private struct NotificationSettingsPage: View {
 
     var body: some View {
         SettingsGroup(title: "Notify me when",
-                      footer: "Skipped for the session you're looking at while Claudio is in front. Click a notification to open its session.") {
+                      footer: "Session notifications are skipped for the session you're looking at while Claudio is in front. Click one to open its session.") {
             SettingsToggleRow(title: "A session needs your input",
                               subtitle: "Claude asked a question or wants permission.",
                               isOn: settingBinding(model, \.notifications.awaitingInput))
@@ -350,8 +350,11 @@ private struct NotificationSettingsPage: View {
                               isOn: settingBinding(model, \.notifications.finished))
             SettingsToggleRow(title: "An agent stops unexpectedly",
                               subtitle: "A background agent exited while it was working.",
-                              showsSeparator: false,
                               isOn: settingBinding(model, \.notifications.stoppedUnexpectedly))
+            SettingsToggleRow(title: "A usage limit resets",
+                              subtitle: "Your session or weekly limit resets after you'd reached it.",
+                              showsSeparator: false,
+                              isOn: settingBinding(model, \.notifications.usageReset))
         }
 
         SettingsGroup(title: "Delivery",
