@@ -129,7 +129,17 @@ struct NewSessionSheet: View {
                     .buttonStyle(PrimaryButtonStyle(horizontalPadding: 14, verticalPadding: 5))
                     .keyboardShortcut(.defaultAction)
                     .disabled(projectID == nil)
+                    .help("Start Session (Return, or ⌘Return from the prompt)")
             }
+        }
+        // Return adds a line in the prompt editor, so ⌘Return starts the session from anywhere
+        // in the sheet. A button takes only one shortcut, hence this invisible second one.
+        .background {
+            Button("Start Session", action: create)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(projectID == nil)
+                .opacity(0)
+                .accessibilityHidden(true)
         }
         .padding(24)
         .frame(width: 520)
