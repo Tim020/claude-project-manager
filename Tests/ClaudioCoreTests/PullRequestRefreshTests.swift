@@ -152,7 +152,7 @@ final class PullRequestRefreshTests: XCTestCase {
         let (model, project, _) = try await MainActor.run { try makeModel(runner) }
         await model.refreshPullRequests(project)
         let pr = try await MainActor.run { try XCTUnwrap(model.pullRequests(forProject: project)?.items.first) }
-        func graphqlCalls() -> Int { runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count }
+        func graphqlCalls() -> Int { runner.calls.filter { $0.contains("query=\(GitHubCLI.reviewThreadsQuery)") }.count }
 
         let watching = Task { await model.watchReviewThreads(for: [pr]) }
         while graphqlCalls() == 0 { await Task.yield() }
@@ -177,7 +177,7 @@ final class PullRequestRefreshTests: XCTestCase {
         let (model, project, _) = try await MainActor.run { try makeModel(runner) }
         await model.refreshPullRequests(project)
         let shown = try await MainActor.run { try XCTUnwrap(model.pullRequests(forProject: project)?.items.first) }
-        func graphqlCalls() -> Int { runner.calls.filter { $0.starts(with: ["api", "graphql"]) }.count }
+        func graphqlCalls() -> Int { runner.calls.filter { $0.contains("query=\(GitHubCLI.reviewThreadsQuery)") }.count }
         await model.loadReviewThreads(for: [shown])
         XCTAssertEqual(graphqlCalls(), 1)
 

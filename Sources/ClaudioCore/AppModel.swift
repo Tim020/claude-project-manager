@@ -204,6 +204,15 @@ public final class AppModel {
     public internal(set) var reviewThreadFailures = Set<String>()
     @ObservationIgnored var refreshingPullRequests = Set<UUID>()
     public internal(set) var loadingPullRequests = Set<UUID>()
+    /// Projects whose every pull request (`loadPullRequestHistory`) is loading.
+    public internal(set) var loadingPullRequestHistory = Set<UUID>()
+    /// Older pull requests (by key) whose details are loading.
+    public internal(set) var loadingPullRequestDetails = Set<String>()
+    /// Why an older pull request's details (by key) failed to load.
+    public internal(set) var pullRequestDetailFailures: [String: String] = [:]
+    /// The most pull requests the history loads (`historyPullRequestLimit`;
+    /// tests lower it).
+    @ObservationIgnored var historyLimit = AppModel.historyPullRequestLimit
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
     /// Each project's assistant data, as saved (see AppModel+Assistant).
