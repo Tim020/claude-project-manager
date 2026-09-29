@@ -619,11 +619,13 @@ final class AssistantSessionFailureTests: XCTestCase {
             XCTAssertFalse(runner.commands.first { $0.contains("--bg") }?.last?.contains("made-up") ?? true)
             XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "b", folderID: nil, role: .code,
                                             skills: [], useWorktree: true), "a live session keeps its item")
+            XCTAssertEqual(model.errorMessage, "“Panel height” is already in a session, so no session was started.")
             XCTAssertEqual(model.item(item.id, inProject: project)?.sessionID, first)
 
             model.setStatus(.done, ofItem: item.id, projectID: project)
             XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "c", folderID: nil, role: .code,
                                             skills: [], useWorktree: true), "a done item isn't reopened")
+            XCTAssertEqual(model.errorMessage, "“Panel height” is done, so no session was started.")
             XCTAssertNil(model.startSession(fromItem: UUID(), projectID: project, name: "d", folderID: nil, role: .code,
                                             skills: [], useWorktree: true))
             XCTAssertEqual(model.errorMessage, "That plan item no longer exists, so no session was started.")

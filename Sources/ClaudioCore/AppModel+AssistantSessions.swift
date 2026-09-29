@@ -160,7 +160,10 @@ extension AppModel {
         }
         // Checked here too, not only by the sheet: a stale sheet mustn't
         // unlink a live session or reopen a done item.
-        guard canStartSession(fromItem: item) else { return nil }
+        guard canStartSession(fromItem: item) else {
+            report("“\(item.title)” is \(item.status == .done ? "done" : "already in a session"), so no session was started.")
+            return nil
+        }
         guard !isAssistantDataUnreadable(projectID) else {
             report("The assistant's notes for this project couldn't be read, so a session can't be started from its plan.")
             return nil
