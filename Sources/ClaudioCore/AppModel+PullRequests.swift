@@ -201,7 +201,7 @@ extension AppModel {
             guard let repository = GitHubCLI.parseRepository(result.output), result.exitCode == 0 else {
                 update { current in
                     if result.exitCode != 0 {
-                        current.error = Self.firstLine(result.errorOutput) ?? "gh repo view failed."
+                        current.error = Self.failureReason(result, command: "gh repo view")
                         // Only gh saying so means it isn't on GitHub: then
                         // stop polling it (and logging the same failure
                         // every 2 minutes). Anything else (offline, VPN not
@@ -225,7 +225,7 @@ extension AppModel {
         let fields = GitHubCLI.overviewFields
         let open = await runGitHub(["pr", "list", "--state", "open", "--limit", "\(AppModel.openPullRequestLimit)", "--json", fields], key: "open")
         guard open.exitCode == 0, let openItems = GitHubCLI.parsePullRequests(open.output) else {
-            update { $0.error = "Couldn't refresh: " + (Self.firstLine(open.errorOutput) ?? "gh pr list failed.") }
+            update { $0.error = "Couldn't refresh: " + Self.failureReason(open, command: "gh pr list") }
             return true
         }
         var problems: [String] = []
@@ -237,7 +237,7 @@ extension AppModel {
         } else {
             // Keep the merged and closed ones that loaded before.
             for item in previous?.items ?? [] where !item.isOpen && keys.insert(item.key).inserted { items.append(item) }
-            problems.append("recent pull requests: " + (Self.firstLine(recent.errorOutput) ?? "gh pr list failed"))
+            problems.append("recent pull requests: " + Self.failureReason(recent, command: "gh pr list"))
         }
 
         // The lists stop at their limits, so the counts come from GitHub. A
@@ -248,7 +248,7 @@ extension AppModel {
             if result.exitCode == 0, let totals = GitHubCLI.parsePullRequestTotals(result.output) {
                 loaded.totals = totals
             } else {
-                problems.append("pull request totals: " + (Self.firstLine(result.errorOutput) ?? "gh api graphql failed"))
+                problems.append("pull request totals: " + Self.failureReason(result, command: "gh api graphql"))
             }
         }
 
@@ -332,10 +332,10 @@ extension AppModel {
         }
         // Rows that came from the old history give way to the new one; the
         // lists' own (detailed) rows stay.
-        let old = loaded.history.items
-        loaded.items.removeAll { old.contains($0) }
+        let old = Dictionary(loaded.history.items.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        loaded.items.removeAll { old[$0.key] == $0 }
         // Details loaded since (hover or click) stay while they're current.
-        let detailed = Dictionary(old.filter(\.hasDetails).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let detailed = old.filter { $0.value.hasDetails }
         loaded.history.items = history
             // Open ones come from the open list, with details; the history's
             // could be out of date by the next refresh.
@@ -353,13 +353,17 @@ extension AppModel {
     /// requests (counted, not parsed), or the start of output that isn't a
     /// list of them.
     static func historySummary(_ output: String) -> String {
-        let count = output.components(separatedBy: "\"number\":").count - 1
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return count > 0 || trimmed == "[]" ? "\(count) pull requests" : String(trimmed.prefix(500))
+        // Only a whole array is counted: truncated JSON, or JSON with stray
+        // text after it, is logged as it is.
+        guard trimmed.hasPrefix("["), trimmed.hasSuffix("]") else { return String(trimmed.prefix(500)) }
+        return "\(trimmed.components(separatedBy: "\"number\":").count - 1) pull requests"
     }
 
     /// Why a gh call failed, in a few words: "timed out" when the runner
-    /// killed it (SIGTERM, nothing on stderr), else gh's first line.
+    /// killed it (SIGTERM, nothing on stderr); "couldn't read <command>'s
+    /// output" when it exited 0 with output that didn't parse; else gh's
+    /// first line on stderr, or "<command> failed" with none.
     static func failureReason(_ result: CommandResult, command: String) -> String {
         if result.exitCode == 15 && result.errorOutput.isEmpty { return "timed out" }
         if result.exitCode == 0 { return "couldn't read \(command)'s output" }

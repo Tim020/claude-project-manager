@@ -338,6 +338,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     /// refresh around a history load.
     var historyDelay: UInt64 = 0
     var historyTimesOut = false
+    var openTimesOut = false
     /// Each history call's `TerminalLaunch.timeout`.
     private var _historyTimeouts: [TimeInterval?] = []
     var historyTimeouts: [TimeInterval?] { lock.withLock { _historyTimeouts } }
@@ -379,6 +380,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
         }
         if args.starts(with: ["pr", "list"]) {
             if listDelay > 0 { try? await Task.sleep(nanoseconds: listDelay) }
+            if openTimesOut, args.contains("open") { return CommandResult(exitCode: 15, output: "", errorOutput: "") }
             let exit = args.contains("open") ? openExit : recentExit
             guard exit == 0 else { return CommandResult(exitCode: exit, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
             return CommandResult(exitCode: 0, output: args.contains("open") ? open : recent, errorOutput: "")

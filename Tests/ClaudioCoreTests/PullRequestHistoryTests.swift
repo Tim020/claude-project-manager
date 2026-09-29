@@ -525,7 +525,8 @@ final class PullRequestHistoryTests: XCTestCase {
         await model.loadPullRequestDetails(try XCTUnwrap(found), projectID: project)
 
         runner.totals = Self.totals(all: 6, open: 1, merged: 4)
-        runner.history = Self.list(PullRequestFixtures.pr(1300, state: "MERGED", updated: "2026-09-28T10:00:00Z"),
+        runner.history = Self.list(PullRequestFixtures.pr(1422, state: "MERGED"),
+                                   PullRequestFixtures.pr(1300, state: "MERGED", updated: "2026-09-28T10:00:00Z"),
                                    PullRequestFixtures.pr(1250, state: "MERGED"), PullRequestFixtures.pr(1200, state: "MERGED"),
                                    PullRequestFixtures.pr(1100, state: "CLOSED"))
         await later()
@@ -534,6 +535,44 @@ final class PullRequestHistoryTests: XCTestCase {
         XCTAssertEqual(historyCalls(runner).count, 2)
         let changed = await item(model, project, 1300)
         XCTAssertEqual(changed?.hasDetails, false)
+        // The lists' own rows (with details) stay; the history's copy of
+        // 1422 doesn't replace the recent list's.
+        await MainActor.run {
+            let items = model.pullRequests(forProject: project)?.items ?? []
+            XCTAssertEqual(items.filter(\.hasDetails).map(\.number), [1427, 1422])
+            XCTAssertEqual(items.map(\.number).sorted(), [1100, 1200, 1250, 1300, 1422, 1427])
+        }
+    }
+
+    func testFailureReasons() async {
+        await MainActor.run {
+            XCTAssertEqual(AppModel.failureReason(CommandResult(exitCode: 15, output: "", errorOutput: ""), command: "gh pr list"), "timed out")
+            XCTAssertEqual(AppModel.failureReason(CommandResult(exitCode: 0, output: "<html>", errorOutput: ""), command: "gh pr list"),
+                           "couldn't read gh pr list's output")
+            XCTAssertEqual(AppModel.failureReason(CommandResult(exitCode: 1, output: "", errorOutput: "\nHTTP 502: Bad Gateway\nmore\n"), command: "gh pr list"),
+                           "HTTP 502: Bad Gateway")
+            XCTAssertEqual(AppModel.failureReason(CommandResult(exitCode: 1, output: "", errorOutput: ""), command: "gh api graphql"), "gh api graphql failed")
+        }
+    }
+
+    /// The main refresh reports a killed gh the same way the history does.
+    func testARefreshThatTimesOutSaysSo() async throws {
+        let runner = FakeGitHub()
+        runner.openTimesOut = true
+        let (model, project) = try await MainActor.run { try makeModel(runner) }
+        await model.refreshPullRequests(project)
+        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.error, "Couldn't refresh: timed out") }
+    }
+
+    func testHistorySummary() async throws {
+        let fixture = try Fixtures.string("gh-pr-list-history.json")
+        await MainActor.run {
+            XCTAssertEqual(AppModel.historySummary(fixture), "3 pull requests")
+            XCTAssertEqual(AppModel.historySummary("[]\n"), "0 pull requests")
+            XCTAssertEqual(AppModel.historySummary(#"[{"number":1},{"numb"#), #"[{"number":1},{"numb"#, "truncated: logged as it is")
+            XCTAssertEqual(AppModel.historySummary(#"[{"number":1}] trailing"#), #"[{"number":1}] trailing"#)
+            XCTAssertEqual(AppModel.historySummary(String(repeating: "x", count: 900)).count, 500)
+        }
     }
 
     /// Details that load while the history reloads are kept.
