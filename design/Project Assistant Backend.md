@@ -187,14 +187,14 @@ Signals Claudio already receives, plus three new hook events:
 | Turn ended, final message | `Stop` → `last_assistant_message` (already parsed) | the follow-ups trigger, and the digest |
 | User prompts | `UserPromptSubmit`, and history files | corrections ("no, …", "don't …", "next time …") |
 | Tool calls | `PostToolUse` (already parsed) | PR activity, commands, the digest |
-| **Tool failures** | **new: `PostToolUseFailure`** (`tool_name`, `tool_input`, `error.message`) | "learned the hard way" evidence |
-| **Denied actions** | **new: `PermissionDenied`** | possibly a correction signal. **Assumed:** it fires when the user refuses a permission prompt. It may fire only for auto-mode classifier denials, so check before relying on it. |
-| **Turn failed** | **new: `StopFailure`** (`error.type`: rate_limit, overloaded, …) | don't draw lessons from a turn that ended in an API error |
+| **Tool failures** | **new: `PostToolUseFailure`** (`tool_name`, `tool_input`, `error` as a string, `is_interrupt`, `duration_ms`; recorded in step 4). It fires when a tool runs and fails, including a Bash command that exits non-zero, not when a command is denied. | "learned the hard way" evidence. `is_interrupt: true` is the user pressing Esc, so it doesn't count. |
+| ~~Denied actions~~ | ~~`PermissionDenied`~~ | *Dropped in step 4:* it didn't fire when default mode denied a command (2.1.284), so it's probably auto-mode only. Corrections come from prompts instead. |
+| **Turn failed** | **new: `StopFailure`** (`error` as a string, such as `authentication_failed`, and `last_assistant_message`; recorded in step 4). It fires *instead of* `Stop`: with both set up, only `StopFailure` fired (2.1.285 and 2.1.169). | it ends the turn, so the session isn't left Working. Don't draw lessons from a turn that ended in an API error. |
 | Skill used | `PreToolUse` with `tool_name == "Skill"` | the "used by n sessions" count, and retirement |
 | Files changed | `SessionChanges` / `ChangesDirectory` | skill `paths`, and skill selection |
 | PRs | `Session.pullRequests`, via `gh` | follow-ups ("PR #14 merged"), and marking items Done |
 
-Add the three events to `HookSettings.events`. Record real payloads as fixtures before writing the parsers. The field names above come from the hooks docs and aren't recorded yet. The Skill tool's input key is **assumed** to be `skill`.
+Add the two events to `HookSettings.events`. *(Step 4: real payloads are recorded in `Fixtures/hook-failures.log`. 2.1.169 accepts both keys in `--settings` and fires `StopFailure`. The Skill tool's input key is `skill`, recorded from a `PreToolUse` event.)*
 
 **When each job runs:**
 
@@ -376,7 +376,14 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - Logging `SKILL.md` files that can't be read or have no closing `---` (from review round 1, PR #26), with step 5's deterministic skill checks. Today such a skill is skipped or read without its frontmatter, silently.
      - Chip scoring's usage term (skill use from `PreToolUse` Skill events).
      - Its touched files should come from the linked sessions' history (`EditLogCache` over their history files), not from `sessionChanges`, which only has sessions whose Files Changed has loaded. So for now the file term depends on what's been opened.
-4. **Follow-ups.** The three new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+4. **Follow-ups.** The ~~three~~ two new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+   - **Decided at the start of step 4 (Tim, 2026-09-29):**
+     - **Two PRs.** 4a: the hook events, the digest, the finished trigger, the follow-up card, Needs You, Review This Session, `claudio suggest`, and the queue's per-project limit and coalescing. 4b: Assistant Settings, the paused line, the Activity Log and Job Failed views, and tolerant audit reading.
+     - **Follow-ups for every session** in an Automatic project, behind the substance check and the usage gate. Not only sessions from plan items.
+     - **The daily job limit is 20** background calls. **Moved into 4a** (it was 4b's): it has to ship with the first background Sonnet calls, because users without a plan-usage reading have no other cap but `--max-budget-usd`. Its editing UI stays in 4b.
+     - **Real probes** on Tim's account are fine for recording CLI behaviour (Haiku, a few cents).
+   - **Baseline for existing sessions:** a session with no follow-up watermark gets one at the current end of its history, with no call. So upgrading, or importing old sessions, never starts a burst of follow-ups. The watermark is kept with the conversation it belongs to (`/clear` starts a new one).
+   - **Lessons wait for step 5:** 4a's follow-up schema has no `lessons` field. Step 5 adds it with the candidates it feeds.
    - **`claudio suggest`** (moved from step 3): a session's proposed plan change, as a Needs You card. Add it to `bin/claudio`, the inbox's commands and the note skill.
    - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out.
    - **Assistant Settings** (per project: the mode's UI, "Don't send transcripts", models), the paused status line, the daily job limit for users without a plan-usage reading, and **the Assistant's Activity Log view**, with the Job Failed view for background failures.
@@ -400,6 +407,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | `--plugin-dir` and `--add-dir` work from a path with a space in it (`…/a b/Claudio/…`, as under `Application Support`) | Real Haiku calls (2.1.284, step 3): `claudio:note` loaded, `bin/claudio` ran from the Bash tool (with an allow rule; see the next row), and an `--add-dir` skill loaded. |
 | A session in Ask mode can't run `claudio` without an allow rule; `permissions.allow: ["Bash(claudio:*)"]` in `--settings` lets it | Real Haiku calls (2.1.284, `--permission-mode default`): without the rule the Bash call was denied (`permission_denials`); with it in the `--settings` JSON, `claudio ping` ran. |
 | `--add-dir` skills need project settings loaded | The same probe: with `--setting-sources ''` the add-dir skill was "Unknown skill", while the plugin's skill loaded; with `project` it loaded. Sessions load every source by default, so they get it. Only the assistant's own `-p` calls use `''`. |
+| `PostToolUseFailure` and `StopFailure` payloads; `StopFailure` replaces `Stop`; the Skill tool's input key is `skill`; `PermissionDenied` doesn't fire for a default-mode denial | Step 4 probes: Haiku `-p` runs with a recording hook (2.1.284/285), and a signed-out container with a rejected key for `StopFailure` (no cost). 2.1.169 accepts both keys and fires `StopFailure`. Recorded in `Fixtures/hook-failures.log`. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
 | `--setting-sources user` can bring in the user's tools; `''` doesn't | Six real Promote-check calls (Haiku, 2.1.284): with `user`, 1 in 3 consulted an Opus advisor ($0.099, 43 s); with `''`, $0.004 and 5–7 s. |
 | `--max-budget-usd` stops a call after the turn that crosses it: `"subtype": "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, no `result` | Real Haiku calls (2.1.284): a normal check at $0.05 succeeded; one at $0.0001 was stopped after spending $0.0046. Recorded in `Fixtures/assistant-over-budget.json`. |
@@ -408,7 +416,6 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
-- hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
 - whether the skill loader follows symlinks (only for skill sets per session)
 
 ## Decisions
