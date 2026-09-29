@@ -171,9 +171,6 @@ struct PlanItemView: View {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill
                 title
-                Label(model.folderName(of: item, inProject: projectID), systemImage: "folder")
-                    .font(DS.font(12))
-                    .foregroundStyle(DS.muted)
                 Text("ATTACHED NOTES")
                     .font(DS.font(11, .extraBold))
                     .kerning(0.66)

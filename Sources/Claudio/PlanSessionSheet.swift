@@ -15,7 +15,8 @@ struct PlanSessionSheet: View {
 
     @State private var name = ""
     @State private var folderID: UUID?
-    @State private var suggestedFolderID: UUID?
+    /// Chips you removed, kept out when the folder changes the picks.
+    @State private var removedSkills = Set<String>()
     @State private var role: SessionRole = .code
     @State private var useWorktree = true
     @State private var promptBody = ""
@@ -38,20 +39,17 @@ struct PlanSessionSheet: View {
                 }
                 GridRow {
                     label("Folder")
-                    HStack(spacing: 8) {
-                        Picker("", selection: $folderID) {
-                            Text(Workspace.unfiledName).tag(UUID?.none)
-                            ForEach(folders) { folder in
-                                Text(folder.name).tag(Optional(folder.id))
-                            }
+                    Picker("", selection: $folderID) {
+                        Text(Workspace.unfiledName).tag(UUID?.none)
+                        ForEach(folders) { folder in
+                            Text(folder.name).tag(Optional(folder.id))
                         }
-                        .labelsHidden()
-                        if folderID == suggestedFolderID {
-                            Text("same as its notes")
-                                .font(DS.font(11.5))
-                                .foregroundStyle(DS.dim)
-                                .fixedSize()
-                        }
+                    }
+                    .labelsHidden()
+                    // Skills meant for a folder are picked for the one chosen.
+                    .onChange(of: folderID) { _, folder in
+                        skills = model.suggestedSkills(forItem: item, inProject: projectID, folderID: folder)
+                            .filter { !removedSkills.contains($0) }
                     }
                 }
                 GridRow {
@@ -104,7 +102,10 @@ struct PlanSessionSheet: View {
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
                 } else {
-                    FlowChips(names: skills, tinted: true) { removed in skills.removeAll { $0 == removed } }
+                    FlowChips(names: skills, tinted: true) { removed in
+                        skills.removeAll { $0 == removed }
+                        removedSkills.insert(removed)
+                    }
                 }
                 Text("Named in the opening prompt. Other approved skills stay available.")
                     .font(DS.font(11.5))
@@ -154,7 +155,6 @@ struct PlanSessionSheet: View {
         let draft = model.planSessionDraft(forItem: item, inProject: projectID)
         name = draft.name
         folderID = draft.folderID
-        suggestedFolderID = draft.folderID
         role = draft.role
         promptBody = draft.promptBody
         skills = draft.skills

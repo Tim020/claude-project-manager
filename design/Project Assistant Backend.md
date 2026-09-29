@@ -223,8 +223,10 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 - **How chips are picked.** A chip for skill *s* on item *i* scores from three things:
   - *s*'s `paths` globs matching files that *i*'s linked sessions touched
-  - *s*'s `metadata.claudio-folders` or labels matching *i*'s folder and issue labels
-  - how often *s* was used by sessions in the same folder
+  - *s*'s `metadata.claudio-folders` or labels matching the folder picked for the session, and *i*'s issue labels
+  - how often *s* was used by sessions in that folder
+
+  *(Changed in step 3: items have no folder, so the folder terms use the one picked in New Session from Plan.)*
 
   Show at most 3. This matches the design's "Picked from the files this item touches."
 - **What a chip means.** Every approved skill is visible to every Claudio session in the project by its description. That's how native skills load, and `paths` already limits auto-activation to matching files. So a chip means "**named in the opening prompt**": the prompt says "Use the /worktree-setup and /shell-panel-code-map skills". Removing a chip leaves the skill out of the prompt, but Claude can still use it if it matches. The sheet's hint should say so, for example "Named in the opening prompt."
@@ -304,7 +306,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 #### Notes and authorship
 
 Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
-- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2). An unlinked note's promoted item goes to Unfiled.
+- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2).
 - **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
 - **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. Its marker is a teal `terminal` icon, with "A session" in the legend (build 9a; step 1 ships it).
 
@@ -359,7 +361,8 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - **Changed from the design: the plugin is embedded in `ClaudioCore`** (`ClaudioPlugin`), not shipped in `Contents/Resources` and copied by `build-app.sh`. It's written to `plugin/claudio/` at launch whenever any file there differs from what it should be. Files are compared, not a version number, so a forgotten version bump can't leave old files. It's built in a folder beside the target and then moved into place. That way `bin/claudio` is tested on Linux and `swift run` works.
      - **`bin/claudio`:** `plan`, `item <id>` and `note "<text>"` (or `note -` for standard input). It finds `assistant/` from its own path. Item ids are the first 8 characters of the item's UUID. `plan.md` (`PlanSnapshot`) is rewritten after every change and at launch, with item lines `- [id] title · issue · session` and indented notes, so `claudio plan` leaves notes out and `claudio item` cuts out one item. `index.tsv` is checked on every save and written when it changes.
      - **The inbox:** Claudio reads `inbox.log` every half second (with hook events) and at launch. `InboxReader` saves its position in `inbox.offset` rather than starting at the end like the hook tailer, so notes written while Claudio was closed arrive, and none arrives twice. The session is found by Claude Code's id, then by Claudio's id (direct tabs), then the project by the longest project path containing the directory. A note from the session working on an item joins that item. Notes are capped at 4,000 characters. `inbox.log` isn't compacted; notes are small.
-     - **Skill chips** (`SkillChips`, `SkillFiles`, `Glob`): scored in code from `paths` globs against files the item's sessions changed (worktree paths read as repository paths), and `metadata.claudio-folders` against the item's folder. At most 3, and none that score nothing. The frontmatter reader handles only what skill files use.
+     - **Skill chips** (`SkillChips`, `SkillFiles`, `Glob`): scored in code from `paths` globs against files the item's sessions changed (worktree paths read as repository paths), and `metadata.claudio-folders` against the folder picked in the sheet (the chips are picked again when it changes, leaving out any you removed). At most 3, and none that score nothing. The frontmatter reader handles only what skill files use.
+   - **Notes and plan items have no folder** (Tim's call, PR #26). `PlanItem.folderID` is gone, so Promote no longer files an item in its session's folder, and the item view has no folder line. A step 2 file's `folderID` is ignored and dropped on the next save; step 2 builds already read items without one, so `assistant.json` stays at version 2. The only folder is the new session's, picked in New Session from Plan, starting at Unfiled.
    - **Moved on to step 4:** `claudio suggest` (a plan change from a session, into Needs You). Needs You doesn't exist yet, so the command and the note skill leave it out.
    - **Moved on to step 5:**
      - Chip scoring's usage term (skill use from `PreToolUse` Skill events).

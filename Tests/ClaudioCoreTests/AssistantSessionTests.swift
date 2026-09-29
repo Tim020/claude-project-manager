@@ -173,6 +173,16 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(again.namedSkills, ["worktree-setup"])
     }
 
+    /// Items no longer have a folder; a step 2 file's `folderID` is ignored.
+    func testAnItemsOldFolderIsIgnored() throws {
+        let json = #"{"version":2,"mode":"automatic","notes":[],"items":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"Old","status":"planned","folderID":"6F9619FF-8B86-D011-B42D-00C04FC964FE","createdAt":"2026-09-01T10:00:00Z"}]}"#
+        let data = try JSONFileStore.decoder.decode(AssistantData.self, from: Data(json.utf8))
+        XCTAssertEqual(data.items.map(\.title), ["Old"])
+        XCTAssertEqual(data.unreadableCount, 0)
+        let saved = String(decoding: try JSONFileStore.encoder.encode(data), as: UTF8.self)
+        XCTAssertFalse(saved.contains("folderID"))
+    }
+
     // MARK: - Plugin
 
     func testPluginInstallsOnceAndRepairsChanges() throws {
@@ -407,8 +417,10 @@ final class AssistantSessionTests: XCTestCase {
 
             let draft = model.planSessionDraft(forItem: item, inProject: project)
             XCTAssertEqual(draft.name, "Shell panel height resets")
-            XCTAssertEqual(draft.folderID, folder, "the item's folder")
-            XCTAssertEqual(draft.skills, ["shell-map"], "meant for the item's folder")
+            XCTAssertNil(draft.folderID, "items have no folder: the session starts Unfiled until you pick one")
+            XCTAssertEqual(draft.skills, [], "nothing matches yet")
+            XCTAssertEqual(model.suggestedSkills(forItem: item, inProject: project, folderID: folder), ["shell-map"],
+                           "meant for the folder picked for the session")
             XCTAssertEqual(draft.promptBody, "Shell panel height resets\n\nNotes:\n- Shell panel height resets\n- Store it per project")
             XCTAssertTrue(model.canStartSession(fromItem: item))
             return (model, project, folder, item.id, skillsRoot)

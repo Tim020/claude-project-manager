@@ -37,8 +37,6 @@ final class AssistantPlanTests: XCTestCase {
             let item = try XCTUnwrap(f.model.promoteNote(note.id, projectID: f.project))
             XCTAssertEqual(item.title, "Shell panel height resets on relaunch", "the note's first sentence")
             XCTAssertEqual(item.status, .planned)
-            XCTAssertEqual(item.folderID, f.folder, "the folder of the note's session")
-            XCTAssertEqual(f.model.folderName(of: item, inProject: f.project), "In-built Shell")
             XCTAssertEqual(f.model.notes(forItem: item.id, inProject: f.project).map(\.id), [note.id])
             XCTAssertEqual(f.model.toast?.text, "Added to Plan as Planned")
             XCTAssertNil(f.model.promoteNote(note.id, projectID: f.project), "a note joins one item at most")
@@ -60,8 +58,6 @@ final class AssistantPlanTests: XCTestCase {
                                                          status: .idea))
             XCTAssertEqual(item.title, "Keyboard shortcuts in the README", "one clean line")
             XCTAssertEqual(item.status, .idea)
-            XCTAssertNil(item.folderID, "an unfiled session's note goes to Unfiled")
-            XCTAssertEqual(f.model.folderName(of: item, inProject: f.project), "Unfiled")
             XCTAssertEqual(f.model.toast?.text, "Added to Plan as an Idea")
 
             let blank = try XCTUnwrap(f.model.addNote("Blank title", author: .user, projectID: f.project, sessionID: nil))

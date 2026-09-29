@@ -8,7 +8,7 @@ import Foundation
 /// What the New Session from Plan sheet starts from.
 public struct PlanSessionDraft: Equatable, Sendable {
     public var name: String
-    /// The item's folder (nil: Unfiled).
+    /// The session's folder (nil: Unfiled, the default).
     public var folderID: UUID?
     public var role: SessionRole
     /// The opening prompt without its skills line.
@@ -98,15 +98,16 @@ extension AppModel {
     }
 
     /// The skills picked for an item's opening prompt (see `SkillChips`).
-    /// Files come from the item's sessions whose changes have loaded.
-    public func suggestedSkills(forItem item: PlanItem, inProject projectID: UUID) -> [String] {
+    /// Files come from the item's sessions whose changes have loaded;
+    /// `folderID` is the folder the new session is going in (items have none).
+    public func suggestedSkills(forItem item: PlanItem, inProject projectID: UUID, folderID: UUID? = nil) -> [String] {
         let skills = approvedSkills[projectID] ?? []
         guard !skills.isEmpty, let project = workspace.project(projectID) else { return [] }
         var sessionIDs = Set(notes(forItem: item.id, inProject: projectID).compactMap(\.sessionID))
         if let sessionID = item.sessionID { sessionIDs.insert(sessionID) }
         let files = sessionIDs.flatMap { sessionChanges[$0]?.session?.absolutePaths.values.map { $0 } ?? [] }
             .compactMap { SkillChips.relativePath($0, projectPath: project.path) }
-        let folder = item.folderID.flatMap { workspace.folder($0)?.name }
+        let folder = folderID.flatMap { workspace.folder($0)?.name }
         return SkillChips.pick(from: skills, touchedFiles: Array(Set(files)).sorted(), folderName: folder).map(\.name)
     }
 
@@ -123,14 +124,14 @@ extension AppModel {
         item.status != .done && !(item.status == .inSession && session(workingOn: item) != nil)
     }
 
-    /// The sheet's starting values: the item's title as the name, its
-    /// folder, a role from the name, and the prompt with its skills.
+    /// The sheet's starting values: the item's title as the name, Unfiled
+    /// (you pick the folder there), a role from the name, and the prompt
+    /// with its skills.
     public func planSessionDraft(forItem item: PlanItem, inProject projectID: UUID) -> PlanSessionDraft {
-        let folderID = item.folderID.flatMap { workspace.folder($0) != nil ? $0 : nil }
-        return PlanSessionDraft(name: item.title, folderID: folderID,
-                                role: SessionRole.infer(fromName: item.title, roles: settings.roles),
-                                promptBody: openingPromptBody(forItem: item, inProject: projectID),
-                                skills: suggestedSkills(forItem: item, inProject: projectID))
+        PlanSessionDraft(name: item.title, folderID: nil,
+                         role: SessionRole.infer(fromName: item.title, roles: settings.roles),
+                         promptBody: openingPromptBody(forItem: item, inProject: projectID),
+                         skills: suggestedSkills(forItem: item, inProject: projectID))
     }
 
     /// The item's title, its notes (oldest first) and its issue.

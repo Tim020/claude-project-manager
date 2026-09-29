@@ -55,7 +55,7 @@ What happens in other modes:
 ## Drill-in views (all in the panel; back returns to the list)
 - **Plan Item:**
   - status pill, and a GitHub chip or **Create GitHub Issue**
-  - title and folder
+  - title and folder *(changed in step 3: items have no folder, so the title stands alone)*
   - ATTACHED NOTES
   - SKILLS FOR ITS PROMPT (planned items) or SKILLS NAMED IN ITS PROMPT (in session)
   - "In session: <name>" or **Start Session**
@@ -119,7 +119,7 @@ What happens in other modes:
 ## Overlays
 - **New Session from Plan** is a modal sheet with:
   - Name
-  - Folder (suggested)
+  - Folder (suggested) *(changed in step 3: it starts at Unfiled, since items have no folder)*
   - Role
   - Worktree toggle
   - OPENING PROMPT preview (the item title, its notes, a linked issue, and then "Use these skills: <chip names>" in blue)
@@ -127,7 +127,7 @@ What happens in other modes:
 
   The copy under the chips reads "Named in the opening prompt. Other approved skills stay available." Removing a chip only drops that skill's name from the prompt; the session can still use any approved skill if it's relevant.
 
-  *(Built in step 3: the Folder picker notes "same as its notes" while it's on the item's folder. The Worktree toggle shows only for background sessions in a repository, as in New Session. The prompt's issue line reads "GitHub issue: #n", and an item without notes sends just its title. The model and permissions are the settings' defaults.)*
+  *(Built in step 3: notes and plan items have no folder (Tim's call, PR #26). The folder is picked here, for the session only, starting at Unfiled, and skills meant for a folder are picked for the one chosen. The Worktree toggle shows only for background sessions in a repository, as in New Session. The prompt's issue line reads "GitHub issue: #n", and an item without notes sends just its title. The model and permissions are the settings' defaults.)*
 - **Follow-up card** (inline at the bottom of the session's terminal):
   - **Working:** a spinner, "Reviewing <session>…", "This can take up to about 30 seconds. You can keep working." (plus the usage note while usage is high, when you started it yourself).
   - **Ready:** checkbox rows. NOTE rows are already saved; unticking one removes it. PLAN rows are applied with **Add n to Plan**.

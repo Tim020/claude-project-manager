@@ -90,8 +90,9 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var title: String
     public var status: PlanStatus
-    /// The folder its work belongs in (nil: the project's Unfiled).
-    public var folderID: UUID?
+    // No folder: an item isn't filed. The folder is chosen for the session
+    // started from it (New Session from Plan). Step 2 files have a
+    // `folderID`, which is ignored and dropped on the next save.
     /// Its GitHub issue, "#23" (build step 6).
     public var issue: String?
     /// The session working on it (from Start Session).
@@ -99,12 +100,11 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
     public var createdAt: Date
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), title: String, status: PlanStatus, folderID: UUID? = nil, issue: String? = nil,
+    public init(id: UUID = UUID(), title: String, status: PlanStatus, issue: String? = nil,
                 sessionID: UUID? = nil, createdAt: Date) {
         self.id = id
         self.title = title
         self.status = status
-        self.folderID = folderID
         self.issue = issue
         self.sessionID = sessionID
         self.createdAt = createdAt
@@ -117,7 +117,6 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
         title = try c.decode(String.self, forKey: .title)
         // Strict, like a note's author: an unknown status isn't rewritten.
         status = try c.decode(PlanStatus.self, forKey: .status)
-        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         issue = try c.decodeIfPresent(String.self, forKey: .issue)
         sessionID = try c.decodeIfPresent(UUID.self, forKey: .sessionID)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
