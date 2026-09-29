@@ -141,6 +141,53 @@ final class PullRequestHistoryTests: XCTestCase {
         XCTAssertEqual(historyCalls(), 2)
     }
 
+    /// Past the limit (or anything else the history can't close), the gap
+    /// stays, and the history isn't reloaded for it every refresh.
+    func testAGapTheHistoryCantCloseDoesntReload() async throws {
+        let runner = FakeGitHub()
+        runner.totals = #"{"data":{"repository":{"all":{"totalCount":9000},"open":{"totalCount":0},"merged":{"totalCount":9000}}}}"#
+        runner.history = "[\(PullRequestFixtures.pr(1300, state: "MERGED"))]"
+        let (model, project) = try await MainActor.run { try makeModel(runner) }
+        await model.refreshPullRequests(project)
+        await MainActor.run { model.pullRequestFilter = .all }
+        func historyCalls() -> Int { runner.calls.filter { $0.contains(GitHubCLI.historyFields) }.count }
+
+        await model.loadPullRequestHistory(project)
+        XCTAssertTrue(runner.calls.contains { $0.contains("\(AppModel.historyPullRequestLimit)") }, "capped")
+        for _ in 0..<3 {
+            await later()
+            await model.refreshPullRequests(project)
+            await model.loadPullRequestHistory(project)
+        }
+        XCTAssertEqual(historyCalls(), 1)
+        await MainActor.run {
+            XCTAssertEqual(model.unlistedPullRequests(projectID: project, filter: .all)?.listed, 1, "the footnote links to GitHub")
+        }
+    }
+
+    /// A refresh that finishes after the history keeps it.
+    func testARefreshDuringTheHistoryLoadKeepsIt() async throws {
+        let runner = FakeGitHub()
+        runner.totals = #"{"data":{"repository":{"all":{"totalCount":2},"open":{"totalCount":0},"merged":{"totalCount":2}}}}"#
+        runner.history = "[\(PullRequestFixtures.pr(1300, state: "MERGED")),\(PullRequestFixtures.pr(1200, state: "MERGED"))]"
+        let (model, project) = try await MainActor.run { try makeModel(runner) }
+        await model.refreshPullRequests(project)
+        await MainActor.run { model.pullRequestFilter = .all }
+
+        // The history finishes while the refresh waits on its lists.
+        runner.historyDelay = 20_000_000
+        runner.listDelay = 100_000_000
+        await later()
+        async let history: Void = model.loadPullRequestHistory(project)
+        async let refresh: Void = model.refreshPullRequests(project, force: true)
+        _ = await (history, refresh)
+        await MainActor.run {
+            let loaded = model.pullRequests(forProject: project)
+            XCTAssertEqual(loaded?.items.map(\.number).sorted(), [1200, 1300])
+            XCTAssertNotNil(loaded?.historyLoadedAt)
+        }
+    }
+
     func testAFailedHistoryLoadKeepsTheList() async throws {
         let runner = FakeGitHub()
         runner.recent = "[\(PullRequestFixtures.pr(1422, state: "MERGED"))]"

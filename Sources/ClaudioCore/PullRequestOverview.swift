@@ -75,7 +75,10 @@ public struct ProjectPullRequests: Equatable, Sendable {
     /// loaded when a list needs more than the open and recent ones. `items`
     /// includes the ones the other lists don't have.
     public var history: [PullRequestInfo] = []
+    /// When the history was last tried, successful or not.
     public var historyLoadedAt: Date?
+    /// GitHub's total when the history loaded: it reloads only past this.
+    public var historyTotal: Int?
 
     public init(repository: GitHubCLI.Repository? = nil, items: [PullRequestInfo] = [], updatedAt: Date? = nil,
                 attemptedAt: Date? = nil, error: String? = nil, isNotGitHub: Bool = false,

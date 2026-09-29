@@ -262,7 +262,13 @@ extension AppModel {
             }
         }
 
-        // The rest of the history, if it's loaded: detailed ones win.
+        // The rest of the history, if it's loaded: detailed ones win. It may
+        // have finished loading while this ran, so it's taken from the latest.
+        if let latest = projectPullRequests[projectID] {
+            loaded.history = latest.history
+            loaded.historyLoadedAt = latest.historyLoadedAt
+            loaded.historyTotal = latest.historyTotal
+        }
         for item in loaded.history where keys.insert(item.key).inserted { items.append(item) }
 
         loaded.items = items
@@ -273,17 +279,22 @@ extension AppModel {
     }
 
     /// Loads every pull request, without details (`GitHubCLI.historyFields`),
-    /// when a list counts more than have loaded: Merged or All, with pull
-    /// requests without a session included. Merged and closed ones rarely
-    /// change, and the recent list keeps new ones current, so it's loaded
-    /// again only when the count still runs ahead of the list, at most once
-    /// per refresh interval. A failure keeps what loaded before.
+    /// when Merged or All (with pull requests without a session included)
+    /// counts more than have loaded. Merged and closed ones rarely change,
+    /// and the recent list keeps new ones current, so it's loaded again only
+    /// when GitHub's total has grown since, at most once per refresh
+    /// interval; a gap it can't close (past `historyPullRequestLimit`)
+    /// doesn't reload it. A failure keeps what loaded before.
     public func loadPullRequestHistory(_ projectID: UUID) async {
         guard gitHubCLIProblem == nil, let gh = locateGitHubCLI(), let project = workspace.project(projectID),
               let known = projectPullRequests[projectID], known.hasLoaded,
+              pullRequestFilter == .merged || pullRequestFilter == .all,
               unlistedPullRequests(projectID: projectID, filter: pullRequestFilter) != nil,
               !loadingPullRequestHistory.contains(projectID) else { return }
-        if let loadedAt = known.historyLoadedAt, now().timeIntervalSince(loadedAt) < AppModel.pullRequestRefreshInterval { return }
+        if let loadedAt = known.historyLoadedAt {
+            guard now().timeIntervalSince(loadedAt) >= AppModel.pullRequestRefreshInterval,
+                  let total = known.totals?.all, total > known.historyTotal ?? 0 else { return }
+        }
         loadingPullRequestHistory.insert(projectID)
         defer { loadingPullRequestHistory.remove(projectID) }
         // A little over the total, for ones opened meanwhile.
@@ -295,6 +306,7 @@ extension AppModel {
         guard var loaded = projectPullRequests[projectID] else { return }
         loaded.historyLoadedAt = now()
         if result.exitCode == 0, let history = GitHubCLI.parsePullRequestHistory(result.output) {
+            loaded.historyTotal = known.totals?.all
             // Open ones come from the open list, with details; the history's
             // could be out of date by the next refresh.
             loaded.history = history.filter { !$0.isOpen }

@@ -333,6 +333,10 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     var totals: String?
     /// `gh pr list --json historyFields`'s output; nil fails it.
     var history: String?
+    /// How long the history list and the other lists take, to test a
+    /// refresh around a history load.
+    var historyDelay: UInt64 = 0
+    var listDelay: UInt64 = 0
     var openExit: Int32 = 0
     var recentExit: Int32 = 0
     var threadsExit: Int32 = 0
@@ -357,6 +361,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : repoError)
         }
         if args.starts(with: ["pr", "list"]), args.contains(GitHubCLI.historyFields) {
+            if historyDelay > 0 { try? await Task.sleep(nanoseconds: historyDelay) }
             guard let history else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 504: Gateway Timeout\n") }
             return CommandResult(exitCode: 0, output: history, errorOutput: "")
         }
@@ -365,6 +370,7 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
             return CommandResult(exitCode: 0, output: totals, errorOutput: "")
         }
         if args.starts(with: ["pr", "list"]) {
+            if listDelay > 0 { try? await Task.sleep(nanoseconds: listDelay) }
             let exit = args.contains("open") ? openExit : recentExit
             guard exit == 0 else { return CommandResult(exitCode: exit, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
             return CommandResult(exitCode: 0, output: args.contains("open") ? open : recent, errorOutput: "")
