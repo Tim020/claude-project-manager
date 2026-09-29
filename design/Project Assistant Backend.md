@@ -253,6 +253,7 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 - `audit.jsonl` gets one line per change: `{id, at, actor: user|assistant|session, action, entity, before, after, cause}`. `cause` is a job id, a session id or `ui`. Assistant job lines also carry the model, cost, duration and outcome.
 - Undo applies the inverse of an entry. It's shown for entries the assistant wrote, as designed. The mechanism is general, so the user's own changes could get Undo later.
+- The entry is written *before* the change is saved, and a change whose entry can't be written isn't made (step 1). So every change that lands has an entry. A save that then fails leaves an entry for a change that didn't happen, so anything that reads the log (Undo, the Activity Log view) checks an entry against the current data before acting on it or showing it as done.
 - The Assistant's own Activity Log view (⋯) lists the job entries from `audit.jsonl` for that project, as Done, Waiting (held by the usage gate) or Failed. Jobs a code check never started aren't listed, because nothing happened.
 - Each job and each export also gets one line in the Activity Log (`log.append`), for example "Assistant: suggested 3 follow-ups for Shell Terminal (Sonnet, 4.1 s)". Prompts and account details are never logged.
 
@@ -327,6 +328,9 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 
 1. **Notes and capture.** `AssistantStoring`, `audit.jsonl`, and Undo. No model calls.
 2. **Plan items and promotion.** The first job (Promote, Haiku) brings in `AssistantRunner`, the usage gate, and the job fixtures.
+   - **Carried over from step 1's review (PR #21):**
+     - **Lenient decoding of `assistant.json`.** Today one malformed note (a bad `createdAt`, a missing `text`) makes the whole project unreadable and read-only. That's safe, but coarse. With plan items joining notes in the file, decode each entry on its own. Keep entries that fail as raw JSON, so they're written back unchanged, and show the rest. The project stays refused only for a newer version.
+     - **Tolerant reading of `audit.jsonl`.** `AuditEntry` still uses the synthesized, strict `Codable`, because nothing reads the log yet. The first reader (the Assistant's Activity Log view, listing this step's job entries) must skip or tolerate lines it can't decode: lines from a newer version, or a line cut short. It must also check each entry against the data before acting on it (see Audit and Undo).
 3. **Start Session from an item.**
    - The opening prompt builder.
    - The skills root and `--add-dir`.
