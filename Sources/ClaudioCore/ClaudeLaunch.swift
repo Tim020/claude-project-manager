@@ -48,6 +48,7 @@ public struct TerminalLaunch: Equatable, Sendable {
         initialPrompt: String?,
         hookEventsPath: String,
         statusLine: StatusLineCapture? = nil,
+        assistant: AssistantLaunch? = nil,
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
@@ -55,6 +56,8 @@ public struct TerminalLaunch: Equatable, Sendable {
         if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
         if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
         claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
+        // Only for a new conversation: the assistant's flags are fixed at launch.
+        if !session.hasConversation { claudeArguments += assistant?.arguments ?? [] }
         claudeArguments += promptArguments(initialPrompt)
         return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: session.workingDirectory,
                      shell: shell, loginShell: true, baseEnvironment: baseEnvironment,

@@ -165,6 +165,7 @@ extension AppModel {
     public func openPlanItem(_ itemID: UUID, projectID: UUID) {
         assistantPanel = .item(projectID: projectID, itemID: itemID)
         setAssistantListMode(.plan)
+        refreshApprovedSkills(projectID: projectID)
     }
 
     /// The ‹ back button.

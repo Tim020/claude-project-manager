@@ -183,9 +183,12 @@ public struct AgentCommands: Sendable {
     }
 
     /// `claude --bg … -- "<prompt>"`: prints "backgrounded · <id>". The agent
-    /// keeps `isolation` (passed in `--settings`) when it's resumed.
-    public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?) -> TerminalLaunch {
-        command(["--bg"] + sessionOptions(session, isolation: isolation) + TerminalLaunch.promptArguments(prompt),
+    /// keeps `isolation` (passed in `--settings`) and `assistant`'s flags
+    /// when it's resumed.
+    public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?,
+                         assistant: AssistantLaunch? = nil) -> TerminalLaunch {
+        command(["--bg"] + sessionOptions(session, isolation: isolation) + (assistant?.arguments ?? [])
+                + TerminalLaunch.promptArguments(prompt),
                 in: session.workingDirectory)
     }
 
@@ -196,6 +199,8 @@ public struct AgentCommands: Sendable {
     /// their own saved options (model, permissions, Claudio's hooks), and
     /// passing any flags makes Claude Code start a copy instead, so none are.
     /// (`--` before the prompt doesn't count: checked with 2.1.283.)
+    /// The assistant's flags are never added here, even when not continuing
+    /// an agent: they belong to new sessions only (`Session.hasAssistant`).
     public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
         var args = ["--bg", "--resume", claudeID]

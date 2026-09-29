@@ -142,7 +142,7 @@ private struct PlanItemMenu: View {
     var includesDelete = true
 
     var body: some View {
-        // In Session comes from starting a session on it (build step 3).
+        // In Session comes from starting a session on it (Start Session).
         ForEach(PlanStatus.allCases.filter { $0 != .inSession }, id: \.self) { status in
             Button("Move to \(status.label)") { model.setStatus(status, ofItem: item.id, projectID: projectID) }
                 .disabled(item.status == status)
@@ -163,6 +163,7 @@ struct PlanItemView: View {
     @State private var renaming = false
     @State private var draftTitle = ""
     @State private var confirmingDelete = false
+    @State private var startingSession = false
     @FocusState private var titleFocused: Bool
 
     var body: some View {
@@ -194,6 +195,8 @@ struct PlanItemView: View {
                         }
                     }
                 }
+                PlanItemSessionSection(item: item, projectID: projectID) { startingSession = true }
+                    .padding(.top, 6)
                 LinkLabelButton(title: "Delete Item…") { confirmingDelete = true }
                     .font(DS.font(12))
                     .padding(.top, 8)
@@ -201,6 +204,10 @@ struct PlanItemView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(isPresented: $startingSession) {
+            PlanSessionSheet(item: item, projectID: projectID)
+                .environment(model)
         }
         .confirmationDialog("Delete \"\(item.title)\"?", isPresented: $confirmingDelete) {
             Button("Delete Item", role: .destructive) { model.deleteItem(item.id, projectID: projectID) }
@@ -265,6 +272,158 @@ struct PlanItemView: View {
         guard renaming else { return }
         if save { model.renameItem(item.id, to: draftTitle, projectID: projectID) }
         renaming = false
+    }
+}
+/// A skill chip: its name, with an × when it can be left out.
+struct SkillChip: View {
+    let name: String
+    var tinted = false
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "graduationcap").font(.system(size: 10))
+            Text(name)
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(DS.muted)
+                }
+                .buttonStyle(.plain)
+                .help("Leave out of the prompt")
+            }
+        }
+        .font(DS.font(12))
+        .foregroundStyle(DS.text)
+        .padding(.leading, 9)
+        .padding(.trailing, onRemove == nil ? 9 : 5)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(tinted ? DS.selection : DS.border))
+    }
+}
+
+/// A plan item's skills and its session: SKILLS FOR ITS PROMPT and Start
+/// Session, or SKILLS NAMED IN ITS PROMPT and "In session: <name>". A
+/// session started before the assistant gets a hint instead of skills.
+private struct PlanItemSessionSection: View {
+    @Environment(AppModel.self) private var model
+    let item: PlanItem
+    let projectID: UUID
+    let start: () -> Void
+
+    var body: some View {
+        let session = item.status == .inSession ? model.session(workingOn: item) : nil
+        VStack(alignment: .leading, spacing: 8) {
+            Text(session == nil ? "SKILLS FOR ITS PROMPT" : "SKILLS NAMED IN ITS PROMPT")
+                .font(DS.font(11, .extraBold))
+                .kerning(0.66)
+                .foregroundStyle(DS.muted)
+            if let session, !session.hasAssistant {
+                Label("Started before the assistant, so it can't use its skills or write notes. New sessions get its skills.",
+                      systemImage: "info.circle")
+                    .font(DS.font(12))
+                    .foregroundStyle(DS.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                let skills = session?.namedSkills ?? model.suggestedSkills(forItem: item, inProject: projectID)
+                if skills.isEmpty {
+                    Text(session == nil ? "No approved skills match it yet." : "None.")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.dim)
+                } else {
+                    FlowChips(names: skills)
+                }
+            }
+            if let session {
+                Button { model.select(session.id) } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(DS.color(for: session.status)).frame(width: 7, height: 7)
+                        Text("In session: ").foregroundStyle(DS.muted) + Text(session.name).foregroundStyle(DS.text)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(DS.dim)
+                    }
+                    .font(DS.font(13))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .fieldChrome()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open the session")
+                .padding(.top, 4)
+            } else if model.canStartSession(fromItem: item) {
+                VStack(spacing: 6) {
+                    Button(action: start) {
+                        Label("Start Session", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PrimaryButtonStyle(horizontalPadding: 12, verticalPadding: 6))
+                    .disabled(!model.menuFlags.canRunSessions)
+                    Text("Opens with this item, its notes and those skills named.")
+                        .font(DS.font(11.5))
+                        .foregroundStyle(DS.dim)
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+}
+
+/// Skill chips that wrap onto more lines.
+struct FlowChips: View {
+    let names: [String]
+    var tinted = false
+    var onRemove: ((String) -> Void)?
+
+    var body: some View {
+        WrappingHStack(spacing: 6) {
+            ForEach(names, id: \.self) { name in
+                SkillChip(name: name, tinted: tinted, onRemove: onRemove.map { remove in { remove(name) } })
+            }
+        }
+    }
+}
+
+/// Lays its children out in rows, wrapping when a row is full.
+struct WrappingHStack: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func rows(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var row = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if !row.indices.isEmpty, row.width + spacing + size.width > width {
+                rows.append(row)
+                row = Row()
+            }
+            row.width += (row.indices.isEmpty ? 0 : spacing) + size.width
+            row.height = max(row.height, size.height)
+            row.indices.append(index)
+        }
+        if !row.indices.isEmpty { rows.append(row) }
+        return rows
     }
 }
 #endif

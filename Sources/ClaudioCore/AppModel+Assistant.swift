@@ -139,11 +139,12 @@ extension AppModel {
 
     /// Adds a note by any author, saved straight away.
     @discardableResult
-    func addNote(_ text: String, author: NoteAuthor, projectID: UUID, sessionID: UUID?, cause: String = "ui") -> ProjectNote? {
+    func addNote(_ text: String, author: NoteAuthor, projectID: UUID, sessionID: UUID?, itemID: UUID? = nil,
+                 cause: String = "ui") -> ProjectNote? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, workspace.project(projectID) != nil else { return nil }
         let note = ProjectNote(text: text, author: author, sessionID: sessionID,
-                               sessionName: sessionID.flatMap { workspace.session($0)?.name }, createdAt: now())
+                               sessionName: sessionID.flatMap { workspace.session($0)?.name }, createdAt: now(), itemID: itemID)
         let entry = AuditEntry(at: now(), actor: author, action: .noteAdded, after: note, cause: cause)
         guard change(projectID: projectID, recording: entry, { $0.notes.append(note) }) else { return nil }
         log.append(.info, "Saved a note in \(workspace.project(projectID)?.name ?? "a project")")
@@ -201,6 +202,7 @@ extension AppModel {
             return false
         }
         assistantData[projectID] = data
+        writePlanSnapshot(projectID: projectID)
         return true
     }
 

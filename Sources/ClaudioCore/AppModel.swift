@@ -13,6 +13,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     /// Have a background agent work in its own git worktree (when the project
     /// is a git repo) rather than in the project's checkout.
     public var useWorktree = true
+    /// The skills its prompt names (Start Session from a plan item).
+    public var namedSkills: [String] = []
 
     public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
@@ -241,6 +243,12 @@ public final class AppModel {
     @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
+    /// Each project's approved skills, as last read (see AppModel+AssistantSessions).
+    public internal(set) var approvedSkills: [UUID: [ApprovedSkill]] = [:]
+    /// Where Claudio's plugin for sessions is (nil: it couldn't be set up).
+    @ObservationIgnored var assistantPluginPath: String?
+    /// The `index.tsv` text last written.
+    @ObservationIgnored var writtenAssistantIndex: String?
     @ObservationIgnored let assistantStore: AssistantStoring
     /// Projects whose assistant file failed to load; never written to. Set
     /// once, at launch.
@@ -297,6 +305,7 @@ public final class AppModel {
             state.workspace.updateSession(session.id) { $0.status = .completed }
         }
         loadAssistantData()
+        prepareAssistantFiles()
     }
 
     // MARK: - Derived state
@@ -458,6 +467,9 @@ public final class AppModel {
         let id = state.workspace.addProject(path: path)
         importSessions(for: id)
         save()
+        // Its skills folder must exist before its first session starts.
+        prepareSkillsRoot(projectID: id)
+        writePlanSnapshot(projectID: id)
         return id
     }
 
@@ -1109,6 +1121,7 @@ public final class AppModel {
                               permissionMode: request.permissionMode,
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
+        session.namedSkills = request.namedSkills
         // Give Claude Code the same name once the session has a history file.
         if session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }
@@ -1285,7 +1298,9 @@ public final class AppModel {
             applyStatus(sessionID, .completed)
             return
         }
-        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation))
+        let assistant = assistantLaunch(forProject: session.projectID)
+        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
+        if AgentListParser.dispatchedID(from: result.output) != nil { markLaunchedWithAssistant(sessionID, assistant) }
         await linkDispatched(sessionID, result: result)
     }
 
@@ -1430,9 +1445,11 @@ public final class AppModel {
             return false
         }
         try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let assistant = session.hasConversation ? nil : assistantLaunch(forProject: session.projectID)
         pendingLaunches[sessionID] = TerminalLaunch.make(session: session, claudeExecutable: executable, shell: shell,
                                                          initialPrompt: prompt, hookEventsPath: hookEventsURL.path,
-                                                         statusLine: statusLineCapture())
+                                                         statusLine: statusLineCapture(), assistant: assistant)
+        if markLaunchedWithAssistant(sessionID, assistant) { save() }
         running.insert(sessionID)
         exitCodes[sessionID] = nil
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1440,6 +1457,15 @@ public final class AppModel {
             state.workspace.updateSession(sessionID) { $0.status = .working; $0.lastActivity = now() }
             save()
         }
+        return true
+    }
+
+    /// Records that a session was launched with the assistant's flags. True
+    /// when that changed it (the caller saves).
+    @discardableResult
+    func markLaunchedWithAssistant(_ sessionID: UUID, _ launch: AssistantLaunch?) -> Bool {
+        guard launch != nil, workspace.session(sessionID)?.hasAssistant == false else { return false }
+        state.workspace.updateSession(sessionID) { $0.hasAssistant = true }
         return true
     }
 
@@ -1766,6 +1792,7 @@ public final class AppModel {
     }
 
     private func save() {
+        writeAssistantIndex()
         do {
             try store.save(state)
         } catch {
