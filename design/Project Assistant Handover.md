@@ -23,7 +23,8 @@ Builds on the shipped two-rail layout: `ToolRails.swift`, `ToolWindows.swift`, `
 4. **Needs You · n:** one card per item. When there's nothing, it shows "Nothing needs you." When the assistant is off, the section is hidden. Card kinds:
    - suggestion: icon, title and one-line reason, which opens a drill-in view
    - in progress: spinner, dashed border, "Usually a few seconds, up to about 30.", not clickable
-   - failed: red icon and border, which opens the Job Failed view
+   - failed: red icon and border, which opens the Job Failed view *(4a: it opens the follow-up's own view, with the message, Try Again and Close. The Job Failed view comes with 4b's Activity Log.)*
+   - *(Added in 4a: a session's `claudio suggest` shows as a card with the session's name, its text, and Add to Plan, Add as Idea and Dismiss.)*
 5. **Plan | Notes switch:** each side shows its count.
    - Plan is grouped as IN SESSION, PLANNED, IDEAS and DONE. Each row shows a status dot, the title and a meta line (issue · n notes · session).
    - Notes: see "Note authorship".
@@ -132,6 +133,7 @@ What happens in other modes:
   - **Working:** a spinner, "Reviewing <session>…", "This can take up to about 30 seconds. You can keep working." (plus the usage note while usage is high, when you started it yourself).
   - **Ready:** checkbox rows. NOTE rows are already saved; unticking one removes it. PLAN rows are applied with **Add n to Plan**.
     - If there's nothing to keep: "Nothing new to keep from this session." and Close.
+    - *(4a: with notes but no plan changes, the button is Done, which closes it. Opened from Needs You, it shows the same rows under a "Follow-up" title, with Close in place of Later.)*
   - Later (or ✕) keeps it in Needs You as "<session> finished".
   - In **Automatic** mode it appears when a session finishes. If paused by usage, it waits and appears once usage drops (the Activity Log shows Waiting until then).
   - Older sessions get the same card. Follow-ups are built from the session's history and hook events inside Claudio.
