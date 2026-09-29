@@ -329,6 +329,20 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     var recent = "[]"
     var views: [String: String] = [:]
     var threads = #"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}"#
+    /// The totals query's output (by default, none: counts are what loaded);
+    /// nil fails it.
+    var totals: String? = #"{"data":{"repository":{"all":{"totalCount":0},"open":{"totalCount":0},"merged":{"totalCount":0}}}}"#
+    /// `gh pr list --json historyFields`'s output; nil fails it.
+    var history: String?
+    /// How long the history list and the other lists take, to test a
+    /// refresh around a history load.
+    var historyDelay: UInt64 = 0
+    var historyTimesOut = false
+    var openTimesOut = false
+    /// Each history call's `TerminalLaunch.timeout`.
+    private var _historyTimeouts: [TimeInterval?] = []
+    var historyTimeouts: [TimeInterval?] { lock.withLock { _historyTimeouts } }
+    var listDelay: UInt64 = 0
     var openExit: Int32 = 0
     var recentExit: Int32 = 0
     var threadsExit: Int32 = 0
@@ -352,7 +366,21 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
         if args.starts(with: ["repo", "view"]) {
             return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : repoError)
         }
+        if args.starts(with: ["pr", "list"]), args.contains(GitHubCLI.historyFields) {
+            lock.withLock { _historyTimeouts.append(command.timeout) }
+            if historyDelay > 0 { try? await Task.sleep(nanoseconds: historyDelay) }
+            // Killed by the runner's timeout: SIGTERM, nothing on stderr.
+            if historyTimesOut { return CommandResult(exitCode: 15, output: "", errorOutput: "") }
+            guard let history else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 504: Gateway Timeout\n") }
+            return CommandResult(exitCode: 0, output: history, errorOutput: "")
+        }
+        if args.contains("query=\(GitHubCLI.pullRequestTotalsQuery)") {
+            guard let totals else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
+            return CommandResult(exitCode: 0, output: totals, errorOutput: "")
+        }
         if args.starts(with: ["pr", "list"]) {
+            if listDelay > 0 { try? await Task.sleep(nanoseconds: listDelay) }
+            if openTimesOut, args.contains("open") { return CommandResult(exitCode: 15, output: "", errorOutput: "") }
             let exit = args.contains("open") ? openExit : recentExit
             guard exit == 0 else { return CommandResult(exitCode: exit, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
             return CommandResult(exitCode: 0, output: args.contains("open") ? open : recent, errorOutput: "")

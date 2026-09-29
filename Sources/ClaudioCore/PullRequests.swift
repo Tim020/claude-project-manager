@@ -95,11 +95,15 @@ public struct PullRequestInfo: Equatable, Sendable, Identifiable {
     public var reviewDecision: ReviewDecision
     /// Each reviewer's latest review, then reviews asked for and not given.
     public var reviews: [Review]
+    /// False for one from the whole history (`GitHubCLI.historyFields`):
+    /// its checks, review and line counts weren't loaded.
+    public var hasDetails: Bool
 
     public init(number: Int, url: String, title: String, state: State, headBranch: String = "", baseBranch: String = "main",
                 author: String = "", createdAt: Date? = nil, updatedAt: Date? = nil, mergedAt: Date? = nil,
                 additions: Int = 0, deletions: Int = 0, checks: [Check] = [], reviewDecision: ReviewDecision = .none,
-                reviews: [Review] = []) {
+                reviews: [Review] = [], hasDetails: Bool = true) {
+        self.hasDetails = hasDetails
         self.number = number
         self.url = url
         self.title = title
@@ -265,6 +269,23 @@ extension GitHubCLI {
         "mergedAt", "additions", "deletions", "statusCheckRollup", "reviewDecision", "latestReviews", "reviewRequests",
     ].joined(separator: ",")
 
+    /// The fields for every pull request (`gh pr list --state all`): no
+    /// checks, reviews or line counts. With those, 1,201 pull requests
+    /// (DigiScript) failed with HTTP 504; with line counts alone they took
+    /// 93 s; without them, 9 s.
+    public static let historyFields = [
+        "number", "url", "title", "state", "isDraft", "headRefName", "baseRefName", "author", "createdAt", "updatedAt", "mergedAt",
+    ].joined(separator: ",")
+
+    /// `gh pr list --json historyFields`: pull requests without details.
+    public static func parsePullRequestHistory(_ output: String) -> [PullRequestInfo]? {
+        parsePullRequests(output)?.map { item in
+            var item = item
+            item.hasDetails = false
+            return item
+        }
+    }
+
     /// A repository's `owner/name` and web URL (`gh repo view --json nameWithOwner,url`).
     public struct Repository: Equatable, Sendable {
         public var nameWithOwner: String
@@ -336,6 +357,47 @@ extension GitHubCLI {
         let pieces = parts.repository.split(separator: "/")
         return ["api", "graphql", "-f", "query=\(reviewThreadsQuery)", "-f", "owner=\(pieces[0])", "-f", "name=\(pieces[1])",
                 "-F", "number=\(parts.number)"]
+    }
+
+    /// How many pull requests the repository has, by state: the lists load
+    /// only the open and most recent ones, so these are the counts.
+    public struct PullRequestTotals: Equatable, Sendable {
+        public var all: Int
+        public var open: Int
+        public var merged: Int
+
+        public init(all: Int, open: Int, merged: Int) {
+            self.all = all
+            self.open = open
+            self.merged = merged
+        }
+    }
+
+    public static let pullRequestTotalsQuery = """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            all: pullRequests { totalCount }
+            open: pullRequests(states: OPEN) { totalCount }
+            merged: pullRequests(states: MERGED) { totalCount }
+          }
+        }
+        """
+
+    /// `gh api graphql` arguments for a repository's ("owner/repo") pull
+    /// request totals.
+    public static func pullRequestTotalsArguments(repository: String) -> [String]? {
+        let pieces = repository.split(separator: "/")
+        guard pieces.count == 2 else { return nil }
+        return ["api", "graphql", "-f", "query=\(pullRequestTotalsQuery)", "-f", "owner=\(pieces[0])", "-f", "name=\(pieces[1])"]
+    }
+
+    /// Totals from the `pullRequestTotalsQuery` output.
+    public static func parsePullRequestTotals(_ output: String) -> PullRequestTotals? {
+        guard let repository = json(output)?["data"]?["repository"],
+              let all = repository["all"]?["totalCount"]?.doubleValue,
+              let open = repository["open"]?["totalCount"]?.doubleValue,
+              let merged = repository["merged"]?["totalCount"]?.doubleValue else { return nil }
+        return PullRequestTotals(all: Int(all), open: Int(open), merged: Int(merged))
     }
 
     static func json(_ output: String) -> JSONValue? {

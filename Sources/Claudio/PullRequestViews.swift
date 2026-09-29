@@ -238,7 +238,7 @@ struct PullRequestsErrorBanner: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(DS.orange)
-                    Text("\(error) Showing data from \(age == "now" ? "just now" : "\(age) ago").")
+                    Text("\(AppModel.sentence(error)) Showing data from \(age == "now" ? "just now" : "\(age) ago").")
                         .font(DS.font(12))
                         .foregroundStyle(DS.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -390,6 +390,9 @@ struct ProjectPullRequestsView: View {
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 48)
                         }
+                        if let unlisted = model.unlistedPullRequests(projectID: projectID, filter: model.pullRequestFilter) {
+                            unlistedFootnote(unlisted)
+                        }
                     }
                 }
             } else {
@@ -401,6 +404,20 @@ struct ProjectPullRequestsView: View {
                 .onChange(of: geometry.size.width) { _, new in width = new }
         })
         .task(id: projectID) { await model.refreshPullRequests(projectID) }
+        // Merged or All counts more than the open and recent ones: load the
+        // rest (checked again after each refresh).
+        .task(id: HistoryTrigger(projectID: projectID, filter: model.pullRequestFilter,
+                                 includeUnlinked: model.includeUnlinkedPullRequests,
+                                 updatedAt: model.pullRequests(forProject: projectID)?.updatedAt)) {
+            await model.loadPullRequestHistory(projectID)
+        }
+    }
+
+    private struct HistoryTrigger: Equatable {
+        var projectID: UUID
+        var filter: PullRequestFilter
+        var includeUnlinked: Bool
+        var updatedAt: Date?
     }
 
     private var filterBar: some View {
@@ -443,9 +460,36 @@ struct ProjectPullRequestsView: View {
         switch filter {
         case .needsAttention: return "Open pull requests with a failing check or changes requested"
         case .open: return "Open and draft pull requests"
-        case .merged: return "Merged pull requests"
-        case .all: return "Every pull request loaded"
+        case .merged: return "Merged pull requests. Older ones show checks, reviews and line counts once hovered or clicked"
+        case .all: return "Every pull request. Older ones show checks, reviews and line counts once hovered or clicked"
         }
+    }
+
+    /// The count runs ahead of the list: the rest are loading, or didn't
+    /// load (and are on GitHub).
+    private func unlistedFootnote(_ unlisted: (listed: Int, total: Int, url: String)) -> some View {
+        let olderOnes = model.pullRequestFilter == .merged || model.pullRequestFilter == .all
+        let historyError = model.pullRequests(forProject: projectID)?.history.error
+        return HStack(spacing: 6) {
+            if olderOnes && model.loadingPullRequestHistory.contains(projectID) {
+                ProgressView().controlSize(.small)
+                Text("Loading older pull requests…")
+                    .foregroundStyle(DS.muted)
+            } else if olderOnes, let historyError {
+                Text("Showing \(unlisted.listed) of \(unlisted.total). Couldn't load older pull requests: \(historyError)")
+                    .foregroundStyle(DS.red)
+                    .help("The refresh button tries again")
+            } else {
+                Text("Showing \(unlisted.listed) of \(unlisted.total)")
+                    .foregroundStyle(DS.muted)
+            }
+            Text("·").foregroundStyle(DS.dim)
+            Button("View all on GitHub") { openOnGitHub(unlisted.url) }
+                .buttonStyle(.link)
+        }
+        .font(DS.font(12))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
 
     private var columnHeader: some View {
@@ -499,6 +543,34 @@ private struct ProjectPullRequestRow: View {
     let compact: Bool
     @State private var hovering = false
 
+    /// A column the whole history doesn't load (checks, review, changes).
+    /// Loads while hovered (after a moment, so scrolling past doesn't) or
+    /// when the row is clicked. After a failure, clicking one of these red
+    /// cells only retries, so the row stays in view to show whether it
+    /// worked; clicking elsewhere on the row retries too, and navigates.
+    private func notLoaded(_ column: Int, alignment: Alignment = .leading) -> some View {
+        Group {
+            if model.loadingPullRequestDetails.contains(pullRequest.key) {
+                ProgressView().controlSize(.mini).column(column, alignment: alignment)
+            } else if let failure = model.pullRequestDetailFailures[pullRequest.key] {
+                // The whole cell, not just the glyph, so a near miss doesn't
+                // navigate away.
+                Text("—").foregroundStyle(DS.red)
+                    .column(column, alignment: alignment)
+                    .contentShape(Rectangle())
+                    .onTapGesture { Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) } }
+                    .help("Couldn't load its details: \(failure). Click to try again")
+            } else {
+                Text("—").foregroundStyle(DS.dim)
+                    .column(column, alignment: alignment)
+                    .help("Older pull requests load their details when hovered or clicked")
+            }
+        }
+        .font(DS.font(12.5))
+    }
+
+    static let detailsHoverDelay: UInt64 = 400_000_000
+
     var body: some View {
         let sessions = model.sessions(for: pullRequest, projectID: projectID)
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -522,24 +594,33 @@ private struct ProjectPullRequestRow: View {
                 .font(DS.font(12.5))
                 .foregroundStyle(DS.color(for: pullRequest.state))
                 .column(0)
-                HStack(spacing: 5) {
-                    Image(systemName: DS.icon(for: pullRequest.checkState)).font(.system(size: 12))
-                    Text(pullRequest.checkText).lineLimit(1)
-                }
-                .font(DS.font(12.5))
-                .foregroundStyle(DS.color(for: pullRequest.checkState))
-                .help(pullRequest.checkSummary)
-                .column(1)
-                (Text(pullRequest.reviewLabel).foregroundStyle(DS.reviewColor(pullRequest))
-                    + Text(unresolvedNote).foregroundStyle(DS.dim))
+                if pullRequest.hasDetails {
+                    HStack(spacing: 5) {
+                        Image(systemName: DS.icon(for: pullRequest.checkState)).font(.system(size: 12))
+                        Text(pullRequest.checkText).lineLimit(1)
+                    }
                     .font(DS.font(12.5))
-                    .lineLimit(2)
-                    .column(2)
+                    .foregroundStyle(DS.color(for: pullRequest.checkState))
+                    .help(pullRequest.checkSummary)
+                    .column(1)
+                    (Text(pullRequest.reviewLabel).foregroundStyle(DS.reviewColor(pullRequest))
+                        + Text(unresolvedNote).foregroundStyle(DS.dim))
+                        .font(DS.font(12.5))
+                        .lineLimit(2)
+                        .column(2)
+                } else {
+                    notLoaded(1)
+                    notLoaded(2)
+                }
                 if !compact {
                     SessionChips(sessions: sessions)
                         .column(3)
-                    LineCounts(additions: pullRequest.additions, deletions: pullRequest.deletions)
-                        .column(4, alignment: .trailing)
+                    if pullRequest.hasDetails {
+                        LineCounts(additions: pullRequest.additions, deletions: pullRequest.deletions)
+                            .column(4, alignment: .trailing)
+                    } else {
+                        notLoaded(4, alignment: .trailing)
+                    }
                     Text(pullRequest.updatedAt.map { RelativeAge.string(from: $0, now: context.date) } ?? "")
                         .font(DS.font(12))
                         .foregroundStyle(DS.muted)
@@ -553,7 +634,17 @@ private struct ProjectPullRequestRow: View {
         .overlay(alignment: .bottom) { Rectangle().fill(DS.border.opacity(0.5)).frame(height: 1) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // An older pull request's details load once it's hovered a moment.
+        .task(id: hovering) {
+            guard hovering, !pullRequest.hasDetails else { return }
+            try? await Task.sleep(nanoseconds: ProjectPullRequestRow.detailsHoverDelay)
+            guard !Task.isCancelled else { return }
+            await model.loadPullRequestDetails(pullRequest, projectID: projectID)
+        }
         .onTapGesture {
+            if !pullRequest.hasDetails {
+                Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) }
+            }
             if let group = model.group(of: pullRequest, projectID: projectID) {
                 model.showOverview(.folder(group))
             } else {

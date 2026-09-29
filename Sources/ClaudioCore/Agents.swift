@@ -337,7 +337,7 @@ public struct ProcessCommandRunner: CommandRunning {
             return CommandResult(exitCode: -1, output: "", errorOutput: error.localizedDescription)
         }
         let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
+        DispatchQueue.global().asyncAfter(deadline: .now() + (command.timeout ?? timeout), execute: timer)
 
         // Drain stderr on another thread so neither pipe fills and blocks.
         final class ErrorBuffer: @unchecked Sendable { var data = Data() }
