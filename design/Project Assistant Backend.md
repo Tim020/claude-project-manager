@@ -30,7 +30,7 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
 
 ```
 ┌─────────────────────────── Claudio.app ────────────────────────────┐
-│  AssistantStore (ClaudioCore)      AssistantRunner (ClaudioCore)    │
+│  AssistantStoring (ClaudioCore)    AssistantRunner (ClaudioCore)    │
 │   notes · items · suggestions ◄──── queue of jobs → `claude -p …`   │
 │   skills · audit.jsonl              --json-schema → typed result    │
 │        ▲            ▲                        ▲                      │
@@ -82,7 +82,7 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
   - Agents running in place (`bgIsolation: none`) would sweep the file into unrelated commits.
   - It would also show up in every PR diff.
 - **Syncing across machines** isn't in v1. GitHub Issues is the sharing path for plan items (export, as designed). Approved skills can be saved to the repository one at a time (below), which is how they reach a team or another machine. If whole-store sync is wanted later, the per-project folder can move to an iCloud or Dropbox path, because nothing in it is machine-specific except `index.tsv`.
-- **Projects are keyed by `Project.id`,** not by path, so moving a project folder doesn't orphan its data.
+- **Projects are keyed by `Project.id`,** not by path. The data belongs to the project entry: it survives renames and reordering, and removing and re-adding a project starts it afresh.
 
 ### 2. Skill format, location and versioning
 
@@ -300,7 +300,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
 - **user:** from the capture box (⌘⇧N). The note may still be *linked* to the focused session, but the author is you.
 - **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
-- **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. **UI gap:** the design has no marker for this author. It needs one that differs from ✦ (for example the session's role icon). Raise this with the design before step 3.
+- **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. Its marker is a teal `terminal` icon, with "A session" in the legend (build 9a; step 1 ships it).
 
 Follow-up jobs get the notes that session already wrote, and don't repeat them.
 - **Why a file and not an MCP server:**
@@ -312,7 +312,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 
 | Piece | Target | Notes |
 |---|---|---|
-| `AssistantStore`: models (`Note`, `PlanItem`, `Suggestion`, `SkillRecord`, `AuditEntry`), load/save, Undo | ClaudioCore | Tolerant decoding. One file per project. Tests use a temporary directory. |
+| `AssistantStoring` (`AssistantFileStore`, and `MemoryAssistantStore` as `AppModel`'s default), models (`ProjectNote`, `AssistantData`, `AuditEntry`; later `PlanItem`, `Suggestion`, `SkillRecord`), Undo | ClaudioCore | One file per project. A file from a newer version is refused (read-only), never downgraded. Most tests use the memory store; file behaviour is tested in a temporary directory. |
 | `AssistantJobs`: prompt, schema and `Codable` result for each job | ClaudioCore | Pure functions. Tests use recorded `structured_output` fixtures. |
 | `AssistantRunner`: queue, usage gate, coalescing | ClaudioCore | Uses the injectable command runner (`FakeRunner` in tests). |
 | `SessionDigest`: history, hooks and changes into a capped digest | ClaudioCore | Builds on `Transcript` and `SessionChanges`. |
@@ -325,7 +325,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 
 ## Build order (the handover's order, with backend steps)
 
-1. **Notes and capture.** `AssistantStore`, `audit.jsonl`, and Undo. No model calls.
+1. **Notes and capture.** `AssistantStoring`, `audit.jsonl`, and Undo. No model calls.
 2. **Plan items and promotion.** The first job (Promote, Haiku) brings in `AssistantRunner`, the usage gate, and the job fixtures.
 3. **Start Session from an item.**
    - The opening prompt builder.
@@ -368,7 +368,7 @@ Decided (2026-09-28):
 - **Default mode:** Automatic. Background work is checked in code first, and Claude is called only for judgement (see Runtime).
 - **Plan in git:** no. There's no `PLAN.md` export.
 
-Still open: none. The UI gap (a marker for notes written by a session) goes back to the design.
+Still open: none. The marker for notes written by a session is in build 9a: a teal `terminal` icon.
 
 ## Sources
 

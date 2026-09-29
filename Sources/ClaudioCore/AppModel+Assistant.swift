@@ -6,19 +6,29 @@ import Foundation
 
 extension AppModel {
     /// Reads every project's assistant data at launch. A project whose file
-    /// can't be read keeps its data on disk: it isn't written to until it
-    /// reads again, so nothing is overwritten.
+    /// can't be read keeps its data on disk: it isn't written to again until
+    /// a later launch reads it, so nothing is overwritten.
     func loadAssistantData() {
         var loaded: [UUID: AssistantData] = [:]
+        var unreadable = Set<UUID>()
         for project in state.workspace.projects {
             do {
                 loaded[project.id] = try assistantStore.load(projectID: project.id)
             } catch {
-                unreadableAssistantProjects.insert(project.id)
-                log.append(.error, "Couldn't read the assistant's notes for \(project.name)", detail: AppModel.describe(error))
+                unreadable.insert(project.id)
+                let place = assistantStore.location(projectID: project.id).map { "\($0): " } ?? ""
+                log.append(.error, "Couldn't read the assistant's notes for \(project.name)",
+                           detail: place + AppModel.describe(error))
             }
         }
         if loaded != assistantData { assistantData = loaded }
+        if unreadable != unreadableAssistantProjects { unreadableAssistantProjects = unreadable }
+    }
+
+    /// Whether a project's assistant file couldn't be read at launch: its
+    /// notes can't be shown or changed until it can.
+    public func isAssistantDataUnreadable(_ projectID: UUID) -> Bool {
+        unreadableAssistantProjects.contains(projectID)
     }
 
     /// The project the Assistant shows: the selected session's (or overview
@@ -44,7 +54,8 @@ extension AppModel {
     // MARK: - Capture (⌘⇧N)
 
     /// New Note: opens the Assistant with the capture box, linked to the
-    /// focused session when it's in the Assistant's project.
+    /// focused session when it's in the Assistant's project. For a project
+    /// whose notes couldn't be read, it opens the Assistant, which says so.
     public func beginNoteCapture() {
         guard let projectID = assistantProjectID else { return }
         var settings = state.settings
@@ -52,6 +63,9 @@ extension AppModel {
         settings.toolWindows.isLeftOpen = true
         if settings != state.settings { updateSettings(settings) }
         updateMenuFlags()
+        guard !isAssistantDataUnreadable(projectID) else { return }
+        // Even when the box is already open, it takes the keyboard back.
+        noteCaptureFocusRequest &+= 1
         let capture = NoteCapture(projectID: projectID, sessionID: selectedSession.flatMap { $0.projectID == projectID ? $0.id : nil })
         // Pressed again for the same place, it keeps what's been typed.
         guard capture != noteCapture else { return }
@@ -102,8 +116,8 @@ extension AppModel {
         guard !text.isEmpty, workspace.project(projectID) != nil else { return nil }
         let note = ProjectNote(text: text, author: author, sessionID: sessionID,
                                sessionName: sessionID.flatMap { workspace.session($0)?.name }, createdAt: now())
-        guard change(projectID: projectID, { $0.notes.append(note) }) else { return nil }
-        audit(AuditEntry(at: now(), actor: author, action: .noteAdded, after: note, cause: cause), projectID: projectID)
+        let entry = AuditEntry(at: now(), actor: author, action: .noteAdded, after: note, cause: cause)
+        guard change(projectID: projectID, recording: entry, { $0.notes.append(note) }) else { return nil }
         log.append(.info, "Saved a note in \(workspace.project(projectID)?.name ?? "a project")")
         return note
     }
@@ -121,20 +135,29 @@ extension AppModel {
     }
 
     private func remove(_ note: ProjectNote, projectID: UUID, action: AuditEntry.Action) {
-        guard change(projectID: projectID, { $0.notes.removeAll { $0.id == note.id } }) else { return }
-        audit(AuditEntry(at: now(), actor: .user, action: action, before: note, cause: "ui"), projectID: projectID)
+        let entry = AuditEntry(at: now(), actor: .user, action: action, before: note, cause: "ui")
+        _ = change(projectID: projectID, recording: entry) { $0.notes.removeAll { $0.id == note.id } }
     }
 
-    /// Applies a change to a project's data and saves the whole of it (so
-    /// whatever else it holds is kept). False, with an error shown, when it
-    /// can't be saved, leaving the data as it was.
-    private func change(projectID: UUID, _ body: (inout AssistantData) -> Void) -> Bool {
-        guard !unreadableAssistantProjects.contains(projectID) else {
+    /// Applies a change to a project's data. The audit entry is written
+    /// first, so every change that lands can be reversed; then the whole of
+    /// the data is saved (so whatever else it holds is kept). False, with an
+    /// error shown, when either fails, leaving the data as it was. A failed
+    /// save leaves its audit entry behind, so readers of the log check an
+    /// entry against the data before acting on it.
+    private func change(projectID: UUID, recording entry: AuditEntry, _ body: (inout AssistantData) -> Void) -> Bool {
+        guard !isAssistantDataUnreadable(projectID) else {
             report("The assistant's notes for this project couldn't be read, so they can't be changed. See the Activity Log.")
             return false
         }
         var data = assistantData[projectID] ?? AssistantData()
         body(&data)
+        do {
+            try assistantStore.appendAudit(entry, projectID: projectID)
+        } catch {
+            report("Couldn't record the change, so it wasn't made: \(AppModel.describe(error))")
+            return false
+        }
         do {
             try assistantStore.save(data, projectID: projectID)
         } catch {
@@ -143,14 +166,6 @@ extension AppModel {
         }
         assistantData[projectID] = data
         return true
-    }
-
-    private func audit(_ entry: AuditEntry, projectID: UUID) {
-        do {
-            try assistantStore.appendAudit(entry, projectID: projectID)
-        } catch {
-            log.append(.error, "Couldn't record an assistant change", detail: AppModel.describe(error))
-        }
     }
 
     // MARK: - Toast

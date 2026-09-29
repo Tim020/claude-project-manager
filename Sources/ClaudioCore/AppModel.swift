@@ -215,8 +215,12 @@ public final class AppModel {
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
     @ObservationIgnored let assistantStore: AssistantStoring
-    /// Projects whose assistant file failed to load; never written to.
-    @ObservationIgnored var unreadableAssistantProjects = Set<UUID>()
+    /// Projects whose assistant file failed to load; never written to. Set
+    /// once, at launch.
+    public internal(set) var unreadableAssistantProjects = Set<UUID>()
+    /// Bumped by every New Note, so the capture box takes the keyboard even
+    /// when it's already open.
+    public internal(set) var noteCaptureFocusRequest = 0
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored let shell: String
     @ObservationIgnored let now: () -> Date

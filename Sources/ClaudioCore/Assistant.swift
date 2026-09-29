@@ -7,11 +7,12 @@ import Foundation
 
 /// Who wrote a note.
 public enum NoteAuthor: String, Codable, CaseIterable, Sendable {
-    /// You, from the capture box (⌘⇧N).
+    /// You, from the capture box (⇧⌘N).
     case user
-    /// The assistant, from a session's follow-ups.
+    /// The assistant. It will write notes with a session's follow-ups (build step 4).
     case assistant
-    /// A Claude Code session, with `claudio note` while it worked.
+    /// A Claude Code session. It will write notes with `claudio note`, from the
+    /// bundled plugin (build step 3).
     case session
 }
 
@@ -40,8 +41,9 @@ public struct ProjectNote: Identifiable, Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         text = try c.decode(String.self, forKey: .text)
-        // An author from a newer version reads as the assistant's, so it keeps its Undo.
-        author = (try? c.decodeIfPresent(NoteAuthor.self, forKey: .author)) ?? .assistant
+        // Strict: rewriting an unknown author as a known one would change the
+        // note. A new author comes with a new `AssistantData.currentVersion`.
+        author = try c.decode(NoteAuthor.self, forKey: .author)
         sessionID = try c.decodeIfPresent(UUID.self, forKey: .sessionID)
         sessionName = try c.decodeIfPresent(String.self, forKey: .sessionName)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
@@ -65,7 +67,14 @@ public struct AssistantData: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        // A newer Claudio's file may hold data this one doesn't know about,
+        // and saving would drop it. Refused, it's left alone (read-only) instead.
+        guard version <= AssistantData.currentVersion else {
+            throw DecodingError.dataCorruptedError(forKey: .version, in: c,
+                                                   debugDescription: "Saved by a newer Claudio (version \(version))")
+        }
         notes = try c.decodeIfPresent([ProjectNote].self, forKey: .notes) ?? []
+        // Migrations from older versions go here, switching on `version`.
         version = AssistantData.currentVersion
     }
 }
@@ -102,6 +111,12 @@ public protocol AssistantStoring: AnyObject {
     func load(projectID: UUID) throws -> AssistantData
     func save(_ data: AssistantData, projectID: UUID) throws
     func appendAudit(_ entry: AuditEntry, projectID: UUID) throws
+    /// Where a project's data is kept, for error messages (nil in memory).
+    func location(projectID: UUID) -> String?
+}
+
+extension AssistantStoring {
+    public func location(projectID: UUID) -> String? { nil }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -119,7 +134,8 @@ public final class MemoryAssistantStore: AssistantStoring {
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
 /// `~/Library/Application Support/Claudio/assistant`. Projects are keyed by
-/// id, not path, so moving a project's folder keeps its notes.
+/// id, not path: the notes belong to the project entry, so removing and
+/// re-adding a project starts it afresh.
 public final class AssistantFileStore: AssistantStoring {
     public let root: URL
 
@@ -133,6 +149,10 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func directory(projectID: UUID) -> URL {
         root.appendingPathComponent(projectID.uuidString.lowercased())
+    }
+
+    public func location(projectID: UUID) -> String? {
+        directory(projectID: projectID).appendingPathComponent("assistant.json").path
     }
 
     public func load(projectID: UUID) throws -> AssistantData {
@@ -155,13 +175,23 @@ public final class AssistantFileStore: AssistantStoring {
         var line = try encoder.encode(entry)
         line.append(0x0A)
         let url = directory.appendingPathComponent("audit.jsonl")
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            try handle.seekToEnd()
-            try handle.write(contentsOf: line)
-        } else {
+        // Only a missing log is created; any other failure to open it is
+        // thrown, so the log is never replaced.
+        guard FileManager.default.fileExists(atPath: url.path) else {
             try line.write(to: url, options: .atomic)
+            return
         }
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        let end = try handle.seekToEnd()
+        if end > 0 {
+            // An earlier write that stopped part-way leaves no newline; start
+            // a new line rather than join onto it.
+            try handle.seek(toOffset: end - 1)
+            if try handle.read(upToCount: 1) != Data([0x0A]) { line.insert(0x0A, at: 0) }
+            try handle.seekToEnd()
+        }
+        try handle.write(contentsOf: line)
     }
 }
 

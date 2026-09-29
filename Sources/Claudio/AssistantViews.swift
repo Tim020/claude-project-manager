@@ -15,10 +15,10 @@ struct AssistantTool: View {
     var body: some View {
         VStack(spacing: 0) {
             ToolHeader(title: "Assistant", leadingInset: ToolRail.trafficLightInset) {
-                IconButton(systemName: "square.and.pencil", help: "New Note (⌘⇧N)", size: 15) {
+                IconButton(systemName: "square.and.pencil", help: "New Note (⇧⌘N)", size: 15) {
                     model.beginNoteCapture()
                 }
-                .disabled(model.assistantProjectID == nil)
+                .disabled(model.assistantProjectID.map(model.isAssistantDataUnreadable) ?? true)
             }
             if let projectID = model.assistantProjectID, let project = model.workspace.project(projectID) {
                 Text(project.name.uppercased())
@@ -29,12 +29,27 @@ struct AssistantTool: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
-                if model.isNoteCaptureShowing {
-                    NoteCaptureBox()
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 10)
+                if model.isAssistantDataUnreadable(projectID) {
+                    // Not "No notes yet": they're on disk, just not readable.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Couldn't read this project's notes.", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(DS.orange)
+                        Text("They're left as they are on disk, and can't be changed until Claudio can read them. The Activity Log (⌥⌘L) says why.")
+                            .foregroundStyle(DS.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(DS.font(12.5))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    Spacer()
+                } else {
+                    if model.isNoteCaptureShowing {
+                        NoteCaptureBox()
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 10)
+                    }
+                    NotesList(projectID: projectID)
                 }
-                NotesList(projectID: projectID)
             } else {
                 Text("Add a project to keep notes about it.")
                     .font(DS.font(12.5))
@@ -96,7 +111,8 @@ private struct NoteCaptureBox: View {
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.blue, lineWidth: 1))
         .onExitCommand { model.cancelNoteCapture() }
         .onAppear { focused = true }
-        .onChange(of: model.noteCapture?.sessionID) { focused = true }
+        // Every New Note, including one while the box is already open.
+        .onChange(of: model.noteCaptureFocusRequest) { focused = true }
     }
 }
 
@@ -111,7 +127,7 @@ private struct NotesList: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No notes yet.")
                     .foregroundStyle(DS.muted)
-                Text("Press ⌘⇧N to capture a thought from anywhere. It's linked to the session you're in.")
+                Text("Press ⇧⌘N to capture a thought from anywhere. It's linked to the session you're in.")
                     .foregroundStyle(DS.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -124,7 +140,7 @@ private struct NotesList: View {
             legend
             ScrollView {
                 // Ages refresh, and new notes lose their highlight, as time passes.
-                TimelineView(.periodic(from: .now, by: 30)) { context in
+                TimelineView(.periodic(from: .now, by: 15)) { context in
                     LazyVStack(spacing: 6) {
                         ForEach(notes) { note in
                             NoteCard(note: note, projectID: projectID,

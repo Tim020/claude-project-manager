@@ -230,17 +230,159 @@ final class AssistantNotesTests: XCTestCase {
         }
     }
 
-    func testDecodingIsTolerant() throws {
+    func testDecoding() throws {
         let id = UUID()
-        let json = #"{"notes":[{"id":"\#(id.uuidString)","text":"Hi","author":"someoneNew","createdAt":"2026-09-28T10:00:00Z"}]}"#
-        let data = try JSONFileStore.decoder.decode(AssistantData.self, from: Data(json.utf8))
-        XCTAssertEqual(data.version, AssistantData.currentVersion)
-        XCTAssertEqual(data.notes.first?.author, .assistant, "an unknown author keeps Undo")
-        XCTAssertNil(data.notes.first?.sessionID)
+        let note = #"{"id":"\#(id.uuidString)","text":"Hi","author":"session","createdAt":"2026-09-28T10:00:00Z"}"#
+        let data = try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"notes":[\#(note)]}"#.utf8))
+        XCTAssertEqual(data.version, AssistantData.currentVersion, "a file without a version is version 1")
+        XCTAssertEqual(data.notes.first?.author, .session)
+        XCTAssertNil(data.notes.first?.sessionID, "optional fields may be missing")
         XCTAssertEqual(try JSONFileStore.decoder.decode(AssistantData.self, from: Data("{}".utf8)), AssistantData())
+
+        let unknownAuthor = note.replacingOccurrences(of: #""session""#, with: #""someoneNew""#)
+        XCTAssertThrowsError(try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"notes":[\#(unknownAuthor)]}"#.utf8)),
+                             "rewriting an unknown author as a known one would change the note")
+        XCTAssertThrowsError(try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"version":2,"notes":[]}"#.utf8)),
+                             "a newer Claudio's file isn't read, so it can't be downgraded")
 
         let tools = try JSONDecoder().decode(ToolWindows.self, from: Data(#"{"left":"assistant"}"#.utf8))
         XCTAssertEqual(tools.left, .assistant)
+    }
+
+    func testANewerVersionsFileIsLeftAlone() throws {
+        let root = try makeTemporaryDirectory()
+        try MainActor.assumeIsolated {
+            var state = PersistedState()
+            let project = state.workspace.addProject(path: "/code/app")
+            let store = AssistantFileStore(root: root)
+            let file = try XCTUnwrap(store.location(projectID: project).map(URL.init(fileURLWithPath:)))
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let newer = #"{"version":2,"notes":[],"plan":[{"title":"Something step 2 knows about"}]}"#
+            try Data(newer.utf8).write(to: file)
+
+            let memory = MemoryStore()
+            memory.state = state
+            let model = AppModel(store: memory, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 assistantStore: store,
+                                 locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
+            XCTAssertTrue(model.isAssistantDataUnreadable(project))
+            XCTAssertNil(model.addNote("New", author: .user, projectID: project, sessionID: nil))
+            XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), newer, "its plan survives")
+            XCTAssertEqual(model.log.entries.first(where: { $0.title.hasPrefix("Couldn't read the assistant") })?.detail?.hasPrefix(file.path), true,
+                           "the log says which file")
+        }
+    }
+
+    func testAnUnreadableProjectOpensTheAssistantWithoutACapture() throws {
+        try MainActor.assumeIsolated {
+            let assistant = ThrowingAssistantStore()
+            let f = try makeFixture(assistant: assistant)
+            XCTAssertTrue(f.model.isAssistantDataUnreadable(f.projects[0]), "load threw")
+            f.model.beginNoteCapture()
+            XCTAssertEqual(f.model.toolWindows.visibleLeft, .assistant, "the Assistant says why")
+            XCTAssertNil(f.model.noteCapture, "there's nowhere for a note to go")
+        }
+    }
+
+    func testOneUnreadableProjectDoesntAffectAnother() throws {
+        try MainActor.assumeIsolated {
+            let assistant = MemoryAssistantStore()
+            var f = try makeFixture(assistant: assistant)
+            f.model.addNote("Kept", author: .user, projectID: f.projects[1], sessionID: nil)
+            // Relaunch with the first project's file unreadable.
+            let broken = SelectivelyBrokenStore(wrapping: assistant, unreadable: f.projects[0])
+            let store = MemoryStore()
+            store.state = f.model.state
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 assistantStore: broken,
+                                 locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
+            f = Fixture(model: model, assistant: assistant, projects: f.projects, sessions: f.sessions)
+            XCTAssertTrue(model.isAssistantDataUnreadable(f.projects[0]))
+            XCTAssertFalse(model.isAssistantDataUnreadable(f.projects[1]))
+            model.addNote("Added", author: .user, projectID: f.projects[1], sessionID: nil)
+            XCTAssertEqual(assistant.data[f.projects[1]]?.notes.map(\.text), ["Kept", "Added"])
+        }
+    }
+
+    func testAFailedSaveKeepsTheDraftAndSaysSo() throws {
+        try MainActor.assumeIsolated {
+            let assistant = ThrowingAssistantStore(failLoad: false, failSave: true)
+            let f = try makeFixture(assistant: assistant)
+            f.model.beginNoteCapture()
+            f.model.updateNoteDraft("X")
+            XCTAssertNil(f.model.saveNoteCapture())
+            XCTAssertEqual(f.model.notes(inProject: f.projects[0]), [])
+            XCTAssertNil(f.model.toast, "no \"Saved to Notes\"")
+            XCTAssertNotNil(f.model.noteCapture, "the box stays open")
+            XCTAssertEqual(f.model.noteDraft, "X", "with what was typed")
+            XCTAssertNotNil(f.model.errorMessage)
+            XCTAssertEqual(assistant.audit.count, 1, "the audit comes first, so it has the attempt")
+        }
+    }
+
+    func testAFailedAuditStopsTheChange() throws {
+        try MainActor.assumeIsolated {
+            let assistant = ThrowingAssistantStore(failLoad: false, failAudit: true)
+            let f = try makeFixture(assistant: assistant)
+            XCTAssertNil(f.model.addNote("X", author: .user, projectID: f.projects[0], sessionID: nil))
+            XCTAssertEqual(assistant.saves, 0, "nothing lands without a record that can reverse it")
+            XCTAssertEqual(f.model.notes(inProject: f.projects[0]), [])
+            XCTAssertNotNil(f.model.errorMessage)
+        }
+    }
+
+    func testAuditAppendsNeverReplaceTheLog() throws {
+        let root = try makeTemporaryDirectory()
+        let store = AssistantFileStore(root: root)
+        let project = UUID()
+        let url = store.directory(projectID: project).appendingPathComponent("audit.jsonl")
+        let entry = AuditEntry(at: Date(timeIntervalSince1970: 0), actor: .user, action: .noteAdded, cause: "ui")
+
+        try store.appendAudit(entry, projectID: project)
+        // A write that stopped part-way, with no newline.
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"trunc"#.utf8))
+        try handle.close()
+        try store.appendAudit(entry, projectID: project)
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertEqual(lines.count, 4, "entry, the partial line, entry, and the final newline")
+        XCTAssertEqual(lines[1], #"{"trunc"#)
+        XCTAssertNoThrow(try JSONFileStore.decoder.decode(AuditEntry.self, from: Data(lines[2].utf8)), "not joined onto it")
+
+        // A log that can't be opened is an error, not a new log.
+        try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+        let before = try Data(contentsOf: url)
+        XCTAssertThrowsError(try store.appendAudit(entry, projectID: project))
+        XCTAssertEqual(try Data(contentsOf: url), before)
+    }
+
+    func testNewNoteAgainAsksForTheKeyboard() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            f.model.select(f.sessions[0])
+            f.model.beginNoteCapture()
+            f.model.updateNoteDraft("Half a thought")
+            let request = f.model.noteCaptureFocusRequest
+            f.model.beginNoteCapture()
+            XCTAssertNotEqual(f.model.noteCaptureFocusRequest, request, "the open box takes the keyboard back")
+            XCTAssertEqual(f.model.noteDraft, "Half a thought")
+        }
+    }
+
+    func testMetaLineFollowsRenamesAndOutlivesTheSession() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            let note = try XCTUnwrap(f.model.addNote("x", author: .user, projectID: f.projects[0], sessionID: f.sessions[1]))
+            f.model.renameSession(f.sessions[1], to: "Renamed")
+            XCTAssertEqual(f.model.metaLine(for: note), "You · linked to Renamed · now", "the session's current name")
+            f.model.deleteSession(f.sessions[1], .claudioOnly)
+            XCTAssertEqual(f.model.metaLine(for: note), "You · linked to Shell Follow Up · now",
+                           "the name it had when the note was written")
+        }
     }
 
     func testToastClearsOnlyItself() throws {
@@ -253,4 +395,55 @@ final class AssistantNotesTests: XCTestCase {
             XCTAssertEqual(f.model.toast?.text, "Second", "an older toast's timer doesn't clear a newer one")
         }
     }
+}
+
+private struct StoreFailure: Error {}
+
+/// An assistant store that fails where it's told to.
+private final class ThrowingAssistantStore: AssistantStoring {
+    let failLoad: Bool
+    let failSave: Bool
+    let failAudit: Bool
+    var saves = 0
+    var audit: [AuditEntry] = []
+
+    init(failLoad: Bool = true, failSave: Bool = false, failAudit: Bool = false) {
+        self.failLoad = failLoad
+        self.failSave = failSave
+        self.failAudit = failAudit
+    }
+
+    func load(projectID: UUID) throws -> AssistantData {
+        if failLoad { throw StoreFailure() }
+        return AssistantData()
+    }
+
+    func save(_ data: AssistantData, projectID: UUID) throws {
+        if failSave { throw StoreFailure() }
+        saves += 1
+    }
+
+    func appendAudit(_ entry: AuditEntry, projectID: UUID) throws {
+        if failAudit { throw StoreFailure() }
+        audit.append(entry)
+    }
+}
+
+/// A memory store with one project whose file can't be read.
+private final class SelectivelyBrokenStore: AssistantStoring {
+    let wrapped: MemoryAssistantStore
+    let unreadable: UUID
+
+    init(wrapping wrapped: MemoryAssistantStore, unreadable: UUID) {
+        self.wrapped = wrapped
+        self.unreadable = unreadable
+    }
+
+    func load(projectID: UUID) throws -> AssistantData {
+        if projectID == unreadable { throw StoreFailure() }
+        return try wrapped.load(projectID: projectID)
+    }
+
+    func save(_ data: AssistantData, projectID: UUID) throws { try wrapped.save(data, projectID: projectID) }
+    func appendAudit(_ entry: AuditEntry, projectID: UUID) throws { try wrapped.appendAudit(entry, projectID: projectID) }
 }
