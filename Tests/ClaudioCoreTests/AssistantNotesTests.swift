@@ -352,12 +352,14 @@ final class AssistantNotesTests: XCTestCase {
         XCTAssertEqual(lines[1], #"{"trunc"#)
         XCTAssertNoThrow(try JSONFileStore.decoder.decode(AuditEntry.self, from: Data(lines[2].utf8)), "not joined onto it")
 
-        // A log that can't be opened is an error, not a new log.
-        try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: url.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
-        let before = try Data(contentsOf: url)
-        XCTAssertThrowsError(try store.appendAudit(entry, projectID: project))
-        XCTAssertEqual(try Data(contentsOf: url), before)
+        // A log that can't be opened is an error, not a new log. (A directory
+        // in its place, since CI's Linux tests run as root, which ignores
+        // read-only permissions.)
+        let other = UUID()
+        let blocked = store.directory(projectID: other).appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: blocked.appendingPathComponent("kept"), withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.appendAudit(entry, projectID: other))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: blocked.appendingPathComponent("kept").path), "not replaced")
     }
 
     func testNewNoteAgainAsksForTheKeyboard() throws {
