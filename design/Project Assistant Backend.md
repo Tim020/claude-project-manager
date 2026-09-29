@@ -342,6 +342,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
        - "Checking…" isn't saved.
        - At launch, a saved suggestion is only restored if it still applies: its note is there without an item, and an Attach target is still in the plan and not done. The file is then rewritten to match.
        - **Check Again** on a suggestion, and **Check Against Plan** in a note's menu, run the check afresh. The new answer replaces the old one, and a failed check leaves the old one in place.
+       - Each note card has a **⋯** menu in its top-right corner with its actions (Copy, Check Against Plan, Add to Plan, Attach To, Detach, Delete). A right-click only reached them on the card's edges, because the selectable text has its own menu.
        - The suggestion's wording became a question on its own line ("Create a plan item from this note?"), then the reason, then the item.
        - A note's **Promote…** link is now **Check Against Plan…** while the assistant is on, and **Add as Idea** while it's off, since "Promote…" read as though it would create the item.
      - **Moved earlier from step 4:** app-level Settings › Assistant (the switch, the threshold and the credits toggle), so the first Claude call ships with a way to turn it off. The project's mode is stored now (Automatic by default; Off makes Promote… add an Idea with no call). Its UI waits for step 4's Assistant Settings.

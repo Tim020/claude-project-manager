@@ -233,6 +233,8 @@ struct NoteCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Room for the ⋯ menu in the corner.
+                .padding(.trailing, 16)
             HStack(spacing: 6) {
                 AuthorMarker(author: note.author)
                 Text(model.metaLine(for: note))
@@ -289,35 +291,66 @@ struct NoteCard: View {
         .padding(.vertical, 9)
         .background(RoundedRectangle(cornerRadius: 4).fill(isFresh ? DS.blue.opacity(0.12) : DS.input))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isFresh ? DS.blue.opacity(0.5) : DS.border, lineWidth: 1))
-        .contextMenu {
-            Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(note.text, forType: .string)
+        // The ⋯ in the corner, for everywhere a right-click is taken by the
+        // selectable text's own menu.
+        .overlay(alignment: .topTrailing) {
+            Menu {
+                NoteMenuItems(note: note, projectID: projectID)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.muted)
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
             }
-            if attached == .none {
-                // Straight in, without the check (Promote… asks Claude first).
-                Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
-                if model.isAssistantOn(inProject: projectID) {
-                    Button(suggestion == nil ? "Check Against Plan" : "Check Again") {
-                        model.recheckNote(note.id, projectID: projectID)
-                    }
-                    .disabled(suggestion == .checking)
-                }
-            }
-            let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
-            if !others.isEmpty {
-                Menu("Attach To") {
-                    ForEach(others.reversed()) { other in
-                        Button(other.title) { model.attachNote(note.id, to: other.id, projectID: projectID) }
-                    }
-                }
-            }
-            if attached != .none {
-                Button("Detach from Plan Item") { model.detachNote(note.id, projectID: projectID) }
-            }
-            Divider()
-            Button("Delete Note", role: .destructive) { model.deleteNote(note.id, projectID: projectID) }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(.top, 6)
+            .padding(.trailing, 6)
+            .help("More")
+            .accessibilityLabel("Note actions")
         }
+        .contextMenu { NoteMenuItems(note: note, projectID: projectID) }
+    }
+}
+
+/// A note's actions: its ⋯ menu and its right-click menu.
+private struct NoteMenuItems: View {
+    @Environment(AppModel.self) private var model
+    let note: ProjectNote
+    let projectID: UUID
+
+    var body: some View {
+        let attached = model.attachedItem(of: note, inProject: projectID)
+        let suggestion = model.noteSuggestions[note.id]
+        Button("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(note.text, forType: .string)
+        }
+        if attached == .none {
+            if model.isAssistantOn(inProject: projectID) {
+                Button(suggestion == nil ? "Check Against Plan" : "Check Again") {
+                    model.recheckNote(note.id, projectID: projectID)
+                }
+                .disabled(suggestion == .checking)
+            }
+            // Straight in, without the check.
+            Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
+        }
+        let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
+        if !others.isEmpty {
+            Menu("Attach To") {
+                ForEach(others.reversed()) { other in
+                    Button(other.title) { model.attachNote(note.id, to: other.id, projectID: projectID) }
+                }
+            }
+        }
+        if attached != .none {
+            Button("Detach from Plan Item") { model.detachNote(note.id, projectID: projectID) }
+        }
+        Divider()
+        Button("Delete Note", role: .destructive) { model.deleteNote(note.id, projectID: projectID) }
     }
 }
 
