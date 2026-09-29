@@ -53,6 +53,11 @@ final class NotificationTests: XCTestCase {
 
             model.checkNotifications()
             XCTAssertEqual(notifier.posted.count, 2, "no repeats without a new change")
+
+            // Each session replaces its own notification, but they all stack in
+            // one group, so Notification Centre can clear them together.
+            XCTAssertEqual(Set(notifier.posted.map(\.identifier)), [a.uuidString, b.uuidString])
+            XCTAssertEqual(Set(notifier.posted.map(\.threadIdentifier)), [SessionNotification.sessionsThread])
         }
     }
 
@@ -260,6 +265,7 @@ final class UsageResetNotificationTests: XCTestCase {
                 XCTAssertEqual(notifier.posted, [SessionNotification(usageReset: .week)])
                 XCTAssertNil(notifier.posted.first?.sessionID)
                 XCTAssertEqual(notifier.posted.first?.identifier, "usage-reset-week")
+                XCTAssertEqual(notifier.posted.first?.threadIdentifier, SessionNotification.usageThread)
             } else {
                 XCTAssertTrue(notifier.posted.isEmpty)
             }

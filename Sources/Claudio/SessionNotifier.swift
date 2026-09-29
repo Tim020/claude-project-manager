@@ -30,7 +30,7 @@ final class SessionNotifier: NSObject, NotificationPosting {
         content.title = notification.title
         content.subtitle = notification.subtitle
         content.body = notification.body
-        content.threadIdentifier = notification.identifier
+        content.threadIdentifier = notification.threadIdentifier
         if let sessionID = notification.sessionID {
             content.userInfo = ["sessionID": sessionID.uuidString]
         }
