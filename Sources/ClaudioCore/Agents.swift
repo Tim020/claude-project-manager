@@ -183,9 +183,13 @@ public struct AgentCommands: Sendable {
     }
 
     /// `claude --bg … -- "<prompt>"`: prints "backgrounded · <id>". The agent
-    /// keeps `isolation` (passed in `--settings`) when it's resumed.
-    public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?) -> TerminalLaunch {
-        command(["--bg"] + sessionOptions(session, isolation: isolation) + TerminalLaunch.promptArguments(prompt),
+    /// keeps `isolation` (passed in `--settings`) and `assistant`'s flags
+    /// when it's resumed.
+    public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?,
+                         assistant: AssistantLaunch? = nil) -> TerminalLaunch {
+        command(["--bg"] + sessionOptions(session, isolation: isolation, allowsClaudio: assistant?.pluginDirectory != nil)
+                + (assistant?.arguments ?? [])
+                + TerminalLaunch.promptArguments(prompt),
                 in: session.workingDirectory)
     }
 
@@ -196,10 +200,15 @@ public struct AgentCommands: Sendable {
     /// their own saved options (model, permissions, Claudio's hooks), and
     /// passing any flags makes Claude Code start a copy instead, so none are.
     /// (`--` before the prompt doesn't count: checked with 2.1.283.)
-    public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false) -> TerminalLaunch {
+    /// `assistant`'s flags go with the other options, so only when not
+    /// continuing an agent.
+    public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false,
+                       assistant: AssistantLaunch? = nil) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
         var args = ["--bg", "--resume", claudeID]
-        if !continuingAgent { args += sessionOptions(session) }
+        if !continuingAgent {
+            args += sessionOptions(session, allowsClaudio: assistant?.pluginDirectory != nil) + (assistant?.arguments ?? [])
+        }
         args += TerminalLaunch.promptArguments(prompt)
         return command(args, in: session.workingDirectory)
     }
@@ -262,12 +271,12 @@ public struct AgentCommands: Sendable {
 
     private var home: String { baseEnvironment["HOME"] ?? NSHomeDirectory() }
 
-    private func sessionOptions(_ session: Session, isolation: BackgroundIsolation? = nil) -> [String] {
+    private func sessionOptions(_ session: Session, isolation: BackgroundIsolation? = nil, allowsClaudio: Bool = false) -> [String] {
         var args: [String] = []
         if let model = session.model, !model.isEmpty { args += ["--model", model] }
         if session.permissionMode != .standard { args += ["--permission-mode", session.permissionMode.rawValue] }
         args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine,
-                                                 isolation: isolation)]
+                                                 isolation: isolation, allowsClaudio: allowsClaudio)]
         return args
     }
 

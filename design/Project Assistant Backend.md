@@ -223,8 +223,10 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 - **How chips are picked.** A chip for skill *s* on item *i* scores from three things:
   - *s*'s `paths` globs matching files that *i*'s linked sessions touched
-  - *s*'s `metadata.claudio-folders` or labels matching *i*'s folder and issue labels
-  - how often *s* was used by sessions in the same folder
+  - *s*'s `metadata.claudio-folders` or labels matching the folder picked for the session, and *i*'s issue labels
+  - how often *s* was used by sessions in that folder
+
+  *(Changed in step 3: items have no folder, so the folder terms use the one picked in New Session from Plan.)*
 
   Show at most 3. This matches the design's "Picked from the files this item touches."
 - **What a chip means.** Every approved skill is visible to every Claudio session in the project by its description. That's how native skills load, and `paths` already limits auto-activation to matching files. So a chip means "**named in the opening prompt**": the prompt says "Use the /worktree-setup and /shell-panel-code-map skills". Removing a chip leaves the skill out of the prompt, but Claude can still use it if it matches. The sheet's hint should say so, for example "Named in the opening prompt."
@@ -277,13 +279,13 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 Nothing is installed into `~/.claude`, the repository or the user's settings by default.
 
 1. **The bundled plugin.**
-   - The app ships `Contents/Resources/ClaudioPlugin/`. At launch, if its version differs from `plugin/claudio/.claude-plugin/plugin.json`, it's copied to `~/Library/Application Support/Claudio/plugin/claudio/`: written to a temporary folder, then renamed into place.
+   - *Built in step 3, in place of shipping it in `Contents/Resources`:* the plugin's files are embedded in `ClaudioCore` (`ClaudioPlugin`). At launch, if any file in `~/Library/Application Support/Claudio/plugin/claudio/` differs, the whole plugin is written to a folder beside it, then moved into place.
    - **The path must be stable,** because `--plugin-dir`'s absolute path is saved in the job's `respawnFlags` (verified). A path inside the app bundle would break when the app moves or updates, and App Translocation randomises it.
    - Running agents pick up new plugin content on `/reload-plugins` or a respawn.
 2. **Per-project folders** (`assistant/<project-id>/skills/.claude/skills/`) are created when a project is added, and for existing projects on first launch. `index.tsv` is rewritten whenever projects change.
 3. **The launch flags** `--plugin-dir <plugin>` and `--add-dir <project skills root>` go on every *new* session: `AgentCommands.dispatch` and the direct `TerminalLaunch.make` for `--session-id`.
    - They are **never added when continuing an agent**, because resuming with flags starts a copy.
-   - So sessions that exist before the upgrade keep their old flags, and never get the plugin or the skills. They still feed the learning loop, because hooks and history are read app-side.
+   - So background agents that exist before the upgrade keep their old flags, and never get the plugin or the skills. They still feed the learning loop, because hooks and history are read app-side. *(Step 3, from review round 1 on PR #26: a direct-mode session is a new process on every launch, so it gets the flags each time, `--resume` included, and older direct sessions gain them. So does a background resume that isn't continuing an agent.)*
    - The New Session sheet could say this once for the first session after an upgrade. It isn't in the design.
 4. **Version gate.** All the flags used here exist in 2.1.169, the current minimum (checked with `--help`), so the minimum doesn't change.
 5. **Opt-in, for sessions outside Claudio.** Assistant Settings could offer "Use Claudio's skills in all Claude Code sessions". That would use `claude plugin marketplace add <App Support path>` and `claude plugin install claudio@claudio --scope user`, which writes `enabledPlugins` to `~/.claude/settings.json`. It would only happen after an explicit click, with the command shown. It isn't needed for v1.
@@ -291,7 +293,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 ### The session-side plugin
 
 - **`bin/claudio`** is a POSIX `sh` script: no dependencies, and testable on Linux.
-  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in a background agent's Bash tool (verified in 2.1.284). Direct-mode tabs weren't checked; for those it falls back to `$CLAUDIO_SESSION_ID`, which `TerminalLaunch.make` already sets. It identifies its project its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
+  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in the Bash tool of background agents (verified in 2.1.284) and of direct-mode tabs (verified in 2.1.285, step 3). `$CLAUDIO_SESSION_ID`, which `TerminalLaunch.make` sets, is kept as a fallback. It identifies its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
   - It writes base64 text, so nothing needs JSON escaping in shell: `printf '%s\t%s\tnote\t%s\n' "$sid" "$PWD" "$(printf %s "$text" | base64 | tr -d '\n')" >> inbox.log`. The `tr` matters: GNU `base64` wraps its output at 76 columns, and BSD `base64` doesn't. That's the same single-write append as `HookSettings.command`.
   - Commands:
     - `claudio plan`: prints `plan.md`
@@ -304,7 +306,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 #### Notes and authorship
 
 Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
-- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2). An unlinked note's promoted item goes to Unfiled.
+- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2).
 - **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
 - **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. Its marker is a teal `terminal` icon, with "A session" in the legend (build 9a; step 1 ships it).
 
@@ -323,10 +325,10 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | `AppModel+AssistantJobs.swift`: queue, usage gate (coalescing in step 4) | ClaudioCore | Uses the injectable command runner (a fake in tests). |
 | `SessionDigest`: history, hooks and changes into a capped digest | ClaudioCore | Builds on `Transcript` and `SessionChanges`. |
 | `SkillFiles`: frontmatter, write/approve/revert, hashes, checks | ClaudioCore | Uses `Diff.swift` for the added-lines view. |
-| `InboxTailer` | ClaudioCore | Same shape as `HookEventTailer`. |
+| `InboxReader` | ClaudioCore | Built in step 3. Unlike `HookEventTailer`, it reads from a saved offset (`inbox.offset`), not the end, so notes written while Claudio was closed arrive. |
 | New hook events | ClaudioCore | `HookSettings.events`, `HookEventParser` fields, with fixtures. |
 | `AppModel+Assistant.swift` | ClaudioCore | UI entry points, as `AppModel+PullRequests.swift` does. |
-| Plugin files | `Sources/Claudio/Resources/ClaudioPlugin/` | Copied by `build-app.sh`. The copy-on-launch code is in core, and tested. |
+| Plugin files | `ClaudioPlugin` in `AssistantPlugin.swift` (ClaudioCore) | Embedded, and written out at launch (step 3). `bin/claudio` is tested under `/bin/sh`. |
 | Views | Claudio | Only the 9a panel, sheet and card. |
 
 ## Build order (the handover's order, with backend steps)
@@ -353,7 +355,29 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
    - The skills root and `--add-dir`.
    - The bundled plugin, `--plugin-dir`, `bin/claudio`, and the inbox.
    - Skill chip scoring. Before this ships, the list of approved skills is empty, but the flags are in place.
+   - **Done in step 3:**
+     - **Start Session** on a plan item that isn't done opens New Session from Plan. The opening prompt (`OpeningPrompt`) is the title, `Notes:` with the attached notes oldest first, `GitHub issue: #n`, then `Use these skills: /a, /b`. An item without notes sends just its title, not the design's "No notes attached." filler. The model and permissions are the settings' defaults, since the sheet has neither. Only once the session exists does the item move to In Session, linked to it, with an audit entry. If that session is deleted, the item offers Start Session again.
+     - **Launch flags** (`AssistantLaunch`): `--plugin-dir` and `--add-dir <assistant/<id>/skills>` go on `dispatch` and the direct `--session-id` launch, on every new session whatever the project's mode (Off means no Claude calls; flags can't be added later without making a copy). *(Changed in review round 1: they also go on every direct launch, `--resume` included, and on `resume(continuingAgent: false)`. Only continuing a background agent goes without.)* A flag whose folder isn't there is left out. The same sessions' `--settings` JSON allows `Bash(claudio:*)`, so `claudio note` runs without asking in Ask mode (see Decisions). `Session.hasAssistant` records sessions launched with the plugin (skills alone don't count, since without the plugin a session can't write notes), which drives the "Started before the assistant" hint. `Session.namedSkills` keeps the skills the prompt named, for SKILLS NAMED IN ITS PROMPT. Both live in `state.json` (tolerant decoding), so `assistant.json` stays at version 2.
+     - **Changed from the design: the plugin is embedded in `ClaudioCore`** (`ClaudioPlugin`), not shipped in `Contents/Resources` and copied by `build-app.sh`. It's written to `plugin/claudio/` at launch whenever any file there differs from what it should be. Files are compared, not a version number, so a forgotten version bump can't leave old files. It's built in a folder beside the target and then moved into place. That way `bin/claudio` is tested on Linux and `swift run` works.
+     - **`bin/claudio`:** `plan`, `item <id>` and `note "<text>"` (or `note -` for standard input). It finds `assistant/` from its own path. Item ids are the first 8 characters of the item's UUID. `plan.md` (`PlanSnapshot`) is rewritten after every change and at launch, with item lines `- [id] title · issue · session` and indented notes, so `claudio plan` leaves notes out and `claudio item` cuts out one item. `index.tsv` is checked on every save and written when it changes.
+     - **The inbox:** Claudio reads `inbox.log` every half second (with hook events) and at launch. `InboxReader` saves its position in `inbox.offset` rather than starting at the end like the hook tailer, so notes written while Claudio was closed arrive, and none arrives twice. The session is found by Claude Code's id, then by Claudio's id (direct tabs), then the project by the longest project path containing the directory. A note from the session working on an item joins that item. Notes are capped at 4,000 characters. `inbox.log` isn't compacted; notes are small.
+     - **Skill chips** (`SkillChips`, `SkillFiles`, `Glob`): scored in code from `paths` globs against files the item's sessions changed (worktree paths read as repository paths), and `metadata.claudio-folders` against the folder picked in the sheet (the chips are picked again when it changes, leaving out any you removed). At most 3, and none that score nothing. The frontmatter reader handles only what skill files use.
+   - **Notes and plan items have no folder** (Tim's call, PR #26). `PlanItem.folderID` is gone, so Promote no longer files an item in its session's folder, and the item view has no folder line. A step 2 file's `folderID` is ignored and dropped on the next save; step 2 builds already read items without one, so `assistant.json` stays at version 2. The only folder is the new session's, picked in New Session from Plan, starting at Unfiled.
+   - **Tested in the app** (Tim, 2.1.285, PR #26): the sheet with and without a folder-matched skill; the session's opening prompt and `Skill(test-skill)` loading; `respawnFlags` holding `--plugin-dir`, `--add-dir` and the `Bash(claudio:*)` rule; `claudio plan`, `item` and `note` from a worktree agent (in auto mode), the note attached to the item and undone; a note written while Claudio was closed arriving once; a direct-mode tab's note; a resume with no new flags.
+   - **Moved on to step 4:** `claudio suggest` (a plan change from a session, into Needs You). Needs You doesn't exist yet, so the command and the note skill leave it out.
+   - **Fixed in review round 1 (PR #26):**
+     - The inbox reader keeps its place in memory as well as in `inbox.offset`. It takes nothing when the place can't be saved, and treats an offset file it can't read as an error rather than 0, so notes are never read twice. The failure is logged once.
+     - A session note that can't be saved is logged with its text (it also stays in `inbox.log`), not shown as an alert. Projects whose notes can't be read are left out of `index.tsv`, so `claudio` refuses there.
+     - `startSession` checks `canStartSession` itself, refuses for an unreadable project before starting anything, says so when the item is gone or the link fails, names only approved skills, and puts the item back (with an audit entry) when its background agent fails to start.
+     - `claudio note` refuses a note Claudio would drop (no session and no project), and notes over 4,000 characters.
+     - The plugin is swapped in by renames with the old copy moved aside, not deleted first; a failed update keeps using the old copy.
+     - `index.tsv` drops trailing slashes and leaves out paths with tabs or line breaks. Item ids that collide in a plan are written in full. Note text that isn't UTF-8 is kept, with replacement characters.
+   - **Moved on to step 5:**
+     - Logging `SKILL.md` files that can't be read or have no closing `---` (from review round 1, PR #26), with step 5's deterministic skill checks. Today such a skill is skipped or read without its frontmatter, silently.
+     - Chip scoring's usage term (skill use from `PreToolUse` Skill events).
+     - Its touched files should come from the linked sessions' history (`EditLogCache` over their history files), not from `sessionChanges`, which only has sessions whose Files Changed has loaded. So for now the file term depends on what's been opened.
 4. **Follow-ups.** The three new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+   - **`claudio suggest`** (moved from step 3): a session's proposed plan change, as a Needs You card. Add it to `bin/claudio`, the inbox's commands and the note skill.
    - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out.
    - **Assistant Settings** (per project: the mode's UI, "Don't send transcripts", models), the paused status line, the daily job limit for users without a plan-usage reading, and **the Assistant's Activity Log view**, with the Job Failed view for background failures.
    - **Carried over from step 1's review (PR #21), moved here from step 2:** tolerant reading of `audit.jsonl`. `AuditEntry` still uses the synthesized, strict `Codable`. The Activity Log view, the log's first reader, must skip or tolerate lines it can't decode (from a newer version, or cut short), and check each entry against the data before showing it as done (see Audit and Undo).
@@ -371,8 +395,11 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | A skill in `<repo>/.claude/skills/` (uncommitted) loads in a session started in `<repo>/.claude/worktrees/w` | A real `claude -p` call run from the worktree listed it. |
 | Skills under an `--add-dir` root's `.claude/skills/` load | The same call listed `addprobe`. |
 | A launch's environment isn't saved for respawns | `CLAUDIO_SESSION_ID=… claude --bg` in a container. The job's `providerEnv` is `{}`. Whether the variable reaches the *first* agent process couldn't be settled. Agents are often started in pre-spawned `bg-spare` processes, and `/proc/<pid>/environ` doesn't show what those set once claimed. So nothing here relies on per-launch environment variables. |
-| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) weren't checked. |
+| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) have it too: Tim's step 3 test (2.1.285) printed the conversation id, and `claudio note` from that tab wrote it to the inbox. |
 | Costs listed under Runtime | `total_cost_usd` from the calls above. |
+| `--plugin-dir` and `--add-dir` work from a path with a space in it (`…/a b/Claudio/…`, as under `Application Support`) | Real Haiku calls (2.1.284, step 3): `claudio:note` loaded, `bin/claudio` ran from the Bash tool (with an allow rule; see the next row), and an `--add-dir` skill loaded. |
+| A session in Ask mode can't run `claudio` without an allow rule; `permissions.allow: ["Bash(claudio:*)"]` in `--settings` lets it | Real Haiku calls (2.1.284, `--permission-mode default`): without the rule the Bash call was denied (`permission_denials`); with it in the `--settings` JSON, `claudio ping` ran. |
+| `--add-dir` skills need project settings loaded | The same probe: with `--setting-sources ''` the add-dir skill was "Unknown skill", while the plugin's skill loaded; with `project` it loaded. Sessions load every source by default, so they get it. Only the assistant's own `-p` calls use `''`. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
 | `--setting-sources user` can bring in the user's tools; `''` doesn't | Six real Promote-check calls (Haiku, 2.1.284): with `user`, 1 in 3 consulted an Opus advisor ($0.099, 43 s); with `''`, $0.004 and 5–7 s. |
 | `--max-budget-usd` stops a call after the turn that crosses it: `"subtype": "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, no `result` | Real Haiku calls (2.1.284): a normal check at $0.05 succeeded; one at $0.0001 was stopped after spending $0.0046. Recorded in `Fixtures/assistant-over-budget.json`. |
@@ -382,7 +409,6 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
 - hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
-- `CLAUDE_CODE_SESSION_ID` in direct-mode tabs (step 3)
 - whether the skill loader follows symlinks (only for skill sets per session)
 
 ## Decisions
@@ -394,6 +420,10 @@ Decided (2026-09-28):
 - **Skill chips:** a chip means "named in the opening prompt", and the sheet's hint says so. There are no skill sets per session.
 - **Default mode:** Automatic. Background work is checked in code first, and Claude is called only for judgement (see Runtime).
 - **Plan in git:** no. There's no `PLAN.md` export.
+
+Decided in step 3 (2026-09-29):
+- **Session flags whatever the mode:** every new session gets `--plugin-dir` and `--add-dir`, even in a project set to Off or with the app switch off. Off means no Claude calls, and notes and plans stay. Flags can't be added to a session later without making a copy.
+- **`claudio` runs without asking:** the same sessions' `--settings` JSON allows `Bash(claudio:*)` (`HookSettings.claudioAllowRule`). Without it, in Ask mode a session's first `claudio note` stops for approval, which would leave a background agent Awaiting Input and send a notification. The rule covers only Claudio's own command, which appends to Claudio's inbox or prints the plan.
 
 Still open: none. The marker for notes written by a session is in build 9a: a teal `terminal` icon.
 

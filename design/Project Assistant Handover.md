@@ -55,11 +55,12 @@ What happens in other modes:
 ## Drill-in views (all in the panel; back returns to the list)
 - **Plan Item:**
   - status pill, and a GitHub chip or **Create GitHub Issue**
-  - title and folder
+  - title and folder *(changed in step 3: items have no folder, so the title stands alone)*
   - ATTACHED NOTES
   - SKILLS FOR ITS PROMPT (planned items) or SKILLS NAMED IN ITS PROMPT (in session)
   - "In session: <name>" or **Start Session**
   - For a session started before the assistant, the skills are replaced by: "Started before the assistant, so it can't use its skills or write notes. New sessions get its skills."
+  - *(Built in step 3: Start Session shows for Planned items and Ideas, and for an In Session item whose session has been deleted. "In session: <name>" opens the session. Without matching skills, the section reads "No approved skills match it yet.")*
 - **New Skill:**
   - NEW SKILL pill
   - **Why**
@@ -118,13 +119,15 @@ What happens in other modes:
 ## Overlays
 - **New Session from Plan** is a modal sheet with:
   - Name
-  - Folder (suggested)
+  - Folder (suggested) *(changed in step 3: it starts at Unfiled, since items have no folder)*
   - Role
   - Worktree toggle
   - OPENING PROMPT preview (the item title, its notes, a linked issue, and then "Use these skills: <chip names>" in blue)
   - SKILLS chips (blue tint), which can be removed
 
   The copy under the chips reads "Named in the opening prompt. Other approved skills stay available." Removing a chip only drops that skill's name from the prompt; the session can still use any approved skill if it's relevant.
+
+  *(Built in step 3: notes and plan items have no folder (Tim's call, PR #26). The folder is picked here, for the session only, starting at Unfiled, and skills meant for a folder are picked for the one chosen. As in New Session, the Worktree toggle shows for background sessions, and is disabled outside a git repository. The prompt's issue line reads "GitHub issue: #n", and an item without notes sends just its title. The model and permissions are the settings' defaults.)*
 - **Follow-up card** (inline at the bottom of the session's terminal):
   - **Working:** a spinner, "Reviewing <session>…", "This can take up to about 30 seconds. You can keep working." (plus the usage note while usage is high, when you started it yourself).
   - **Ready:** checkbox rows. NOTE rows are already saved; unticking one removes it. PLAN rows are applied with **Add n to Plan**.

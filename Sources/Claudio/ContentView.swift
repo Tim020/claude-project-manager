@@ -166,6 +166,8 @@ struct ContentView: View {
             await Polling.every(0.5) {
                 // Status updates from the Claude Code hooks of running sessions.
                 model.pollHookEvents()
+                // Notes sessions wrote with `claudio note`.
+                model.pollAssistantInbox()
                 model.pollStatusLines()
                 model.updateMenuFlags()
                 model.checkNotifications()

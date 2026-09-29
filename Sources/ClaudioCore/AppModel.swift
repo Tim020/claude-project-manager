@@ -13,6 +13,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     /// Have a background agent work in its own git worktree (when the project
     /// is a git repo) rather than in the project's checkout.
     public var useWorktree = true
+    /// The skills its prompt names (Start Session from a plan item).
+    public var namedSkills: [String] = []
 
     public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
@@ -241,6 +243,17 @@ public final class AppModel {
     @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
+    /// Each project's approved skills, as last read (see AppModel+AssistantSessions).
+    public internal(set) var approvedSkills: [UUID: [ApprovedSkill]] = [:]
+    /// Where Claudio's plugin for sessions is (nil: it couldn't be set up).
+    @ObservationIgnored var assistantPluginPath: String?
+    /// The `index.tsv` text last written.
+    @ObservationIgnored var writtenAssistantIndex: String?
+    /// Items moved to In Session by Start Session whose agent hasn't started
+    /// yet, by session: the item as it was, to put back if the start fails.
+    @ObservationIgnored var pendingItemStarts: [UUID: (projectID: UUID, before: PlanItem)] = [:]
+    /// The inbox couldn't be read; logged once until it can.
+    @ObservationIgnored var inboxFailing = false
     @ObservationIgnored let assistantStore: AssistantStoring
     /// Projects whose assistant file failed to load; never written to. Set
     /// once, at launch.
@@ -297,6 +310,7 @@ public final class AppModel {
             state.workspace.updateSession(session.id) { $0.status = .completed }
         }
         loadAssistantData()
+        prepareAssistantFiles()
     }
 
     // MARK: - Derived state
@@ -458,6 +472,9 @@ public final class AppModel {
         let id = state.workspace.addProject(path: path)
         importSessions(for: id)
         save()
+        // Its skills folder must exist before its first session starts.
+        prepareSkillsRoot(projectID: id)
+        writePlanSnapshot(projectID: id)
         return id
     }
 
@@ -1109,6 +1126,7 @@ public final class AppModel {
                               permissionMode: request.permissionMode,
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
+        session.namedSkills = request.namedSkills
         // Give Claude Code the same name once the session has a history file.
         if session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }
@@ -1285,8 +1303,14 @@ public final class AppModel {
             applyStatus(sessionID, .completed)
             return
         }
-        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation))
-        await linkDispatched(sessionID, result: result)
+        let assistant = assistantLaunch(forProject: session.projectID)
+        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
+        if await linkDispatched(sessionID, result: result) {
+            if markLaunchedWithAssistant(sessionID, assistant) { save() }
+            finishItemStart(sessionID, started: true)
+        } else {
+            finishItemStart(sessionID, started: false)
+        }
     }
 
     private func resumeInBackground(_ sessionID: UUID, prompt: String? = nil) async {
@@ -1299,8 +1323,12 @@ public final class AppModel {
             log.append(.info, "Running “\(session.name)” in the background with \(mode.label) permissions",
                        detail: "It was set to Ask. Change it in Settings › New Sessions › Background Permissions.")
         }
-        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent))
-        await linkDispatched(sessionID, result: result)
+        // Resuming an agent with flags would copy it, so only a session that
+        // isn't one yet gets the assistant's.
+        let assistant = continuingAgent ? nil : assistantLaunch(forProject: session.projectID)
+        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent,
+                                               assistant: assistant))
+        if await linkDispatched(sessionID, result: result), markLaunchedWithAssistant(sessionID, assistant) { save() }
     }
 
     /// The mode for a session becoming a background agent, or nil to keep its
@@ -1313,18 +1341,20 @@ public final class AppModel {
         return preferred == .bypassPermissions ? .auto : preferred
     }
 
-    private func linkDispatched(_ sessionID: UUID, result: CommandResult) async {
-        guard state.workspace.session(sessionID) != nil else { return }
+    /// True when the session is now the agent that started (not a copy).
+    @discardableResult
+    private func linkDispatched(_ sessionID: UUID, result: CommandResult) async -> Bool {
+        guard state.workspace.session(sessionID) != nil else { return false }
         guard result.exitCode == 0, let agentID = AgentListParser.dispatchedID(from: result.output + "\n" + result.errorOutput) else {
             report("Couldn't start the agent: \(result.failureMessage)")
             applyStatus(sessionID, .completed)
             save()
-            return
+            return false
         }
         if let copyID = AgentListParser.copiedID(from: result.output + "\n" + result.errorOutput) {
             addCopy(of: sessionID, agentID: copyID)
             await refreshAgents()
-            return
+            return false
         }
         state.workspace.updateSession(sessionID) { session in
             session.agentID = agentID
@@ -1333,6 +1363,7 @@ public final class AppModel {
         save()
         attach(sessionID)
         await refreshAgents()
+        return true
     }
 
     /// The CLI started a copy of the conversation: keep it as its own
@@ -1430,9 +1461,11 @@ public final class AppModel {
             return false
         }
         try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let assistant = assistantLaunch(forProject: session.projectID)
         pendingLaunches[sessionID] = TerminalLaunch.make(session: session, claudeExecutable: executable, shell: shell,
                                                          initialPrompt: prompt, hookEventsPath: hookEventsURL.path,
-                                                         statusLine: statusLineCapture())
+                                                         statusLine: statusLineCapture(), assistant: assistant)
+        if markLaunchedWithAssistant(sessionID, assistant) { save() }
         running.insert(sessionID)
         exitCodes[sessionID] = nil
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1440,6 +1473,17 @@ public final class AppModel {
             state.workspace.updateSession(sessionID) { $0.status = .working; $0.lastActivity = now() }
             save()
         }
+        return true
+    }
+
+    /// Records that a session was launched with the assistant's flags. True
+    /// when that changed it (the caller saves).
+    @discardableResult
+    func markLaunchedWithAssistant(_ sessionID: UUID, _ launch: AssistantLaunch?) -> Bool {
+        // Without the plugin a session can't write notes, which is what the
+        // UI takes `hasAssistant` to mean.
+        guard launch?.pluginDirectory != nil, workspace.session(sessionID)?.hasAssistant == false else { return false }
+        state.workspace.updateSession(sessionID) { $0.hasAssistant = true }
         return true
     }
 
@@ -1546,6 +1590,11 @@ public final class AppModel {
     /// For tests: adds a session directly.
     func applyTestSession(_ session: Session) {
         try? state.workspace.addSession(session)
+    }
+
+    /// For tests: gives a session a conversation, as its first prompt would.
+    func applyTestConversation(_ sessionID: UUID) {
+        state.workspace.updateSession(sessionID) { $0.hasConversation = true }
     }
 
     // MARK: - Notifications
@@ -1766,6 +1815,7 @@ public final class AppModel {
     }
 
     private func save() {
+        writeAssistantIndex()
         do {
             try store.save(state)
         } catch {

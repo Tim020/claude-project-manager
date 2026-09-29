@@ -12,8 +12,7 @@ public enum NoteAuthor: String, Codable, CaseIterable, Sendable {
     case user
     /// The assistant. It will write notes with a session's follow-ups (build step 4).
     case assistant
-    /// A Claude Code session. It will write notes with `claudio note`, from the
-    /// bundled plugin (build step 3).
+    /// A Claude Code session, with `claudio note` from Claudio's plugin.
     case session
 }
 
@@ -61,7 +60,7 @@ public struct ProjectNote: Identifiable, Codable, Equatable, Sendable {
 
 /// Where a plan item is, in the Plan list's order.
 public enum PlanStatus: String, Codable, CaseIterable, Sendable {
-    /// A session is working on it (from Start Session, build step 3).
+    /// A session is working on it (from Start Session).
     case inSession
     case planned
     case idea
@@ -91,21 +90,21 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var title: String
     public var status: PlanStatus
-    /// The folder its work belongs in (nil: the project's Unfiled).
-    public var folderID: UUID?
+    // No folder: an item isn't filed. The folder is chosen for the session
+    // started from it (New Session from Plan). Step 2 files have a
+    // `folderID`, which is ignored and dropped on the next save.
     /// Its GitHub issue, "#23" (build step 6).
     public var issue: String?
-    /// The session working on it (build step 3).
+    /// The session working on it (from Start Session).
     public var sessionID: UUID?
     public var createdAt: Date
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), title: String, status: PlanStatus, folderID: UUID? = nil, issue: String? = nil,
+    public init(id: UUID = UUID(), title: String, status: PlanStatus, issue: String? = nil,
                 sessionID: UUID? = nil, createdAt: Date) {
         self.id = id
         self.title = title
         self.status = status
-        self.folderID = folderID
         self.issue = issue
         self.sessionID = sessionID
         self.createdAt = createdAt
@@ -118,7 +117,6 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
         title = try c.decode(String.self, forKey: .title)
         // Strict, like a note's author: an unknown status isn't rewritten.
         status = try c.decode(PlanStatus.self, forKey: .status)
-        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         issue = try c.decodeIfPresent(String.self, forKey: .issue)
         sessionID = try c.decodeIfPresent(UUID.self, forKey: .sessionID)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
@@ -325,6 +323,25 @@ public protocol AssistantStoring: AnyObject {
     /// audit, no version), so a file that can't be read is just empty.
     func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion]
     func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws
+    // What sessions get (build step 3). A store that keeps nothing on disk
+    // gives sessions no flags.
+    /// Writes Claudio's plugin out if it isn't there as it should be, and
+    /// returns where it is (nil: sessions don't get it).
+    func installPlugin() throws -> URL?
+    /// The plugin already on disk, if it has its command (used when an
+    /// update fails: the old copy still works).
+    func existingPlugin() -> URL?
+    /// A project's skills root, created with its `.claude/skills` folder
+    /// (which must exist before a session starts for skills to load live).
+    func skillsRoot(projectID: UUID) throws -> URL?
+    func approvedSkills(projectID: UUID) -> [ApprovedSkill]
+    /// `index.tsv`, for `bin/claudio`. Only written when it changes.
+    func writeIndex(_ text: String) throws
+    /// A project's `plan.md`, for `claudio plan`. Only written when it changes.
+    func writePlanSnapshot(_ text: String, projectID: UUID) throws
+    /// The inbox lines sessions wrote since the last call (see `InboxReader`).
+    /// Throws, taking nothing, when where it got to can't be saved.
+    func takeInbox() throws -> [String]
 }
 
 extension AssistantStoring {
@@ -332,6 +349,13 @@ extension AssistantStoring {
     public func runsDirectory() -> URL? { nil }
     public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { [:] }
     public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {}
+    public func installPlugin() throws -> URL? { nil }
+    public func existingPlugin() -> URL? { nil }
+    public func skillsRoot(projectID: UUID) throws -> URL? { nil }
+    public func approvedSkills(projectID: UUID) -> [ApprovedSkill] { [] }
+    public func writeIndex(_ text: String) throws {}
+    public func writePlanSnapshot(_ text: String, projectID: UUID) throws {}
+    public func takeInbox() throws -> [String] { [] }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -340,6 +364,13 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var data: [UUID: AssistantData] = [:]
     public var audit: [UUID: [AuditEntry]] = [:]
     public var suggestions: [UUID: [UUID: NoteSuggestion]] = [:]
+    public var skills: [UUID: [ApprovedSkill]] = [:]
+    public var index: String?
+    public var planSnapshots: [UUID: String] = [:]
+    /// Lines waiting for `takeInbox`.
+    public var inbox: [String] = []
+    /// Makes `takeInbox` throw, as a file store does when it can't save its place.
+    public var inboxError: Error?
 
     public init() {}
 
@@ -350,6 +381,14 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {
         self.suggestions[projectID] = suggestions
     }
+    public func approvedSkills(projectID: UUID) -> [ApprovedSkill] { skills[projectID] ?? [] }
+    public func writeIndex(_ text: String) throws { index = text }
+    public func writePlanSnapshot(_ text: String, projectID: UUID) throws { planSnapshots[projectID] = text }
+    public func takeInbox() throws -> [String] {
+        if let inboxError { throw inboxError }
+        defer { inbox = [] }
+        return inbox
+    }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -358,9 +397,12 @@ public final class MemoryAssistantStore: AssistantStoring {
 /// re-adding a project starts it afresh.
 public final class AssistantFileStore: AssistantStoring {
     public let root: URL
+    /// Kept, so the place it got to is remembered even if saving it fails.
+    private let inboxReader: InboxReader
 
     public init(root: URL) {
         self.root = root
+        inboxReader = InboxReader(url: root.appendingPathComponent("inbox.log"))
     }
 
     public static var defaultRoot: URL {
@@ -408,6 +450,50 @@ public final class AssistantFileStore: AssistantStoring {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(keyed).write(to: url, options: .atomic)
+    }
+
+    /// `plugin/claudio`, beside the assistant's folder.
+    public var pluginDirectory: URL {
+        root.deletingLastPathComponent().appendingPathComponent("plugin").appendingPathComponent("claudio")
+    }
+
+    public func installPlugin() throws -> URL? {
+        try ClaudioPlugin.install(at: pluginDirectory)
+        return pluginDirectory
+    }
+
+    public func existingPlugin() -> URL? {
+        FileManager.default.isExecutableFile(atPath: pluginDirectory.appendingPathComponent("bin/claudio").path)
+            ? pluginDirectory : nil
+    }
+
+    public func skillsRoot(projectID: UUID) throws -> URL? {
+        let skills = directory(projectID: projectID).appendingPathComponent("skills")
+        try FileManager.default.createDirectory(at: skills.appendingPathComponent(".claude/skills"),
+                                                withIntermediateDirectories: true)
+        return skills
+    }
+
+    public func approvedSkills(projectID: UUID) -> [ApprovedSkill] {
+        SkillFiles.approved(inRoot: directory(projectID: projectID).appendingPathComponent("skills"))
+    }
+
+    public func writeIndex(_ text: String) throws {
+        try writeIfChanged(text, to: root.appendingPathComponent("index.tsv"))
+    }
+
+    public func writePlanSnapshot(_ text: String, projectID: UUID) throws {
+        try writeIfChanged(text, to: directory(projectID: projectID).appendingPathComponent("plan.md"))
+    }
+
+    public func takeInbox() throws -> [String] {
+        try inboxReader.take()
+    }
+
+    private func writeIfChanged(_ text: String, to url: URL) throws {
+        guard (try? String(contentsOf: url, encoding: .utf8)) != text else { return }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
     }
 
     public func load(projectID: UUID) throws -> AssistantData {

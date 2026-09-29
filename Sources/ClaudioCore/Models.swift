@@ -120,10 +120,16 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var createdAt: Date
     public var lastActivity: Date
     public var isArchived: Bool
+    /// Started with the Project Assistant's plugin and skills (`--plugin-dir`,
+    /// `--add-dir`), so it can use approved skills and write notes. Flags are
+    /// fixed at launch, so sessions started before the assistant never are.
+    public var hasAssistant = false
+    /// The skills its opening prompt named, when it was started from a plan item.
+    public var namedSkills: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
-        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived
+        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills
     }
 
     public init(

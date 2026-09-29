@@ -266,5 +266,7 @@ extension Session {
         self.hasCustomName = try c.decodeIfPresent(Bool.self, forKey: .hasCustomName) ?? false
         self.claudeTitle = try c.decodeIfPresent(String.self, forKey: .claudeTitle)
         self.lastBaseName = try c.decodeIfPresent(String.self, forKey: .lastBaseName)
+        self.hasAssistant = try c.decodeIfPresent(Bool.self, forKey: .hasAssistant) ?? false
+        self.namedSkills = (try? c.decodeIfPresent([String].self, forKey: .namedSkills)) ?? []
     }
 }

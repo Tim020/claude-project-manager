@@ -142,14 +142,6 @@ extension AppModel {
             .compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// The folder an item's work belongs in: its name, or Unfiled.
-    public func folderName(of item: PlanItem, inProject projectID: UUID) -> String {
-        guard let folderID = item.folderID, workspace.folder(folderID) != nil else {
-            return workspace.name(of: .unfiled(projectID: projectID))
-        }
-        return workspace.name(of: .folder(folderID))
-    }
-
     /// How many of a project's notes and items couldn't be read (kept as
     /// they were, and shown as a count).
     public func unreadableEntryCount(inProject projectID: UUID) -> Int {
@@ -165,6 +157,7 @@ extension AppModel {
     public func openPlanItem(_ itemID: UUID, projectID: UUID) {
         assistantPanel = .item(projectID: projectID, itemID: itemID)
         setAssistantListMode(.plan)
+        refreshApprovedSkills(projectID: projectID)
     }
 
     /// The ‹ back button.
@@ -183,15 +176,13 @@ extension AppModel {
 
     /// Promote: a new plan item from a note, with the note attached. `title`
     /// is a suggestion (cleaned, and replaced by one from the note if it's
-    /// empty). The item goes in the folder of the note's session.
+    /// empty).
     @discardableResult
     public func promoteNote(_ noteID: UUID, projectID: UUID, title: String? = nil, status: PlanStatus = .planned) -> PlanItem? {
         guard var note = assistantData[projectID]?.notes.first(where: { $0.id == noteID }), note.itemID == nil else { return nil }
         let suggested = title.map(PlanTitle.clean) ?? ""
-        var folderID: UUID?
-        if let sessionID = note.sessionID, case .folder(let id)? = workspace.group(of: sessionID) { folderID = id }
         let item = PlanItem(title: suggested.isEmpty ? PlanTitle.from(note.text) : suggested, status: status,
-                            folderID: folderID, createdAt: now())
+                            createdAt: now())
         let before = note
         note.itemID = item.id
         let attached = note

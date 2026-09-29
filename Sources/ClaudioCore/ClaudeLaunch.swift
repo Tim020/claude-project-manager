@@ -48,13 +48,19 @@ public struct TerminalLaunch: Equatable, Sendable {
         initialPrompt: String?,
         hookEventsPath: String,
         statusLine: StatusLineCapture? = nil,
+        assistant: AssistantLaunch? = nil,
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
         var claudeArguments: [String] = session.hasConversation ? ["--resume", claudeID] : ["--session-id", claudeID]
         if let model = session.model, !model.isEmpty { claudeArguments += ["--model", model] }
         if session.permissionMode != .standard { claudeArguments += ["--permission-mode", session.permissionMode.rawValue] }
-        claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine)]
+        // A direct launch is a new process each time, `--resume` included, so it
+        // gets the assistant's flags every time (only resuming a background
+        // agent with flags makes a copy).
+        claudeArguments += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine,
+                                                            allowsClaudio: assistant?.pluginDirectory != nil)]
+        claudeArguments += assistant?.arguments ?? []
         claudeArguments += promptArguments(initialPrompt)
         return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: session.workingDirectory,
                      shell: shell, loginShell: true, baseEnvironment: baseEnvironment,
@@ -131,10 +137,16 @@ public enum HookSettings {
         #"line=$(tr -d '\n'); printf '%s\t%s\n' '"# + appSessionID.uuidString + #"' "$line" >> "# + ShellQuote.quote(eventsPath)
     }
 
+    /// Lets a session run the assistant plugin's `claudio` command without
+    /// asking (in Ask mode `claudio` was otherwise denied, or would stop a
+    /// background agent for approval). Checked with 2.1.284.
+    public static let claudioAllowRule = "Bash(claudio:*)"
+
     /// `isolation` sets a background agent's `worktree.bgIsolation`; nil
-    /// leaves the user's own setting.
+    /// leaves the user's own setting. `allowsClaudio` adds
+    /// `claudioAllowRule`, for sessions launched with Claudio's plugin.
     public static func json(appSessionID: UUID, eventsPath: String, statusLine: StatusLineCapture? = nil,
-                            isolation: BackgroundIsolation? = nil) -> String {
+                            isolation: BackgroundIsolation? = nil, allowsClaudio: Bool = false) -> String {
         let hook: JSONValue = .object(["type": .string("command"), "command": .string(command(appSessionID: appSessionID, eventsPath: eventsPath))])
         var hooks: [String: JSONValue] = [:]
         for event in events {
@@ -145,6 +157,7 @@ public enum HookSettings {
         var settings: [String: JSONValue] = ["hooks": .object(hooks)]
         if let statusLine { settings["statusLine"] = statusLine.settingsValue(for: appSessionID) }
         if let isolation { settings["worktree"] = .object(["bgIsolation": .string(isolation.rawValue)]) }
+        if allowsClaudio { settings["permissions"] = .object(["allow": .array([.string(claudioAllowRule)])]) }
         let data = (try? encoder.encode(JSONValue.object(settings))) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
