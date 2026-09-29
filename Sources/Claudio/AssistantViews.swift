@@ -125,6 +125,7 @@ private struct NoteCaptureBox: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(DS.dim)
                     .help("Don't link this note to a session")
+                    .accessibilityLabel("Remove link to session")
                 }
                 Spacer(minLength: 4)
                 Button("Cancel") { model.cancelNoteCapture() }
