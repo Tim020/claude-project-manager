@@ -68,17 +68,13 @@ public struct ProjectPullRequests: Equatable, Sendable {
     /// gh found no GitHub repository here: it isn't polled again (the
     /// refresh button still tries).
     public var isNotGitHub: Bool
-    /// How many pull requests GitHub has, by state; `items` holds only the
-    /// open and most recent ones. Nil until they've loaded.
+    /// How many pull requests GitHub has, by state (the lists stop at their
+    /// limits). Nil until they've loaded; a failure keeps the last ones.
     public var totals: GitHubCLI.PullRequestTotals?
-    /// Every pull request, without details (`loadPullRequestHistory`),
-    /// loaded when a list needs more than the open and recent ones. `items`
-    /// includes the ones the other lists don't have.
-    public var history: [PullRequestInfo] = []
-    /// When the history was last tried, successful or not.
-    public var historyLoadedAt: Date?
-    /// GitHub's total when the history loaded: it reloads only past this.
-    public var historyTotal: Int?
+    /// The merged and closed pull requests from the whole history, loaded
+    /// when Merged or All needs them. `items` includes the ones the other
+    /// lists don't have.
+    public var history = PullRequestHistory()
 
     public init(repository: GitHubCLI.Repository? = nil, items: [PullRequestInfo] = [], updatedAt: Date? = nil,
                 attemptedAt: Date? = nil, error: String? = nil, isNotGitHub: Bool = false,
@@ -95,8 +91,8 @@ public struct ProjectPullRequests: Equatable, Sendable {
     /// Something has loaded, even if the last refresh failed.
     public var hasLoaded: Bool { updatedAt != nil }
 
-    /// GitHub's total for a filter, when it has one. Needs Attention is
-    /// worked out here, from the loaded (open) pull requests.
+    /// GitHub's total for a filter, when it has one (not for Needs
+    /// Attention, which only the loaded pull requests can tell).
     public func total(for filter: PullRequestFilter) -> Int? {
         guard let totals else { return nil }
         switch filter {
@@ -111,6 +107,48 @@ public struct ProjectPullRequests: Equatable, Sendable {
         guard let key = PullRequestKey.key(url) else { return nil }
         return items.first { $0.key == key }
     }
+
+    /// GitHub has merged or closed pull requests that haven't loaded: the
+    /// part of a count the history can fill in (open ones come only from
+    /// the open list).
+    public var isMissingClosed: Bool {
+        guard let totals else { return false }
+        return totals.all - totals.open > items.filter { !$0.isOpen }.count
+    }
+
+    /// Whether the history should load (again) now. Only while some are
+    /// missing, and never after a failure (the refresh button retries) or
+    /// a load cut off at the limit (another would be cut off too). After
+    /// that, once per refresh interval at most, and only if the totals
+    /// changed since: merged or closed ones the recent list missed.
+    public func needsHistory(now: Date, interval: TimeInterval) -> Bool {
+        guard isMissingClosed, history.error == nil else { return false }
+        guard let loadedAt = history.loadedAt else { return true }
+        return !history.isCapped && now.timeIntervalSince(loadedAt) >= interval && totals != history.totals
+    }
+
+    /// Replaces a pull request (by key) wherever it's listed, e.g. with its
+    /// details loaded.
+    mutating func replace(_ pullRequest: PullRequestInfo) {
+        if let index = items.firstIndex(where: { $0.key == pullRequest.key }) { items[index] = pullRequest }
+        if let index = history.items.firstIndex(where: { $0.key == pullRequest.key }) { history.items[index] = pullRequest }
+    }
+}
+
+/// A project's whole pull request history (`AppModel.loadPullRequestHistory`).
+public struct PullRequestHistory: Equatable, Sendable {
+    /// Merged and closed ones, mostly without details (`hasDetails`).
+    public var items: [PullRequestInfo] = []
+    /// When it was last tried, successful or not.
+    public var loadedAt: Date?
+    /// GitHub's totals when it last loaded.
+    public var totals: GitHubCLI.PullRequestTotals?
+    /// The last load stopped at `historyPullRequestLimit`.
+    public var isCapped = false
+    /// Why the last load failed.
+    public var error: String?
+
+    public init() {}
 }
 
 /// One group in the project overview: a folder (or Unfiled) and the pull
@@ -187,12 +225,13 @@ public enum PullRequestOverview {
         }
     }
 
-    /// How many pull requests each filter tab would show.
+    /// How many pull requests each filter tab counts: GitHub's total when
+    /// every pull request counts (some may not have loaded), else the ones
+    /// listed.
     public static func count(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                              filter: PullRequestFilter, includeUnlinked: Bool) -> Int {
         let loaded = loadedCount(known, workspace: workspace, projectID: projectID, filter: filter, includeUnlinked: includeUnlinked)
-        // Counting every pull request: GitHub's total, since only the open
-        // and most recent ones load. Never fewer than are listed.
+        // Never fewer than are listed (the totals may be a refresh behind).
         guard includeUnlinked, let total = known?.total(for: filter) else { return loaded }
         return max(total, loaded)
     }

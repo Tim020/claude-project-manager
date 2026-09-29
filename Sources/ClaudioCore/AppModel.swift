@@ -206,6 +206,9 @@ public final class AppModel {
     public internal(set) var loadingPullRequests = Set<UUID>()
     /// Projects whose every pull request (`loadPullRequestHistory`) is loading.
     public internal(set) var loadingPullRequestHistory = Set<UUID>()
+    /// Older pull requests (by key) whose details are loading, or failed to.
+    public internal(set) var loadingPullRequestDetails = Set<String>()
+    public internal(set) var pullRequestDetailFailures = Set<String>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
     @ObservationIgnored private let isGitRepository: (String) -> Bool

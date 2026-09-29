@@ -329,13 +329,15 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     var recent = "[]"
     var views: [String: String] = [:]
     var threads = #"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}"#
-    /// The totals query's output; nil fails it.
-    var totals: String?
+    /// The totals query's output (by default, none: counts are what loaded);
+    /// nil fails it.
+    var totals: String? = #"{"data":{"repository":{"all":{"totalCount":0},"open":{"totalCount":0},"merged":{"totalCount":0}}}}"#
     /// `gh pr list --json historyFields`'s output; nil fails it.
     var history: String?
     /// How long the history list and the other lists take, to test a
     /// refresh around a history load.
     var historyDelay: UInt64 = 0
+    var historyTimesOut = false
     var listDelay: UInt64 = 0
     var openExit: Int32 = 0
     var recentExit: Int32 = 0
@@ -362,6 +364,8 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
         }
         if args.starts(with: ["pr", "list"]), args.contains(GitHubCLI.historyFields) {
             if historyDelay > 0 { try? await Task.sleep(nanoseconds: historyDelay) }
+            // Killed by the runner's timeout: SIGTERM, nothing on stderr.
+            if historyTimesOut { return CommandResult(exitCode: 15, output: "", errorOutput: "") }
             guard let history else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 504: Gateway Timeout\n") }
             return CommandResult(exitCode: 0, output: history, errorOutput: "")
         }

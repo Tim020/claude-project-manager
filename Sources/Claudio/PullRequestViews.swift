@@ -460,19 +460,25 @@ struct ProjectPullRequestsView: View {
         switch filter {
         case .needsAttention: return "Open pull requests with a failing check or changes requested"
         case .open: return "Open and draft pull requests"
-        case .merged: return "Merged pull requests; older ones load without checks or reviews"
-        case .all: return "Every pull request; older ones load without checks or reviews"
+        case .merged: return "Merged pull requests. Older ones show checks, reviews and line counts once hovered or clicked"
+        case .all: return "Every pull request. Older ones show checks, reviews and line counts once hovered or clicked"
         }
     }
 
     /// The count runs ahead of the list: the rest are loading, or didn't
     /// load (and are on GitHub).
     private func unlistedFootnote(_ unlisted: (listed: Int, total: Int, url: String)) -> some View {
-        HStack(spacing: 6) {
-            if model.loadingPullRequestHistory.contains(projectID) {
+        let olderOnes = model.pullRequestFilter == .merged || model.pullRequestFilter == .all
+        let historyError = model.pullRequests(forProject: projectID)?.history.error
+        return HStack(spacing: 6) {
+            if olderOnes && model.loadingPullRequestHistory.contains(projectID) {
                 ProgressView().controlSize(.small)
-                Text("Loading all \(unlisted.total) pull requests…")
+                Text("Loading older pull requests…")
                     .foregroundStyle(DS.muted)
+            } else if olderOnes, let historyError {
+                Text("Showing \(unlisted.listed) of \(unlisted.total). Couldn't load older pull requests: \(historyError)")
+                    .foregroundStyle(DS.red)
+                    .help("The refresh button tries again")
             } else {
                 Text("Showing \(unlisted.listed) of \(unlisted.total)")
                     .foregroundStyle(DS.muted)
@@ -538,12 +544,26 @@ private struct ProjectPullRequestRow: View {
     @State private var hovering = false
 
     /// A column the whole history doesn't load (checks, review, changes).
+    /// Loads while hovered (after a moment, so scrolling past doesn't) or
+    /// when clicked, which also retries a failure.
     private var notLoaded: some View {
-        Text("—")
-            .font(DS.font(12.5))
-            .foregroundStyle(DS.dim)
-            .help("Not loaded for older pull requests")
+        Group {
+            if model.loadingPullRequestDetails.contains(pullRequest.key) {
+                ProgressView().controlSize(.mini)
+            } else if model.pullRequestDetailFailures.contains(pullRequest.key) {
+                Text("—").foregroundStyle(DS.red)
+                    .help("Couldn't load its details. Click to try again")
+            } else {
+                Text("—").foregroundStyle(DS.dim)
+                    .help("Older pull requests load their details when hovered or clicked")
+            }
+        }
+        .font(DS.font(12.5))
+        .contentShape(Rectangle())
+        .onTapGesture { Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) } }
     }
+
+    static let detailsHoverDelay: UInt64 = 400_000_000
 
     var body: some View {
         let sessions = model.sessions(for: pullRequest, projectID: projectID)
@@ -608,7 +628,17 @@ private struct ProjectPullRequestRow: View {
         .overlay(alignment: .bottom) { Rectangle().fill(DS.border.opacity(0.5)).frame(height: 1) }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // An older pull request's details load once it's hovered a moment.
+        .task(id: hovering) {
+            guard hovering, !pullRequest.hasDetails else { return }
+            try? await Task.sleep(nanoseconds: ProjectPullRequestRow.detailsHoverDelay)
+            guard !Task.isCancelled else { return }
+            await model.loadPullRequestDetails(pullRequest, projectID: projectID)
+        }
         .onTapGesture {
+            if !pullRequest.hasDetails {
+                Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) }
+            }
             if let group = model.group(of: pullRequest, projectID: projectID) {
                 model.showOverview(.folder(group))
             } else {
