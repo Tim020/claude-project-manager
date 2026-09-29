@@ -225,8 +225,8 @@ public final class AppModel {
     /// AppModel+AssistantJobs).
     @ObservationIgnored var assistantJobsRunning = 0
     @ObservationIgnored var assistantJobQueue: [@MainActor () async -> Void] = []
-    /// Every assistant call started, so tests can wait for them.
-    @ObservationIgnored var assistantJobTasks: [Task<Void, Never>] = []
+    /// Assistant calls running now, by a token, so tests can wait for them.
+    @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
     @ObservationIgnored let assistantStore: AssistantStoring

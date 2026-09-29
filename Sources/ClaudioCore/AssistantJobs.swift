@@ -16,14 +16,23 @@ public struct AssistantCall: Equatable, Sendable {
     public var schema: String
     /// What the model reads: the job's input, as JSON.
     public var input: String
+    /// `--max-budget-usd`, at API prices. Claude Code checks it after each
+    /// turn, so it stops a call that runs away (more turns, an unexpected
+    /// tool) rather than capping one turn exactly.
+    public var maxBudgetUSD: Double
 
-    public init(job: String, model: String, systemPrompt: String, schema: String, input: String) {
+    public init(job: String, model: String, systemPrompt: String, schema: String, input: String,
+                maxBudgetUSD: Double = AssistantCall.quickBudgetUSD) {
         self.job = job
         self.model = model
         self.systemPrompt = systemPrompt
         self.schema = schema
         self.input = input
+        self.maxBudgetUSD = maxBudgetUSD
     }
+
+    /// A quick check costs $0.004–0.006 (Haiku, measured with 2.1.284).
+    public static let quickBudgetUSD = 0.05
 }
 
 public enum AssistantModels {
@@ -62,7 +71,8 @@ extension AgentCommands {
         var launch = command(["-p", "--model", call.model, "--output-format", "json",
                               "--json-schema", call.schema, "--system-prompt", call.systemPrompt,
                               "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-                              "--settings", #"{"disableAllHooks":true}"#, "--setting-sources", settingSources]
+                              "--settings", #"{"disableAllHooks":true}"#, "--setting-sources", settingSources,
+                              "--max-budget-usd", String(format: "%.2f", call.maxBudgetUSD)]
                              + TerminalLaunch.promptArguments(call.input),
                              in: directory)
         launch.label = "claude -p (assistant: \(call.job), \(AssistantModels.displayName(call.model)))"
@@ -79,6 +89,8 @@ public enum AssistantFailure: Equatable, Sendable, Error {
     case apiError(String)
     /// The reply didn't match the schema.
     case invalidReply
+    /// It went over its `--max-budget-usd` and was stopped.
+    case overBudget(Double)
     /// Anything else (the command's output).
     case failed(String)
 
@@ -94,6 +106,8 @@ public enum AssistantFailure: Equatable, Sendable, Error {
             return "Claude Code couldn't answer: \(text)"
         case .invalidReply:
             return "The answer wasn't in the form Claudio expected. Nothing was changed."
+        case .overBudget(let limit):
+            return String(format: "It went over its cost limit ($%.2f at API prices), so it was stopped. Nothing was changed.", limit)
         case .failed(let text):
             return "The assistant's call failed: \(text)"
         }
@@ -113,7 +127,10 @@ public enum AssistantReplyParser {
     /// Reads `claude -p --output-format json`. A failed call still says
     /// `"subtype": "success"`; `is_error` and the exit code are what tell
     /// (recorded with 2.1.284: signed out, and a rejected API key).
-    public static func parse(_ result: CommandResult, timeout: Int) -> Result<AssistantReply, AssistantFailure> {
+    /// An exceeded `--max-budget-usd` says `"subtype": "error_max_budget_usd"`,
+    /// `terminal_reason: "budget_exhausted"`, with no `result`.
+    public static func parse(_ result: CommandResult, timeout: Int, budget: Double = AssistantCall.quickBudgetUSD)
+        -> Result<AssistantReply, AssistantFailure> {
         if result.timedOut { return .failure(.timedOut(seconds: timeout)) }
         let json = result.output.firstIndex(of: "{").flatMap { start in
             try? JSONDecoder().decode(JSONValue.self, from: Data(result.output[start...].utf8))
@@ -122,6 +139,9 @@ public enum AssistantReplyParser {
             return .failure(result.exitCode == 0 ? .invalidReply : .failed(result.failureMessage))
         }
         let text = json["result"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if json["subtype"]?.stringValue == "error_max_budget_usd" || json["terminal_reason"]?.stringValue == "budget_exhausted" {
+            return .failure(.overBudget(budget))
+        }
         if json["is_error"]?.boolValue == true || result.exitCode != 0 {
             if text.localizedCaseInsensitiveContains("not logged in") || text.contains("/login") { return .failure(.signedOut) }
             return .failure(.apiError(text.isEmpty ? result.failureMessage : String(text.prefix(300))))

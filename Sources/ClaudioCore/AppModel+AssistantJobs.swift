@@ -150,19 +150,21 @@ extension AppModel {
         while assistantJobsRunning < AppModel.maxAssistantJobs, !assistantJobQueue.isEmpty {
             let job = assistantJobQueue.removeFirst()
             assistantJobsRunning += 1
-            assistantJobTasks.append(Task { @MainActor [weak self] in
+            let id = UUID()
+            assistantJobTasks[id] = Task { @MainActor [weak self] in
                 await job()
                 guard let self else { return }
                 self.assistantJobsRunning -= 1
+                // Finished, so it's no longer held.
+                self.assistantJobTasks[id] = nil
                 self.startQueuedAssistantJobs()
-            })
+            }
         }
     }
 
-    /// Waits for every assistant call started so far (for tests).
+    /// Waits until no assistant call is running or waiting (for tests).
     func waitForAssistantJobs() async {
-        while let task = assistantJobTasks.first {
-            assistantJobTasks.removeFirst()
+        while let task = assistantJobTasks.values.first {
             await task.value
         }
     }
@@ -177,7 +179,7 @@ extension AppModel {
         let launch = commands.assistant(call, in: directory.path, settingSources: AssistantSettingSources.value(userSettings: userSettings))
         // The output holds the note and the reply, so it isn't logged.
         let result = await run(launch, hideOutput: true)
-        return AssistantReplyParser.parse(result, timeout: AppModel.assistantJobTimeout)
+        return AssistantReplyParser.parse(result, timeout: AppModel.assistantJobTimeout, budget: call.maxBudgetUSD)
     }
 
     private func recordJob(_ call: AssistantCall, projectID: UUID, subject: String, result: Result<AssistantReply, AssistantFailure>) {

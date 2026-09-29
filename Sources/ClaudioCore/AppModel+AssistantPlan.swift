@@ -226,6 +226,10 @@ extension AppModel {
             for index in data.notes.indices where data.notes[index].itemID == itemID { data.notes[index].itemID = nil }
         }) else { return }
         if case .item(_, itemID) = assistantPanel { assistantPanel = .list }
+        // "Looks like '…'. Attach it?" can't be answered any more.
+        for (noteID, suggestion) in noteSuggestions {
+            if case .attach(itemID, _) = suggestion { clearNoteSuggestion(noteID) }
+        }
     }
 
     /// A project's mode (Automatic, Manual or Off; its UI comes in build step 4).

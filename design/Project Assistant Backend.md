@@ -129,7 +129,7 @@ claude -p --model <haiku|sonnet> --output-format json \
   --max-budget-usd <cap> -- '<job input>'
 ```
 
-- **Run from `assistant/runs/`, not the project.** That way the project's `CLAUDE.md` and auto-memory aren't loaded into every call. Jobs that need them get them explicitly. `--no-session-persistence` means no history file is written, so `SessionDiscovery` never imports assistant calls. Exclude the `runs` encoded directory anyway.
+- **Run from `assistant/runs/`, not the project.** That way the project's `CLAUDE.md` and auto-memory aren't loaded into every call. Jobs that need them get them explicitly. `--no-session-persistence` means no history file is written, so `SessionDiscovery` never imports assistant calls (verified in step 2: no `…-runs` folder in `~/.claude/projects`, and no entry in `~/.claude.json`).
 - **Don't use `--bare`.** It never reads OAuth or the keychain, so it fails for subscription users.
 - **`--setting-sources ''`, not `user`** (measured in step 2, 2.1.284). Loading the user's settings can bring tools into the call. In 1 of 3 runs with `user`, Haiku consulted an Opus advisor tool the user had configured: $0.099 and 43 s, against $0.004–0.006 and 5–8 s otherwise, and 90% of it was the advisor. With `''` that never happened. The user's settings are loaded only when signing in may depend on them: an `apiKeyHelper`, or a provider or key in `env` (`AssistantSettingSources`).
 - **Hooks off**, for the same reason as `/usage`: each call would otherwise fire the user's SessionStart hooks.
@@ -175,7 +175,7 @@ Deferred jobs stay queued and are retried on the next usage refresh.
 
 **One exception: checking a captured note** (step 2). It's skipped when the gate says no, not queued. The check is only useful while the note is fresh, and the note keeps its Promote… link, which runs the same check whenever you want it. This matches the design ("Manual, or paused: no automatic check").
 
-Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call and a daily job limit set in Assistant Settings (the limit isn't built yet: step 2 has only the capture check, one Haiku call per note you write, so it comes with step 4's background work). Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The threshold and the credits toggle are app-level settings in `AppSettings`, not per project, because plan usage belongs to the account, not the project.
+Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call ($0.05 for quick checks; Claude Code checks it after each turn, so it stops a runaway call rather than capping one turn) and a daily job limit set in Assistant Settings (the limit isn't built yet: step 2 has only the capture check, one Haiku call per note you write, so it comes with step 4's background work). Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The threshold and the credits toggle are app-level settings in `AppSettings`, not per project, because plan usage belongs to the account, not the project.
 
 ### 4. The learning loop
 
@@ -364,6 +364,8 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | Costs listed under Runtime | `total_cost_usd` from the calls above. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
 | `--setting-sources user` can bring in the user's tools; `''` doesn't | Six real Promote-check calls (Haiku, 2.1.284): with `user`, 1 in 3 consulted an Opus advisor ($0.099, 43 s); with `''`, $0.004 and 5–7 s. |
+| `--max-budget-usd` stops a call after the turn that crosses it: `"subtype": "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, no `result` | Real Haiku calls (2.1.284): a normal check at $0.05 succeeded; one at $0.0001 was stopped after spending $0.0046. Recorded in `Fixtures/assistant-over-budget.json`. |
+| Assistant calls from `assistant/runs` with `--no-session-persistence` don't show up as a project | After the probe calls: no `…-runs` folder in `~/.claude/projects`, no entry in `~/.claude.json`. (Calls that loaded user settings left an empty `memory/` folder, which import ignores: it needs a `.jsonl`.) |
 | A failed `-p` call still reports `"subtype": "success"`; `is_error`, `terminal_reason: "api_error"` and exit 1 tell | A signed-out container, and one with a rejected API key (2.1.284). The rejected key took 190 s of retries, so the 60 s timeout matters. Recorded in `Fixtures/assistant-*.json`. |
 
 **Assumed, and to check at the build step that needs it:**

@@ -266,6 +266,10 @@ struct NoteCard: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(note.text, forType: .string)
             }
+            if item == nil {
+                // Straight in, without the check (Promote… asks Claude first).
+                Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
+            }
             let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
             if !others.isEmpty {
                 Menu("Attach To") {
@@ -311,7 +315,11 @@ private struct SuggestionBox: View {
             case .attach(let itemID, _):
                 let title = model.item(itemID, inProject: projectID)?.title ?? "a plan item"
                 prompt("Looks like \"\(title)\". Attach it?", detail: nil)
-                actions(primary: "Attach") {
+                // New Item Instead: otherwise Keep as Note, then Promote…,
+                // would only suggest the same item again.
+                actions(primary: "Attach", secondary: ("New Item Instead", {
+                    model.promoteNote(note.id, projectID: projectID)
+                })) {
                     model.attachNote(note.id, to: itemID, projectID: projectID)
                 }
             }
@@ -335,10 +343,14 @@ private struct SuggestionBox: View {
         }
     }
 
-    private func actions(primary: String, _ action: @escaping () -> Void) -> some View {
+    private func actions(primary: String, secondary: (String, () -> Void)? = nil,
+                         _ action: @escaping () -> Void) -> some View {
         HStack(spacing: 10) {
             Button(primary, action: action)
                 .buttonStyle(PrimaryButtonStyle(fontSize: 12, horizontalPadding: 9, verticalPadding: 2))
+            if let secondary {
+                LinkLabelButton(title: secondary.0, action: secondary.1)
+            }
             LinkLabelButton(title: "Keep as Note") { model.keepAsNote(note.id) }
         }
         .padding(.leading, 22)

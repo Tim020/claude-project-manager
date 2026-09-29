@@ -75,6 +75,12 @@ final class AssistantJobTests: XCTestCase {
                                                   timeout: 60),
                        .failure(.invalidReply), "no structured output")
         XCTAssertEqual(AssistantFailure.timedOut(seconds: 60).message, "No answer came back within 60 seconds. Nothing was changed.")
+
+        let overBudget = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-over-budget.json"), errorOutput: "")
+        XCTAssertEqual(AssistantReplyParser.parse(overBudget, timeout: 60, budget: 0.05), .failure(.overBudget(0.05)),
+                       "error_max_budget_usd, with no result")
+        XCTAssertEqual(AssistantFailure.overBudget(0.05).message,
+                       "It went over its cost limit ($0.05 at API prices), so it was stopped. Nothing was changed.")
     }
 
     // MARK: - The command
@@ -92,6 +98,7 @@ final class AssistantJobTests: XCTestCase {
         XCTAssertEqual(args[args.firstIndex(of: "--tools")! + 1], "", "no tools")
         XCTAssertEqual(args[args.firstIndex(of: "--settings")! + 1], #"{"disableAllHooks":true}"#)
         XCTAssertEqual(args[args.firstIndex(of: "--setting-sources")! + 1], "")
+        XCTAssertEqual(args[args.firstIndex(of: "--max-budget-usd")! + 1], "0.05", "a runaway call is stopped")
         XCTAssertEqual(args.suffix(2).first, "--", "the input goes last, after --")
         XCTAssertTrue(args.last?.contains("starts with a dash") == true)
         XCTAssertEqual(launch.workingDirectory, "/runs")
@@ -321,6 +328,26 @@ final class AssistantJobTests: XCTestCase {
         await MainActor.run {
             XCTAssertEqual(f.runner.calls.count, 3)
             XCTAssertEqual(f.model.assistantJobsRunning, 0)
+            XCTAssertTrue(f.model.assistantJobTasks.isEmpty, "finished calls aren't held")
+        }
+    }
+
+    func testDeletingAnItemClearsSuggestionsToAttachToIt() async throws {
+        let f = try await MainActor.run { try makeFixture() }
+        f.runner.reply = try reply("assistant-promote-duplicate.json")
+        let (noteID, itemID) = try await MainActor.run { () -> (UUID, UUID) in
+            let first = try XCTUnwrap(f.model.addNote("Remember Shell panel height", author: .user, projectID: f.project, sessionID: nil))
+            let item = try XCTUnwrap(f.model.promoteNote(first.id, projectID: f.project))
+            let note = try XCTUnwrap(f.model.addNote("It forgets its height", author: .user, projectID: f.project, sessionID: nil))
+            f.model.requestPromote(note.id, projectID: f.project)
+            return (note.id, item.id)
+        }
+        await f.model.waitForAssistantJobs()
+        await MainActor.run {
+            guard case .attach? = f.model.noteSuggestions[noteID] else { return XCTFail("expected Attach") }
+            f.model.deleteItem(itemID, projectID: f.project)
+            XCTAssertNil(f.model.noteSuggestions[noteID], "nothing left to attach to")
+            XCTAssertNotNil(f.model.promoteNote(noteID, projectID: f.project), "and it can still become an item")
         }
     }
 }
