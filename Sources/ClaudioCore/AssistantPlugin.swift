@@ -46,7 +46,8 @@ public enum ClaudioPlugin {
 
     /// Writes the plugin to `directory` unless it's already there as it
     /// should be. It's built in a folder beside it and then moved into place,
-    /// so a session never sees half of it. True when it wrote.
+    /// so a session never sees half of it (though for a moment between the
+    /// two renames, nothing). True when it wrote.
     @discardableResult
     public static func install(at directory: URL) throws -> Bool {
         let manager = FileManager.default
@@ -66,8 +67,21 @@ public enum ClaudioPlugin {
             try Data(file.contents.utf8).write(to: url)
             if file.isExecutable { try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
         }
-        if manager.fileExists(atPath: directory.path) { try manager.removeItem(at: directory) }
-        try manager.moveItem(at: staging, to: directory)
+        // Swapped by renames: the old copy is moved aside, the new one moved
+        // in, and the old one deleted last, so a failure puts the old one back.
+        guard manager.fileExists(atPath: directory.path) else {
+            try manager.moveItem(at: staging, to: directory)
+            return true
+        }
+        let old = parent.appendingPathComponent(".\(directory.lastPathComponent)-old-\(UUID().uuidString)")
+        try manager.moveItem(at: directory, to: old)
+        do {
+            try manager.moveItem(at: staging, to: directory)
+        } catch {
+            try? manager.moveItem(at: old, to: directory)
+            throw error
+        }
+        try? manager.removeItem(at: old)
         return true
     }
 
@@ -150,7 +164,16 @@ public enum ClaudioPlugin {
         shift
         if [ "${1:-}" = "-" ]; then text=$(cat); else text="$*"; fi
         if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then usage >&2; exit 2; fi
+        if [ "${#text}" -gt 4000 ]; then
+          echo "claudio: notes can be 4000 characters at most; this one is ${#text}" >&2
+          exit 2
+        fi
         session="${CLAUDE_CODE_SESSION_ID:-${CLAUDIO_SESSION_ID:-}}"
+        # Without a session, Claudio places a note by its project.
+        if [ -z "$session" ] && [ -z "$(project_id)" ]; then
+          echo "claudio: $PWD isn't in a Claudio project, so the note wasn't saved" >&2
+          exit 1
+        fi
         encoded=$(printf '%s' "$text" | base64 | tr -d '\n')
         mkdir -p "$data" || exit 1
         printf '%s\t%s\tnote\t%s\n' "$session" "$PWD" "$encoded" >> "$data/inbox.log" || exit 1
@@ -198,8 +221,15 @@ public enum ClaudioPlugin {
 /// `index.tsv`: each project's path and id, so `bin/claudio` can find its
 /// project from the working directory.
 public enum AssistantIndex {
+    /// Paths without a trailing "/", which the script's match needs. A path
+    /// with a tab or a line break would break the file, so it's left out.
     public static func text(projects: [Project]) -> String {
-        projects.map { "\($0.path)\t\($0.id.uuidString.lowercased())\n" }.joined()
+        projects.compactMap { project in
+            var path = project.path
+            while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+            guard !path.contains(where: { $0 == "\t" || $0.isNewline }) else { return nil }
+            return "\(path)\t\(project.id.uuidString.lowercased())\n"
+        }.joined()
     }
 }
 
@@ -212,7 +242,18 @@ public enum PlanSnapshot {
         String(id.uuidString.lowercased().prefix(8))
     }
 
+    /// Each item's id in a plan: its short id, or its whole UUID when
+    /// another item's short id is the same.
+    public static func ids(for items: [PlanItem]) -> [UUID: String] {
+        let counts = Dictionary(grouping: items.map { shortID($0.id) }, by: { $0 }).mapValues(\.count)
+        return Dictionary(uniqueKeysWithValues: items.map { item in
+            let short = shortID(item.id)
+            return (item.id, counts[short] == 1 ? short : item.id.uuidString.lowercased())
+        })
+    }
+
     public static func text(projectName: String, data: AssistantData, sessionName: (UUID) -> String?) -> String {
+        let ids = ids(for: data.items)
         var lines = ["# Plan for \(projectName)", "",
                      "Run `claudio item <id>` for an item and its notes. Only Claudio changes the plan."]
         let notesByItem = Dictionary(grouping: data.notes.filter { $0.itemID != nil }) { $0.itemID! }
@@ -222,7 +263,7 @@ public enum PlanSnapshot {
             lines += ["", "## \(status.label)"]
             for item in items {
                 let meta = [item.issue, item.sessionID.flatMap(sessionName)].compactMap { $0 }
-                lines.append((["- [\(shortID(item.id))] \(item.title)"] + meta).joined(separator: " · "))
+                lines.append((["- [\(ids[item.id] ?? shortID(item.id))] \(item.title)"] + meta).joined(separator: " · "))
                 for note in notesByItem[item.id] ?? [] {
                     let author: String
                     switch note.author {
@@ -263,28 +304,38 @@ public struct InboxEntry: Equatable, Sendable {
     public static func parse(_ line: String) -> InboxEntry? {
         let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
         guard fields.count == 4, !fields[2].isEmpty,
-              let data = Data(base64Encoded: fields[3]), let text = String(data: data, encoding: .utf8)
+              let data = Data(base64Encoded: fields[3])
         else { return nil }
-        return InboxEntry(sessionID: fields[0], directory: fields[1], command: fields[2], text: text)
+        // Bytes that aren't UTF-8 become "\u{FFFD}" rather than lose the note.
+        return InboxEntry(sessionID: fields[0], directory: fields[1], command: fields[2],
+                          text: String(decoding: data, as: UTF8.self))
     }
 }
 
 /// Reads `inbox.log` from where the last read stopped. The position is
 /// saved beside it, so notes written while Claudio was closed are read at
 /// the next launch, and none is read twice. Only whole lines are taken.
-public struct InboxReader {
+public final class InboxReader {
+    public struct OffsetUnreadable: Error, LocalizedError {
+        public let path: String
+        public var errorDescription: String? { "\(path) doesn't hold a position. Remove it to read every note again." }
+    }
+
     public let url: URL
     public var offsetURL: URL { url.deletingLastPathComponent().appendingPathComponent("inbox.offset") }
+    /// Where this reader got to, so a save that fails can't make it hand
+    /// out the same lines again.
+    private var committed: UInt64?
 
     public init(url: URL) {
         self.url = url
     }
 
-    public func take() -> [String] {
+    /// Throws, taking nothing, when the position can't be read or saved.
+    public func take() throws -> [String] {
         guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
         else { return [] }
-        var offset = (try? String(contentsOf: offsetURL, encoding: .utf8))
-            .flatMap { UInt64($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
+        var offset = max(try savedOffset(), committed ?? 0)
         // Replaced or cut short: start again from the top.
         if offset > size { offset = 0 }
         guard size > offset, let handle = try? FileHandle(forReadingFrom: url) else { return [] }
@@ -293,7 +344,19 @@ public struct InboxReader {
               let lastNewline = data.lastIndex(of: 0x0A)
         else { return [] }
         let complete = data[data.startIndex...lastNewline]
-        try? String(offset + UInt64(complete.count)).write(to: offsetURL, atomically: true, encoding: .utf8)
+        let end = offset + UInt64(complete.count)
+        try String(end).write(to: offsetURL, atomically: true, encoding: .utf8)
+        committed = end
         return String(decoding: complete, as: UTF8.self).split(separator: "\n").map(String.init)
+    }
+
+    /// The saved position: 0 when there's none yet; an error when the file
+    /// is there but doesn't hold one (reading from 0 would repeat every note).
+    private func savedOffset() throws -> UInt64 {
+        guard FileManager.default.fileExists(atPath: offsetURL.path) else { return 0 }
+        guard let text = try? String(contentsOf: offsetURL, encoding: .utf8),
+              let offset = UInt64(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { throw OffsetUnreadable(path: offsetURL.path) }
+        return offset
     }
 }

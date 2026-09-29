@@ -129,10 +129,6 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(allowRules(direct.claudeArguments), ["Bash(claudio:*)"])
         let plain = commands().dispatch(session: session, prompt: "Fix it", isolation: .worktree).claudeArguments
         XCTAssertNil(allowRules(plain), "no plugin, no rule")
-        let resumed = TerminalLaunch.make(session: Session(projectID: UUID(), hasConversation: true, name: "s", workingDirectory: "/c"),
-                                          claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", initialPrompt: nil,
-                                          hookEventsPath: "/tmp/h.log", assistant: assistant)
-        XCTAssertNil(allowRules(resumed.claudeArguments))
     }
 
     /// `permissions.allow` from the `--settings` JSON.
@@ -143,21 +139,31 @@ final class AssistantSessionTests: XCTestCase {
         return json["permissions"]?["allow"]?.arrayValue?.compactMap(\.stringValue)
     }
 
-    /// Resuming a background agent with flags starts a copy, so the flags
-    /// are only ever given at launch.
-    func testResumingNeverAddsTheFlags() {
+    /// Resuming a background agent with flags starts a copy, so continuing
+    /// one never gets them. Every other launch is a new process that needs them.
+    func testOnlyContinuingAnAgentGoesWithoutTheFlags() {
         var session = Session(projectID: UUID(), claudeSessionID: "0f0e", hasConversation: true, name: "s",
                               workingDirectory: "/code/app")
         session.agentID = "0f0e0d0c"
-        for resumed in [commands().resume(session: session, prompt: "next", continuingAgent: true),
-                        commands().resume(session: session, prompt: "next", continuingAgent: false)] {
-            XCTAssertFalse(resumed.claudeArguments.contains("--plugin-dir"))
-            XCTAssertFalse(resumed.claudeArguments.contains("--add-dir"))
-        }
+        let continuing = commands().resume(session: session, prompt: "next", continuingAgent: true, assistant: assistant)
+        XCTAssertEqual(continuing.claudeArguments, ["--bg", "--resume", "0f0e", "--", "next"], "no flags at all")
+
+        let firstTime = commands().resume(session: session, prompt: "next", continuingAgent: false, assistant: assistant)
+        XCTAssertTrue(firstTime.claudeArguments.containsSequence(["--plugin-dir", "/Support/Claudio/plugin/claudio"]))
+        XCTAssertTrue(firstTime.claudeArguments.containsSequence(["--add-dir", "/Support/Claudio/assistant/p/skills"]))
+        XCTAssertEqual(allowRules(firstTime.claudeArguments), ["Bash(claudio:*)"])
+        XCTAssertEqual(Array(firstTime.claudeArguments.suffix(2)), ["--", "next"])
+
         let direct = TerminalLaunch.make(session: session, claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh",
                                          initialPrompt: nil, hookEventsPath: "/tmp/h.log", assistant: assistant)
         XCTAssertTrue(direct.claudeArguments.contains("--resume"))
-        XCTAssertFalse(direct.claudeArguments.contains("--plugin-dir"), "a direct --resume doesn't get them either")
+        XCTAssertTrue(direct.claudeArguments.containsSequence(["--plugin-dir", "/Support/Claudio/plugin/claudio"]),
+                      "a direct --resume is a new process, so it gets them again")
+        XCTAssertEqual(allowRules(direct.claudeArguments), ["Bash(claudio:*)"])
+
+        let skillsOnly = AssistantLaunch(pluginDirectory: nil, skillsRoot: "/s")
+        XCTAssertNil(allowRules(commands().dispatch(session: session, prompt: "x", isolation: nil, assistant: skillsOnly)
+            .claudeArguments), "no plugin, no rule")
     }
 
     func testSessionsFromOlderStateHaveNoAssistant() throws {
@@ -279,12 +285,35 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(try runCommand(f, ["note", "-"], in: f.repo, session: nil, stdin: "From stdin,\nover two lines\n").status, 0)
         XCTAssertEqual(try runCommand(f, ["note", "   "], in: f.repo).status, 2, "a blank note is refused")
 
-        let lines = AssistantFileStore(root: f.assistant).takeInbox()
+        let lines = try AssistantFileStore(root: f.assistant).takeInbox()
         XCTAssertEqual(lines.compactMap(InboxEntry.parse), [
             InboxEntry(sessionID: "c0ffee00-1111-2222-3333-444455556666", directory: worktree.path, command: "note",
                        text: "Don't use `--worktree`: it's \"blocked\"; see $HOME"),
             InboxEntry(sessionID: "", directory: f.repo.path, command: "note", text: "From stdin,\nover two lines"),
         ])
+    }
+
+    /// dash's `echo` reads `\c` and `-n`, so these would break on Linux if
+    /// the script ever used it instead of `printf '%s'`.
+    func testCommandKeepsAwkwardNoteTextAsWritten() throws {
+        let f = try makeCommandFixture()
+        for arguments in [[#"C:\new\c 100% $(x)"#], ["-n", "- [ ] Bug"], ["foo", "bar  baz"]] {
+            let result = try runCommand(f, ["note"] + arguments, in: f.repo)
+            XCTAssertEqual(result.status, 0, result.error)
+        }
+        let texts = try AssistantFileStore(root: f.assistant).takeInbox().compactMap(InboxEntry.parse).map(\.text)
+        XCTAssertEqual(texts, [#"C:\new\c 100% $(x)"#, "-n - [ ] Bug", "foo bar  baz"])
+    }
+
+    func testCommandRefusesNotesClaudioWouldDrop() throws {
+        let f = try makeCommandFixture()
+        let outside = try runCommand(f, ["note", "lost"], in: try makeTemporaryDirectory(), session: nil)
+        XCTAssertEqual(outside.status, 1)
+        XCTAssertTrue(outside.error.contains("isn't in a Claudio project"), outside.error)
+        let long = try runCommand(f, ["note", String(repeating: "a", count: 4001)], in: f.repo)
+        XCTAssertEqual(long.status, 2)
+        XCTAssertTrue(long.error.contains("4000"), long.error)
+        XCTAssertEqual(try AssistantFileStore(root: f.assistant).takeInbox(), [], "neither was written")
     }
 
     func testCommandPrintsThePlanAndAnItem() throws {
@@ -316,17 +345,17 @@ final class AssistantSessionTests: XCTestCase {
 
     func testInboxReaderTakesWholeLinesOnceAcrossLaunches() throws {
         let url = try makeTemporaryDirectory().appendingPathComponent("inbox.log")
-        XCTAssertEqual(InboxReader(url: url).take(), [], "no inbox yet")
+        XCTAssertEqual(try InboxReader(url: url).take(), [], "no inbox yet")
         try "one\ntwo\nthr".write(to: url, atomically: true, encoding: .utf8)
-        XCTAssertEqual(InboxReader(url: url).take(), ["one", "two"], "a line still being written waits")
+        XCTAssertEqual(try InboxReader(url: url).take(), ["one", "two"], "a line still being written waits")
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
         try handle.write(contentsOf: Data("ee\n".utf8))
         try handle.close()
-        XCTAssertEqual(InboxReader(url: url).take(), ["three"], "a new reader (a relaunch) goes on from the saved place")
-        XCTAssertEqual(InboxReader(url: url).take(), [])
+        XCTAssertEqual(try InboxReader(url: url).take(), ["three"], "a new reader (a relaunch) goes on from the saved place")
+        XCTAssertEqual(try InboxReader(url: url).take(), [])
         try "new\n".write(to: url, atomically: true, encoding: .utf8)
-        XCTAssertEqual(InboxReader(url: url).take(), ["new"], "a replaced, shorter file is read from the top")
+        XCTAssertEqual(try InboxReader(url: url).take(), ["new"], "a replaced, shorter file is read from the top")
     }
 
     // MARK: - The model
@@ -474,6 +503,207 @@ final class AssistantSessionTests: XCTestCase {
             XCTAssertFalse(model.workspace.session(sessionID)?.hasAssistant ?? true)
         }
     }
+}
+
+/// Review round 1 (PR #26): the paths that go wrong, not the happy one.
+final class AssistantSessionFailureTests: XCTestCase {
+    private func line(_ session: String, _ directory: String, _ text: String) -> String {
+        "\(session)\t\(directory)\tnote\t\(Data(text.utf8).base64EncodedString())"
+    }
+
+    @MainActor private func makeModel(store: StateStore, assistant: AssistantStoring, runner: FakeRunner = FakeRunner(),
+                                      git: Bool = true) throws -> AppModel {
+        AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                 runner: runner, assistantStore: assistant,
+                 locateClaude: { _ in "/usr/local/bin/claude" }, locateGitHubCLI: { nil },
+                 isGitRepository: { _ in git }, shell: "/bin/sh", home: "/")
+    }
+
+    private func stateStore(project: UUID = UUID(), path: String = "/code/app") -> (MemoryStore, UUID) {
+        var state = PersistedState()
+        let id = state.workspace.addProject(path: path)
+        let store = MemoryStore()
+        store.state = state
+        return (store, id)
+    }
+
+    // MARK: Inbox
+
+    func testAnInboxWhosePlaceCantBeSavedHandsOutNothing() throws {
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("inbox.log")
+        try "one\n".write(to: url, atomically: true, encoding: .utf8)
+        let reader = InboxReader(url: url)
+        try FileManager.default.createDirectory(at: reader.offsetURL, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try reader.take(), "a directory where the offset goes")
+        XCTAssertThrowsError(try reader.take(), "and again: the line isn't handed out twice")
+
+        try FileManager.default.removeItem(at: reader.offsetURL)
+        try "not a number".write(to: reader.offsetURL, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try InboxReader(url: url).take(), "an offset that doesn't parse isn't read as 0")
+    }
+
+    func testNotesWaitingAtLaunchAreReadOnce() throws {
+        try MainActor.assumeIsolated {
+            let root = try makeTemporaryDirectory().appendingPathComponent("assistant")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let inbox = root.appendingPathComponent("inbox.log")
+            try (line("", "/code/app", "First") + "\n" + line("", "/code/app", "Second")).write(to: inbox, atomically: true, encoding: .utf8)
+            let (store, project) = stateStore()
+
+            let first = try makeModel(store: store, assistant: AssistantFileStore(root: root))
+            XCTAssertEqual(first.notes(inProject: project).map(\.text), ["First"], "the unfinished line waits")
+            XCTAssertEqual(try AssistantFileStore(root: root).load(projectID: project).notes.map(\.text), ["First"], "saved")
+
+            let handle = try FileHandle(forWritingTo: inbox)
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data("\n".utf8))
+            try handle.close()
+            let second = try makeModel(store: store, assistant: AssistantFileStore(root: root))
+            XCTAssertEqual(second.notes(inProject: project).map(\.text), ["Second", "First"], "each once, across launches")
+        }
+    }
+
+    func testAnInboxFailureIsLoggedOnce() throws {
+        try MainActor.assumeIsolated {
+            let assistant = MemoryAssistantStore()
+            let (store, _) = stateStore()
+            let model = try makeModel(store: store, assistant: assistant)
+            assistant.inboxError = InboxReader.OffsetUnreadable(path: "/x/inbox.offset")
+            model.pollAssistantInbox()
+            model.pollAssistantInbox()
+            XCTAssertEqual(model.log.entries.filter { $0.title == "Couldn't read notes from sessions" }.count, 1)
+            XCTAssertNil(model.errorMessage, "not shown over what you're doing")
+        }
+    }
+
+    func testASessionNoteThatCantBeSavedIsLoggedWithItsText() throws {
+        try MainActor.assumeIsolated {
+            let assistant = UnreadableAssistantStore()
+            let (store, project) = stateStore()
+            let model = try makeModel(store: store, assistant: assistant)
+            XCTAssertTrue(model.isAssistantDataUnreadable(project))
+            XCTAssertFalse(assistant.inner.index?.contains("/code/app") ?? true, "left out of index.tsv, so claudio refuses")
+            assistant.inner.inbox = [line("", "/code/app", "Remember the panel height key")]
+            model.pollAssistantInbox()
+            let entry = model.log.entries.last { $0.title.hasPrefix("Couldn't save a note from") }
+            XCTAssertEqual(entry?.detail, "Remember the panel height key")
+            XCTAssertNil(model.errorMessage, "a note arriving in the background doesn't raise an alert")
+        }
+    }
+
+    // MARK: Start Session
+
+    @MainActor private func itemFixture(runner: FakeRunner) throws -> (AppModel, UUID, PlanItem) {
+        let (store, project) = stateStore()
+        let assistant = MemoryAssistantStore()
+        assistant.skills[project] = [ApprovedSkill(name: "real-skill")]
+        let model = try makeModel(store: store, assistant: assistant, runner: runner)
+        let note = try XCTUnwrap(model.addNote("Panel height", author: .user, projectID: project, sessionID: nil))
+        let item = try XCTUnwrap(model.promoteNote(note.id, projectID: project))
+        model.refreshApprovedSkills(projectID: project)
+        return (model, project, item)
+    }
+
+    func testStartSessionChecksItsItem() async throws {
+        let runner = FakeRunner()
+        let (model, project, item) = try await MainActor.run { try itemFixture(runner: runner) }
+        let first = try await MainActor.run { () -> UUID in
+            try XCTUnwrap(model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, role: .code,
+                                             skills: ["real-skill", "made-up"], useWorktree: true))
+        }
+        await model.lastTask?.value
+        try await MainActor.run {
+            XCTAssertEqual(model.workspace.session(first)?.namedSkills, ["real-skill"], "only approved skills are named")
+            XCTAssertFalse(runner.commands.first { $0.contains("--bg") }?.last?.contains("made-up") ?? true)
+            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "b", folderID: nil, role: .code,
+                                            skills: [], useWorktree: true), "a live session keeps its item")
+            XCTAssertEqual(model.item(item.id, inProject: project)?.sessionID, first)
+
+            model.setStatus(.done, ofItem: item.id, projectID: project)
+            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "c", folderID: nil, role: .code,
+                                            skills: [], useWorktree: true), "a done item isn't reopened")
+            XCTAssertNil(model.startSession(fromItem: UUID(), projectID: project, name: "d", folderID: nil, role: .code,
+                                            skills: [], useWorktree: true))
+            XCTAssertEqual(model.errorMessage, "That plan item no longer exists, so no session was started.")
+            XCTAssertEqual(model.workspace.sessions.count, 1)
+        }
+    }
+
+    func testAnAgentThatFailsToStartPutsTheItemBack() async throws {
+        let runner = FakeRunner()
+        runner.dispatchExit = 1
+        let (model, project, item) = try await MainActor.run { try itemFixture(runner: runner) }
+        await MainActor.run {
+            _ = model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, role: .code,
+                                   skills: [], useWorktree: true)
+            XCTAssertEqual(model.item(item.id, inProject: project)?.status, .inSession, "moved while it starts")
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            let restored = model.item(item.id, inProject: project)
+            XCTAssertEqual(restored?.status, .planned)
+            XCTAssertNil(restored?.sessionID)
+            XCTAssertTrue(restored.map(model.canStartSession(fromItem:)) ?? false, "Start Session is offered again")
+        }
+    }
+
+    // MARK: Direct launches
+
+    func testDirectLaunchesGetTheFlagsEveryTime() throws {
+        try MainActor.assumeIsolated {
+            let support = try makeTemporaryDirectory()
+            let (store, project) = stateStore()
+            let model = try makeModel(store: store, assistant: AssistantFileStore(root: support.appendingPathComponent("assistant")))
+            let request = NewSessionRequest(projectID: project, folderID: nil, name: "direct", role: .code, prompt: "",
+                                            model: nil, permissionMode: .standard)
+            let id = try XCTUnwrap(model.createSession(request), "no prompt: a direct terminal")
+            let launch = try XCTUnwrap(model.takePendingLaunch(id))
+            XCTAssertTrue(launch.claudeArguments.contains("--session-id"))
+            XCTAssertTrue(launch.claudeArguments.contains("--plugin-dir"))
+            XCTAssertTrue(launch.claudeArguments.contains("--add-dir"))
+            XCTAssertEqual(launch.environment["CLAUDIO_SESSION_ID"], id.uuidString)
+            XCTAssertEqual(store.state.workspace.session(id)?.hasAssistant, true, "saved, not only in memory")
+
+            model.terminalExited(id, exitCode: 0)
+            model.applyTestConversation(id)
+            XCTAssertTrue(model.start(id))
+            let resumed = try XCTUnwrap(model.takePendingLaunch(id))
+            XCTAssertTrue(resumed.claudeArguments.contains("--resume"))
+            XCTAssertTrue(resumed.claudeArguments.contains("--plugin-dir"), "relaunched with them")
+        }
+    }
+
+    // MARK: Files for bin/claudio
+
+    func testIndexPathsAndItemIds() {
+        let projects = [Project(id: UUID(), name: "a", path: "/code/a/", folders: []),
+                        Project(id: UUID(), name: "b", path: "/code/b\tc", folders: [])]
+        XCTAssertEqual(AssistantIndex.text(projects: projects), "/code/a\t\(projects[0].id.uuidString.lowercased())\n",
+                       "no trailing slash; a path with a tab is left out")
+
+        let a = PlanItem(id: UUID(uuidString: "AB12CD34-0000-0000-0000-000000000001")!, title: "A", status: .planned, createdAt: Date())
+        let b = PlanItem(id: UUID(uuidString: "AB12CD34-0000-0000-0000-000000000002")!, title: "B", status: .planned, createdAt: Date())
+        let c = PlanItem(id: UUID(uuidString: "FFFF0000-0000-0000-0000-000000000003")!, title: "C", status: .idea, createdAt: Date())
+        let ids = PlanSnapshot.ids(for: [a, b, c])
+        XCTAssertEqual(ids[a.id], "ab12cd34-0000-0000-0000-000000000001", "short ids that collide are written in full")
+        XCTAssertEqual(ids[c.id], "ffff0000")
+
+        let latin1 = Data([0x63, 0x61, 0x66, 0xE9]).base64EncodedString()
+        XCTAssertEqual(InboxEntry.parse("s\t/d\tnote\t\(latin1)")?.text, "caf\u{FFFD}", "kept, not dropped")
+    }
+}
+
+/// A store whose projects can't be read (from a newer Claudio, say).
+private final class UnreadableAssistantStore: AssistantStoring {
+    struct Newer: Error {}
+    let inner = MemoryAssistantStore()
+    func load(projectID: UUID) throws -> AssistantData { throw Newer() }
+    func save(_ data: AssistantData, projectID: UUID) throws { XCTFail("never written") }
+    func appendAudit(_ entry: AuditEntry, projectID: UUID) throws { XCTFail("never written") }
+    func writeIndex(_ text: String) throws { try inner.writeIndex(text) }
+    func takeInbox() throws -> [String] { try inner.takeInbox() }
 }
 
 /// Reads the newest audit entry's action from a file store.

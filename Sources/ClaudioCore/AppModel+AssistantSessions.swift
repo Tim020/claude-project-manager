@@ -27,9 +27,12 @@ extension AppModel {
         do {
             assistantPluginPath = try assistantStore.installPlugin()?.path
         } catch {
-            assistantPluginPath = nil
+            // A failed update leaves the old copy in place, which still works.
+            assistantPluginPath = assistantStore.existingPlugin()?.path
             log.append(.error, "Couldn't set up Claudio's plugin for sessions",
-                       detail: AppModel.describe(error) + "\nNew sessions start without it, so they can't write notes.")
+                       detail: AppModel.describe(error) + (assistantPluginPath == nil
+                           ? "\nNew sessions start without it, so they can't write notes."
+                           : "\nNew sessions get the copy already there."))
         }
         for project in workspace.projects {
             prepareSkillsRoot(projectID: project.id)
@@ -53,9 +56,10 @@ extension AppModel {
         }
     }
 
-    /// The assistant's flags for a new session in a project. Given whatever
-    /// the project's mode: flags can't be added later without making a copy,
-    /// and Off means no Claude calls, not no notes.
+    /// The assistant's flags for a session's launch: a new session, a direct
+    /// `--resume`, or a background resume that isn't continuing an agent (never
+    /// one that is: that would copy it). Given whatever the project's mode:
+    /// Off means no Claude calls, not no notes.
     func assistantLaunch(forProject projectID: UUID) -> AssistantLaunch? {
         let plugin = assistantPluginPath.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
         let launch = AssistantLaunch(pluginDirectory: plugin, skillsRoot: prepareSkillsRoot(projectID: projectID)?.path)
@@ -65,7 +69,9 @@ extension AppModel {
     /// `index.tsv`, whenever the projects change (checked on every save,
     /// and only written when its text changes).
     func writeAssistantIndex() {
-        let text = AssistantIndex.text(projects: workspace.projects)
+        // A project whose notes can't be read is left out, so `claudio`
+        // refuses there rather than write notes that can't be saved.
+        let text = AssistantIndex.text(projects: workspace.projects.filter { !isAssistantDataUnreadable($0.id) })
         guard text != writtenAssistantIndex else { return }
         do {
             try assistantStore.writeIndex(text)
@@ -143,11 +149,25 @@ extension AppModel {
 
     /// Start Session: a new session with the item's opening prompt and the
     /// chosen skills named in it. The item moves to In Session, linked to
-    /// the session, once the session has been made.
+    /// the session, once the session has been made; if its agent then fails
+    /// to start, the item goes back to how it was.
     @discardableResult
     public func startSession(fromItem itemID: UUID, projectID: UUID, name: String, folderID: UUID?, role: SessionRole,
                              skills: [String], useWorktree: Bool) -> UUID? {
-        guard let item = item(itemID, inProject: projectID) else { return nil }
+        guard let item = item(itemID, inProject: projectID) else {
+            report("That plan item no longer exists, so no session was started.")
+            return nil
+        }
+        // Checked here too, not only by the sheet: a stale sheet mustn't
+        // unlink a live session or reopen a done item.
+        guard canStartSession(fromItem: item) else { return nil }
+        guard !isAssistantDataUnreadable(projectID) else {
+            report("The assistant's notes for this project couldn't be read, so a session can't be started from its plan.")
+            return nil
+        }
+        // Only approved skills are named.
+        let approved = Set((approvedSkills[projectID] ?? []).map(\.name))
+        let skills = skills.filter { approved.contains($0) }
         let prompt = OpeningPrompt.text(title: item.title,
                                         notes: notes(forItem: itemID, inProject: projectID).reversed().map(\.text),
                                         issue: item.issue, skills: skills)
@@ -163,12 +183,38 @@ extension AppModel {
         after.updatedAt = now()
         let entry = AuditEntry(at: now(), actor: .user, action: .itemChanged, beforeItem: item, afterItem: after,
                                cause: "ui")
-        if change(projectID: projectID, recording: entry, { data in
+        let session = workspace.session(sessionID)
+        let linked = change(projectID: projectID, recording: entry, reportFailures: false) { data in
             if let index = data.items.firstIndex(where: { $0.id == itemID }) { data.items[index] = after }
-        }) {
-            log.append(.info, "Started a session for \"\(item.title)\"")
+        }
+        guard linked else {
+            report("Started “\(session?.name ?? name)”, but couldn't link it to “\(item.title)”. See the Activity Log.")
+            return sessionID
+        }
+        log.append(.info, "Started a session for \"\(item.title)\"")
+        // A background agent starts later; until it has, the item can go back.
+        if session?.agentID == nil, session?.claudeSessionID == nil {
+            pendingItemStarts[sessionID] = (projectID, item)
         }
         return sessionID
+    }
+
+    /// After a background agent's start: forget the item's old state, or,
+    /// when it failed, put the item back (unless it has changed since).
+    func finishItemStart(_ sessionID: UUID, started: Bool) {
+        guard let pending = pendingItemStarts.removeValue(forKey: sessionID), !started,
+              let current = item(pending.before.id, inProject: pending.projectID),
+              current.sessionID == sessionID, current.status == .inSession
+        else { return }
+        var restored = pending.before
+        restored.updatedAt = now()
+        let entry = AuditEntry(at: now(), actor: .user, action: .itemChanged, beforeItem: current, afterItem: restored,
+                               cause: sessionID.uuidString.lowercased())
+        if change(projectID: pending.projectID, recording: entry, reportFailures: false, { data in
+            if let index = data.items.firstIndex(where: { $0.id == restored.id }) { data.items[index] = restored }
+        }) {
+            log.append(.info, "Put \"\(restored.title)\" back to \(restored.status.label): its session didn't start")
+        }
     }
 
     // MARK: - Notes from sessions
@@ -179,9 +225,23 @@ extension AppModel {
     /// Reads notes sessions wrote with `claudio note` (polled with hook
     /// events, and at launch for any written while Claudio was closed).
     public func pollAssistantInbox() {
-        for line in assistantStore.takeInbox() {
+        let lines: [String]
+        do {
+            lines = try assistantStore.takeInbox()
+            inboxFailing = false
+        } catch {
+            // Nothing is taken until its place can be saved, so no note is
+            // read twice; they wait in the inbox until then.
+            if !inboxFailing {
+                log.append(.error, "Couldn't read notes from sessions", detail: AppModel.describe(error)
+                           + "\nThey stay in the inbox and are read once this is fixed.")
+            }
+            inboxFailing = true
+            return
+        }
+        for line in lines {
             guard let entry = InboxEntry.parse(line) else {
-                log.append(.error, "Skipped a line in the assistant's inbox that couldn't be read")
+                log.append(.error, "Skipped a line in the assistant's inbox that couldn't be read", detail: line)
                 continue
             }
             switch entry.command {
@@ -203,9 +263,15 @@ extension AppModel {
             items(inProject: projectID).first { $0.sessionID == session.id && $0.status != .done }?.id
         }
         let text = String(entry.text.prefix(AppModel.sessionNoteLimit))
+        let project = workspace.project(projectID)?.name ?? "a project"
         guard let note = addNote(text, author: .session, projectID: projectID, sessionID: session?.id,
-                                 itemID: itemID, cause: session?.id.uuidString.lowercased() ?? "session")
-        else { return }
+                                 itemID: itemID, cause: session?.id.uuidString.lowercased() ?? "session", reportFailures: false)
+        else {
+            // It arrived in the background, so it's logged rather than shown,
+            // with its text, so it isn't lost (the line stays in inbox.log too).
+            log.append(.error, "Couldn't save a note from \(session?.name ?? "a session") in \(project)", detail: text)
+            return
+        }
         log.append(.info, "\(session?.name ?? "A session") wrote a note", detail: note.itemID == nil ? nil : "Attached to its plan item")
     }
 

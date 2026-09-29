@@ -140,13 +140,14 @@ extension AppModel {
     /// Adds a note by any author, saved straight away.
     @discardableResult
     func addNote(_ text: String, author: NoteAuthor, projectID: UUID, sessionID: UUID?, itemID: UUID? = nil,
-                 cause: String = "ui") -> ProjectNote? {
+                 cause: String = "ui", reportFailures: Bool = true) -> ProjectNote? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, workspace.project(projectID) != nil else { return nil }
         let note = ProjectNote(text: text, author: author, sessionID: sessionID,
                                sessionName: sessionID.flatMap { workspace.session($0)?.name }, createdAt: now(), itemID: itemID)
         let entry = AuditEntry(at: now(), actor: author, action: .noteAdded, after: note, cause: cause)
-        guard change(projectID: projectID, recording: entry, { $0.notes.append(note) }) else { return nil }
+        guard change(projectID: projectID, recording: entry, reportFailures: reportFailures, { $0.notes.append(note) })
+        else { return nil }
         log.append(.info, "Saved a note in \(workspace.project(projectID)?.name ?? "a project")")
         return note
     }
@@ -176,13 +177,20 @@ extension AppModel {
     /// error shown, when either fails, leaving the data as it was. A failed
     /// save leaves its audit entry behind, so readers of the log check an
     /// entry against the data before acting on it.
-    func change(projectID: UUID, recording entry: AuditEntry, _ body: (inout AssistantData) -> Void) -> Bool {
-        change(projectID: projectID, recording: [entry], body)
+    func change(projectID: UUID, recording entry: AuditEntry, reportFailures: Bool = true,
+                _ body: (inout AssistantData) -> Void) -> Bool {
+        change(projectID: projectID, recording: [entry], reportFailures: reportFailures, body)
     }
 
     /// A change made of several steps (Promote adds an item and attaches a
     /// note): one audit entry each, all written before the save.
-    func change(projectID: UUID, recording entries: [AuditEntry], _ body: (inout AssistantData) -> Void) -> Bool {
+    /// `reportFailures`: false for changes made in the background, which
+    /// log a failure instead of showing it (the caller says what was lost).
+    func change(projectID: UUID, recording entries: [AuditEntry], reportFailures: Bool = true,
+                _ body: (inout AssistantData) -> Void) -> Bool {
+        let report: (String) -> Void = { [self] message in
+            if reportFailures { self.report(message) } else { log.append(.error, message) }
+        }
         guard !isAssistantDataUnreadable(projectID) else {
             report("The assistant's notes for this project couldn't be read, so they can't be changed. See the Activity Log.")
             return false

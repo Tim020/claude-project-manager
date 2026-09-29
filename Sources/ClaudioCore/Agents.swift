@@ -200,12 +200,15 @@ public struct AgentCommands: Sendable {
     /// their own saved options (model, permissions, Claudio's hooks), and
     /// passing any flags makes Claude Code start a copy instead, so none are.
     /// (`--` before the prompt doesn't count: checked with 2.1.283.)
-    /// The assistant's flags are never added here, even when not continuing
-    /// an agent: they belong to new sessions only (`Session.hasAssistant`).
-    public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false) -> TerminalLaunch {
+    /// `assistant`'s flags go with the other options, so only when not
+    /// continuing an agent.
+    public func resume(session: Session, prompt: String? = nil, continuingAgent: Bool = false,
+                       assistant: AssistantLaunch? = nil) -> TerminalLaunch {
         let claudeID = session.claudeSessionID ?? session.id.uuidString.lowercased()
         var args = ["--bg", "--resume", claudeID]
-        if !continuingAgent { args += sessionOptions(session) }
+        if !continuingAgent {
+            args += sessionOptions(session, allowsClaudio: assistant?.pluginDirectory != nil) + (assistant?.arguments ?? [])
+        }
         args += TerminalLaunch.promptArguments(prompt)
         return command(args, in: session.workingDirectory)
     }

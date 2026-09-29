@@ -328,6 +328,9 @@ public protocol AssistantStoring: AnyObject {
     /// Writes Claudio's plugin out if it isn't there as it should be, and
     /// returns where it is (nil: sessions don't get it).
     func installPlugin() throws -> URL?
+    /// The plugin already on disk, if it has its command (used when an
+    /// update fails: the old copy still works).
+    func existingPlugin() -> URL?
     /// A project's skills root, created with its `.claude/skills` folder
     /// (which must exist before a session starts for skills to load live).
     func skillsRoot(projectID: UUID) throws -> URL?
@@ -337,7 +340,8 @@ public protocol AssistantStoring: AnyObject {
     /// A project's `plan.md`, for `claudio plan`. Only written when it changes.
     func writePlanSnapshot(_ text: String, projectID: UUID) throws
     /// The inbox lines sessions wrote since the last call (see `InboxReader`).
-    func takeInbox() -> [String]
+    /// Throws, taking nothing, when where it got to can't be saved.
+    func takeInbox() throws -> [String]
 }
 
 extension AssistantStoring {
@@ -346,11 +350,12 @@ extension AssistantStoring {
     public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { [:] }
     public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {}
     public func installPlugin() throws -> URL? { nil }
+    public func existingPlugin() -> URL? { nil }
     public func skillsRoot(projectID: UUID) throws -> URL? { nil }
     public func approvedSkills(projectID: UUID) -> [ApprovedSkill] { [] }
     public func writeIndex(_ text: String) throws {}
     public func writePlanSnapshot(_ text: String, projectID: UUID) throws {}
-    public func takeInbox() -> [String] { [] }
+    public func takeInbox() throws -> [String] { [] }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -364,6 +369,8 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var planSnapshots: [UUID: String] = [:]
     /// Lines waiting for `takeInbox`.
     public var inbox: [String] = []
+    /// Makes `takeInbox` throw, as a file store does when it can't save its place.
+    public var inboxError: Error?
 
     public init() {}
 
@@ -377,7 +384,8 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func approvedSkills(projectID: UUID) -> [ApprovedSkill] { skills[projectID] ?? [] }
     public func writeIndex(_ text: String) throws { index = text }
     public func writePlanSnapshot(_ text: String, projectID: UUID) throws { planSnapshots[projectID] = text }
-    public func takeInbox() -> [String] {
+    public func takeInbox() throws -> [String] {
+        if let inboxError { throw inboxError }
         defer { inbox = [] }
         return inbox
     }
@@ -389,9 +397,12 @@ public final class MemoryAssistantStore: AssistantStoring {
 /// re-adding a project starts it afresh.
 public final class AssistantFileStore: AssistantStoring {
     public let root: URL
+    /// Kept, so the place it got to is remembered even if saving it fails.
+    private let inboxReader: InboxReader
 
     public init(root: URL) {
         self.root = root
+        inboxReader = InboxReader(url: root.appendingPathComponent("inbox.log"))
     }
 
     public static var defaultRoot: URL {
@@ -451,6 +462,11 @@ public final class AssistantFileStore: AssistantStoring {
         return pluginDirectory
     }
 
+    public func existingPlugin() -> URL? {
+        FileManager.default.isExecutableFile(atPath: pluginDirectory.appendingPathComponent("bin/claudio").path)
+            ? pluginDirectory : nil
+    }
+
     public func skillsRoot(projectID: UUID) throws -> URL? {
         let skills = directory(projectID: projectID).appendingPathComponent("skills")
         try FileManager.default.createDirectory(at: skills.appendingPathComponent(".claude/skills"),
@@ -470,8 +486,8 @@ public final class AssistantFileStore: AssistantStoring {
         try writeIfChanged(text, to: directory(projectID: projectID).appendingPathComponent("plan.md"))
     }
 
-    public func takeInbox() -> [String] {
-        InboxReader(url: root.appendingPathComponent("inbox.log")).take()
+    public func takeInbox() throws -> [String] {
+        try inboxReader.take()
     }
 
     private func writeIfChanged(_ text: String, to url: URL) throws {
