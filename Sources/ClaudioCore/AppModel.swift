@@ -212,6 +212,12 @@ public final class AppModel {
     public internal(set) var noteCapture: NoteCapture?
     /// What's typed in the capture box.
     public internal(set) var noteDraft = ""
+    /// The Assistant panel's Plan | Notes switch.
+    public internal(set) var assistantListMode = AssistantListMode.plan
+    /// The Assistant panel's list, or a plan item drilled into.
+    public internal(set) var assistantPanel = AssistantPanelView.list
+    /// What the assistant suggests for notes, by note id (see AppModel+AssistantPlan).
+    public internal(set) var noteSuggestions: [UUID: NoteSuggestion] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
     @ObservationIgnored let assistantStore: AssistantStoring

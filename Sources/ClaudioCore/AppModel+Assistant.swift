@@ -64,6 +64,9 @@ extension AppModel {
         if settings != state.settings { updateSettings(settings) }
         updateMenuFlags()
         guard !isAssistantDataUnreadable(projectID) else { return }
+        // The note lands in the Notes list, as the design shows.
+        closePlanItem()
+        setAssistantListMode(.notes)
         // Even when the box is already open, it takes the keyboard back.
         noteCaptureFocusRequest &+= 1
         let capture = NoteCapture(projectID: projectID, sessionID: selectedSession.flatMap { $0.projectID == projectID ? $0.id : nil })
@@ -128,7 +131,8 @@ extension AppModel {
         remove(note, projectID: projectID, action: .noteUndone)
     }
 
-    /// Delete Note, from a note's context menu: any author's.
+    /// Delete Note, from a note's context menu: any author's. Its plan item,
+    /// if it has one, keeps going without it.
     public func deleteNote(_ noteID: UUID, projectID: UUID) {
         guard let note = assistantData[projectID]?.notes.first(where: { $0.id == noteID }) else { return }
         remove(note, projectID: projectID, action: .noteDeleted)
@@ -136,7 +140,8 @@ extension AppModel {
 
     private func remove(_ note: ProjectNote, projectID: UUID, action: AuditEntry.Action) {
         let entry = AuditEntry(at: now(), actor: .user, action: action, before: note, cause: "ui")
-        _ = change(projectID: projectID, recording: entry) { $0.notes.removeAll { $0.id == note.id } }
+        guard change(projectID: projectID, recording: entry, { $0.notes.removeAll { $0.id == note.id } }) else { return }
+        clearNoteSuggestion(note.id)
     }
 
     /// Applies a change to a project's data. The audit entry is written
@@ -145,7 +150,13 @@ extension AppModel {
     /// error shown, when either fails, leaving the data as it was. A failed
     /// save leaves its audit entry behind, so readers of the log check an
     /// entry against the data before acting on it.
-    private func change(projectID: UUID, recording entry: AuditEntry, _ body: (inout AssistantData) -> Void) -> Bool {
+    func change(projectID: UUID, recording entry: AuditEntry, _ body: (inout AssistantData) -> Void) -> Bool {
+        change(projectID: projectID, recording: [entry], body)
+    }
+
+    /// A change made of several steps (Promote adds an item and attaches a
+    /// note): one audit entry each, all written before the save.
+    func change(projectID: UUID, recording entries: [AuditEntry], _ body: (inout AssistantData) -> Void) -> Bool {
         guard !isAssistantDataUnreadable(projectID) else {
             report("The assistant's notes for this project couldn't be read, so they can't be changed. See the Activity Log.")
             return false
@@ -153,7 +164,7 @@ extension AppModel {
         var data = assistantData[projectID] ?? AssistantData()
         body(&data)
         do {
-            try assistantStore.appendAudit(entry, projectID: projectID)
+            for entry in entries { try assistantStore.appendAudit(entry, projectID: projectID) }
         } catch {
             report("Couldn't record the change, so it wasn't made: \(AppModel.describe(error))")
             return false
@@ -161,7 +172,7 @@ extension AppModel {
         do {
             try assistantStore.save(data, projectID: projectID)
         } catch {
-            report("Couldn't save the note: \(AppModel.describe(error))")
+            report("Couldn't save the change: \(AppModel.describe(error))")
             return false
         }
         assistantData[projectID] = data
