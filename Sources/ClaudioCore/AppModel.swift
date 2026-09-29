@@ -253,6 +253,9 @@ public final class AppModel {
     @ObservationIgnored var followUpDue = Set<UUID>()
     /// Background calls today, for the daily limit.
     @ObservationIgnored var dailyJobs: DailyJobCount?
+    /// Where each session's history file was found, by conversation, so
+    /// the check every 15 s only reads its size (finding it lists folders).
+    @ObservationIgnored var followUpHistoryFiles: [UUID: (conversationID: String, url: URL)] = [:]
     /// Failed follow-ups' digests, so Try Again asks the same question.
     @ObservationIgnored var retryDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
     /// Assistant calls running now, by a token, so tests can wait for them.
@@ -1616,6 +1619,11 @@ public final class AppModel {
         guard let session = workspace.session(sessionID), session.followUpMark != mark else { return }
         state.workspace.updateSession(sessionID) { $0.followUpMark = mark }
         save()
+    }
+
+    /// For tests: changes a session directly.
+    func applyTestSessionChange(_ sessionID: UUID, _ body: (inout Session) -> Void) {
+        state.workspace.updateSession(sessionID, body)
     }
 
     /// For tests: gives a session a conversation, as its first prompt would.

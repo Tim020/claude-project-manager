@@ -14,9 +14,12 @@ struct AssistantTool: View {
 
     var body: some View {
         let shownItem = model.shownPlanItem
+        let shownFollowUp = model.shownFollowUp
+        let drilledIn = shownItem != nil || shownFollowUp != nil
         VStack(spacing: 0) {
-            ToolHeader(title: shownItem == nil ? "Assistant" : "Plan Item", leadingInset: ToolRail.trafficLightInset,
-                       onBack: shownItem == nil ? nil : { model.closePlanItem() }) {
+            ToolHeader(title: shownItem != nil ? "Plan Item" : shownFollowUp != nil ? "Follow-up" : "Assistant",
+                       leadingInset: ToolRail.trafficLightInset,
+                       onBack: drilledIn ? { model.closePlanItem() } : nil) {
                 IconButton(systemName: "square.and.pencil", help: "New Note (⇧⌘N)", size: 15) {
                     model.beginNoteCapture()
                 }
@@ -47,6 +50,13 @@ struct AssistantTool: View {
                 } else if let item = shownItem {
                     PlanItemView(item: item, projectID: projectID)
                         .id(item.id)
+                } else if let followUp = shownFollowUp {
+                    ScrollView {
+                        FollowUpBody(followUp: followUp, projectID: projectID, placement: .panel)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 14)
+                    }
+                    .id(followUp.id)
                 } else {
                     let unreadable = model.unreadableEntryCount(inProject: projectID)
                     if unreadable > 0 {
@@ -61,6 +71,11 @@ struct AssistantTool: View {
                     }
                     if model.isNoteCaptureShowing {
                         NoteCaptureBox()
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 10)
+                    }
+                    if model.isAssistantOn(inProject: projectID) {
+                        NeedsYouSection(projectID: projectID)
                             .padding(.horizontal, 10)
                             .padding(.bottom, 10)
                     }

@@ -486,6 +486,9 @@ struct SessionPane: View {
                     }
                     .animation(.easeOut(duration: 0.2), value: model.terminalHints[session.id])
                     .simultaneousGesture(TapGesture().onEnded { model.select(session.id) })
+                if let followUp = model.followUpCard(forSession: session.id) {
+                    FollowUpCard(followUp: followUp, projectID: session.projectID)
+                }
                 if !running {
                     ResumeBar(session: session, message: exitMessage(exitCode), compact: style.isCompact)
                 }
@@ -502,6 +505,9 @@ struct SessionPane: View {
                     .task(id: "\(session.id)|\(session.lastActivity.timeIntervalSince1970)|\(session.hasConversation)") {
                         await model.loadHistory(session.id)
                     }
+                if let followUp = model.followUpCard(forSession: session.id) {
+                    FollowUpCard(followUp: followUp, projectID: session.projectID)
+                }
                 ResumeBar(session: session, message: idleMessage, compact: style.isCompact)
             }
         }

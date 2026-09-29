@@ -65,12 +65,20 @@ extension AppModel {
 
     /// The session's history file, and its size, for its current conversation.
     private func historyFile(of session: Session) -> (url: URL, conversationID: String, size: UInt64)? {
-        guard let conversationID = session.claudeSessionID, let project = workspace.project(session.projectID),
+        guard let conversationID = session.claudeSessionID else { return nil }
+        func size(_ url: URL) -> UInt64? {
+            (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+        }
+        if let cached = followUpHistoryFiles[session.id], cached.conversationID == conversationID, let bytes = size(cached.url) {
+            return (cached.url, conversationID, bytes)
+        }
+        guard let project = workspace.project(session.projectID),
               let url = discovery.historyItems(projectPath: project.path, workingDirectory: session.workingDirectory,
                                                claudeSessionID: conversationID).first(where: { $0.pathExtension == "jsonl" }),
-              let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.uint64Value
+              let bytes = size(url)
         else { return nil }
-        return (url, conversationID, size)
+        followUpHistoryFiles[session.id] = (conversationID, url)
+        return (url, conversationID, bytes)
     }
 
     /// Reads what's new in a candidate's history and, if it has substance,

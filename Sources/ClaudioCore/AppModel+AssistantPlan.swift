@@ -13,6 +13,8 @@ public enum AssistantListMode: String, CaseIterable, Sendable {
 public enum AssistantPanelView: Equatable, Sendable {
     case list
     case item(projectID: UUID, itemID: UUID)
+    /// A follow-up from Needs You.
+    case followUp(projectID: UUID, id: UUID)
 }
 
 /// What the assistant suggests for a note, shown on it until you answer.
@@ -163,6 +165,16 @@ extension AppModel {
     /// The ‹ back button.
     public func closePlanItem() {
         if assistantPanel != .list { assistantPanel = .list }
+    }
+
+    public func openFollowUp(_ id: UUID, projectID: UUID) {
+        assistantPanel = .followUp(projectID: projectID, id: id)
+    }
+
+    /// The follow-up the panel is drilled into, while it's still in Needs You.
+    public var shownFollowUp: FollowUp? {
+        guard case .followUp(let projectID, let id) = assistantPanel, projectID == assistantProjectID else { return nil }
+        return followUp(id, inProject: projectID)
     }
 
     /// The item the panel is drilled into, if it still exists and belongs to
