@@ -218,6 +218,12 @@ public final class AppModel {
     public internal(set) var assistantPanel = AssistantPanelView.list
     /// What the assistant suggests for notes, by note id (see AppModel+AssistantPlan).
     public internal(set) var noteSuggestions: [UUID: NoteSuggestion] = [:]
+    /// Assistant calls running now, and those waiting for a turn (see
+    /// AppModel+AssistantJobs).
+    @ObservationIgnored var assistantJobsRunning = 0
+    @ObservationIgnored var assistantJobQueue: [@MainActor () async -> Void] = []
+    /// Every assistant call started, so tests can wait for them.
+    @ObservationIgnored var assistantJobTasks: [Task<Void, Never>] = []
     /// A confirmation shown at the foot of the window; the view clears it.
     public internal(set) var toast: Toast?
     @ObservationIgnored let assistantStore: AssistantStoring
@@ -1350,7 +1356,7 @@ public final class AppModel {
         exitCodes[sessionID] = nil
     }
 
-    private func agentCommands(reportErrors: Bool) -> AgentCommands? {
+    func agentCommands(reportErrors: Bool) -> AgentCommands? {
         guard let executable = locateClaude(state.settings.claudePath) else {
             if reportErrors { report("Claude Code CLI not found. Install it, or set its location in Settings.") }
             return nil

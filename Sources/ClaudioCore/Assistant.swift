@@ -225,6 +225,34 @@ public struct AuditEntry: Codable, Equatable, Sendable {
         /// Attached to a plan item, or detached from one.
         case noteChanged
         case itemAdded, itemChanged, itemDeleted
+        /// An assistant call ran (`job` says which, and how it went). It
+        /// changes nothing by itself.
+        case jobRan
+    }
+
+    /// One assistant call, for the Assistant's Activity Log (build step 5).
+    public struct Job: Codable, Equatable, Sendable {
+        public var name: String
+        public var model: String
+        /// What it was about: a note's id, for a Promote check.
+        public var subject: String
+        public var succeeded: Bool
+        /// Why it failed, in the panel's words.
+        public var failure: String?
+        public var durationMS: Int?
+        /// API-equivalent price, as Claude Code reports it.
+        public var costUSD: Double?
+
+        public init(name: String, model: String, subject: String, succeeded: Bool, failure: String? = nil,
+                    durationMS: Int? = nil, costUSD: Double? = nil) {
+            self.name = name
+            self.model = model
+            self.subject = subject
+            self.succeeded = succeeded
+            self.failure = failure
+            self.durationMS = durationMS
+            self.costUSD = costUSD
+        }
     }
 
     public var id: UUID
@@ -235,11 +263,14 @@ public struct AuditEntry: Codable, Equatable, Sendable {
     public var after: ProjectNote?
     public var beforeItem: PlanItem?
     public var afterItem: PlanItem?
-    /// What caused it: `ui`, a session's id, or (later) an assistant job's.
+    public var job: Job?
+    /// What caused it: `ui`, a session's id, or `assistant` for a job.
     public var cause: String
 
     public init(id: UUID = UUID(), at: Date, actor: NoteAuthor, action: Action, before: ProjectNote? = nil,
-                after: ProjectNote? = nil, beforeItem: PlanItem? = nil, afterItem: PlanItem? = nil, cause: String) {
+                after: ProjectNote? = nil, beforeItem: PlanItem? = nil, afterItem: PlanItem? = nil, job: Job? = nil,
+                cause: String) {
+        self.job = job
         self.id = id
         self.at = at
         self.actor = actor
@@ -258,10 +289,14 @@ public protocol AssistantStoring: AnyObject {
     func appendAudit(_ entry: AuditEntry, projectID: UUID) throws
     /// Where a project's data is kept, for error messages (nil in memory).
     func location(projectID: UUID) -> String?
+    /// The working directory for assistant calls: somewhere with no
+    /// CLAUDE.md or project settings (nil: a temporary directory).
+    func runsDirectory() -> URL?
 }
 
 extension AssistantStoring {
     public func location(projectID: UUID) -> String? { nil }
+    public func runsDirectory() -> URL? { nil }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -298,6 +333,10 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func location(projectID: UUID) -> String? {
         directory(projectID: projectID).appendingPathComponent("assistant.json").path
+    }
+
+    public func runsDirectory() -> URL? {
+        root.appendingPathComponent("runs")
     }
 
     public func load(projectID: UUID) throws -> AssistantData {

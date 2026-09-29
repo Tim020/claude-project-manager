@@ -101,6 +101,7 @@ extension AppModel {
         else { return nil }
         cancelNoteCapture()
         showToast("Saved to Notes")
+        checkCapturedNote(note, projectID: capture.projectID)
         return note
     }
 

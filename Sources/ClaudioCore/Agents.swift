@@ -271,7 +271,7 @@ public struct AgentCommands: Sendable {
         return args
     }
 
-    private func command(_ claudeArguments: [String], in directory: String, login: Bool? = nil) -> TerminalLaunch {
+    func command(_ claudeArguments: [String], in directory: String, login: Bool? = nil) -> TerminalLaunch {
         let useLogin = login ?? loginShell
         return TerminalLaunch.shell(claudeExecutable: claudeExecutable, claudeArguments: claudeArguments, workingDirectory: directory,
                                     shell: useLogin ? shell : "/bin/sh", loginShell: useLogin, baseEnvironment: baseEnvironment,
@@ -283,11 +283,14 @@ public struct CommandResult: Equatable, Sendable {
     public var exitCode: Int32
     public var output: String
     public var errorOutput: String
+    /// The runner stopped it for taking too long.
+    public var timedOut = false
 
-    public init(exitCode: Int32, output: String, errorOutput: String) {
+    public init(exitCode: Int32, output: String, errorOutput: String, timedOut: Bool = false) {
         self.exitCode = exitCode
         self.output = output
         self.errorOutput = errorOutput
+        self.timedOut = timedOut
     }
 
     /// Best short explanation of a failure.
@@ -336,7 +339,14 @@ public struct ProcessCommandRunner: CommandRunning {
         } catch {
             return CommandResult(exitCode: -1, output: "", errorOutput: error.localizedDescription)
         }
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        final class TimeoutFlag: @unchecked Sendable { var fired = false }
+        let timeoutFlag = TimeoutFlag()
+        let timer = DispatchWorkItem {
+            if process.isRunning {
+                timeoutFlag.fired = true
+                process.terminate()
+            }
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
 
         // Drain stderr on another thread so neither pipe fills and blocks.
@@ -355,6 +365,7 @@ public struct ProcessCommandRunner: CommandRunning {
         timer.cancel()
         return CommandResult(exitCode: process.terminationStatus,
                              output: String(decoding: outputData, as: UTF8.self),
-                             errorOutput: String(decoding: errorData, as: UTF8.self))
+                             errorOutput: String(decoding: errorData, as: UTF8.self),
+                             timedOut: timeoutFlag.fired)
     }
 }

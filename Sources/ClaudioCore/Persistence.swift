@@ -24,6 +24,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var toolWindows = ToolWindows()
     /// Height of the Shell panel under the panes, in points.
     public var shellPanelHeight = AppSettings.defaultShellPanelHeight
+    /// Settings › Assistant: app-wide, because plan usage is the account's.
+    public var assistant = AssistantAppSettings()
     public static let defaultActivityWindowDays = 14
 
     /// Quick choices for the window, in days (0 is any time).
@@ -106,6 +108,33 @@ public struct AppSettings: Codable, Equatable, Sendable {
         shellPanelHeight = AppSettings.clampShellPanelHeight(
             try c.decodeIfPresent(Double.self, forKey: .shellPanelHeight) ?? AppSettings.defaultShellPanelHeight)
         activityWindowDays = max(0, try c.decodeIfPresent(Int.self, forKey: .activityWindowDays) ?? AppSettings.defaultActivityWindowDays)
+        assistant = (try? c.decodeIfPresent(AssistantAppSettings.self, forKey: .assistant)) ?? AssistantAppSettings()
+    }
+}
+
+/// Settings › Assistant (design 9a).
+public struct AssistantAppSettings: Codable, Equatable, Sendable {
+    /// "Use the assistant". Off turns it off in every project; notes and
+    /// plans stay, and Promote… makes an Idea without calling Claude.
+    public var isEnabled = true
+    /// Background work pauses when the 5-hour or weekly window reaches this
+    /// percentage. Things you start yourself always run.
+    public var pauseThreshold = AssistantAppSettings.defaultPauseThreshold
+    /// Whether background work may run while usage credits are being spent.
+    public var allowWhileUsingCredits = false
+
+    public static let defaultPauseThreshold = 80
+    public static let pauseThresholdRange = 50...100
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        let threshold = try c.decodeIfPresent(Int.self, forKey: .pauseThreshold) ?? AssistantAppSettings.defaultPauseThreshold
+        pauseThreshold = min(max(threshold, AssistantAppSettings.pauseThresholdRange.lowerBound),
+                             AssistantAppSettings.pauseThresholdRange.upperBound)
+        allowWhileUsingCredits = try c.decodeIfPresent(Bool.self, forKey: .allowWhileUsingCredits) ?? false
     }
 }
 
