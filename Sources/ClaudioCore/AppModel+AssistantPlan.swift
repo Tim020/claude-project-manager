@@ -26,6 +26,14 @@ public enum NoteSuggestion: Equatable, Sendable {
     case attach(itemID: UUID, reason: String)
 }
 
+/// What a note is attached to (see `AppModel.attachedItem(of:inProject:)`).
+public enum AttachedItem: Equatable, Sendable {
+    case none
+    case item(PlanItem)
+    /// An item that isn't in the plan: kept unread, or removed by hand.
+    case unreadable
+}
+
 /// One of the Plan list's groups.
 public struct PlanGroup: Equatable, Sendable {
     public var status: PlanStatus
@@ -76,6 +84,14 @@ extension AppModel {
             let matching = items.filter { $0.status == status }.reversed()
             return matching.isEmpty ? nil : PlanGroup(status: status, items: Array(matching))
         }
+    }
+
+    /// A note's plan item: none, the item, or one it points at that isn't in
+    /// the plan (kept unread in the file, or removed by hand). The link is
+    /// left alone, since the item may be readable again; Detach clears it.
+    public func attachedItem(of note: ProjectNote, inProject projectID: UUID) -> AttachedItem {
+        guard let itemID = note.itemID else { return .none }
+        return item(itemID, inProject: projectID).map(AttachedItem.item) ?? .unreadable
     }
 
     /// An item's attached notes, newest first.

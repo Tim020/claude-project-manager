@@ -209,7 +209,8 @@ struct NoteCard: View {
     static let freshInterval: TimeInterval = 60
 
     var body: some View {
-        let item = note.itemID.flatMap { model.item($0, inProject: projectID) }
+        let attached = model.attachedItem(of: note, inProject: projectID)
+        let item: PlanItem? = if case .item(let item) = attached { item } else { nil }
         let suggestion = model.noteSuggestions[note.id]
         VStack(alignment: .leading, spacing: 6) {
             Text(note.text)
@@ -225,7 +226,7 @@ struct NoteCard: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
-                if item == nil && suggestion == nil {
+                if attached == .none && suggestion == nil {
                     LinkLabelButton(title: "Promote…") { model.requestPromote(note.id, projectID: projectID) }
                         .help(model.isAssistantOn(inProject: projectID)
                               ? "Check this note against the plan" : "Add this note to the plan as an Idea")
@@ -253,6 +254,15 @@ struct NoteCard: View {
                 .buttonStyle(.plain)
                 .help("Open its plan item")
             }
+            if attached == .unreadable {
+                HStack(spacing: 6) {
+                    Label("Attached to an item that can't be read", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(DS.orange)
+                    LinkLabelButton(title: "Detach") { model.detachNote(note.id, projectID: projectID) }
+                }
+                .font(DS.font(11.5))
+                .help("Its plan item isn't in the plan: it's kept unread in the file, or was removed. Detach frees the note.")
+            }
             if let suggestion {
                 SuggestionBox(suggestion: suggestion, note: note, projectID: projectID)
             }
@@ -266,7 +276,7 @@ struct NoteCard: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(note.text, forType: .string)
             }
-            if item == nil {
+            if attached == .none {
                 // Straight in, without the check (Promote… asks Claude first).
                 Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
             }
@@ -278,7 +288,7 @@ struct NoteCard: View {
                     }
                 }
             }
-            if item != nil {
+            if attached != .none {
                 Button("Detach from Plan Item") { model.detachNote(note.id, projectID: projectID) }
             }
             Divider()

@@ -133,8 +133,8 @@ private struct PlanRow: View {
     }
 }
 
-/// Move to a status, and Delete: a row's right-click menu, and the item
-/// view's status pill.
+/// Move to a status, and Delete: a row's right-click menu, and (without
+/// Delete) the item view's status pill.
 private struct PlanItemMenu: View {
     @Environment(AppModel.self) private var model
     let item: PlanItem

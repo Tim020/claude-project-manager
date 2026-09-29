@@ -145,7 +145,9 @@ public enum AssistantMode: String, Codable, CaseIterable, Sendable {
 /// `unreadableItems`, and written back unchanged, so one bad entry doesn't
 /// cost the rest. A file from a newer version is refused whole.
 public struct AssistantData: Codable, Equatable, Sendable {
-    /// 2: plan items, the project's mode, and per-entry decoding.
+    /// 2: plan items, the project's mode, and per-entry decoding. Bump it for
+    /// any new field on a note, an item or `AssistantData`: older builds
+    /// refuse a newer file rather than drop what they don't know about.
     public static let currentVersion = 2
     public var version = AssistantData.currentVersion
     /// Oldest first, as written.
@@ -153,8 +155,14 @@ public struct AssistantData: Codable, Equatable, Sendable {
     /// Oldest first, as created.
     public var items: [PlanItem] = []
     public var mode = AssistantMode.automatic
+    /// Entries kept as they were. They're written back after the readable
+    /// ones, so one that becomes readable again sorts as the newest. Their
+    /// numbers pass through `JSONValue` as doubles (ids and dates are
+    /// strings, so nothing Claudio writes is affected).
     public var unreadableNotes: [JSONValue] = []
     public var unreadableItems: [JSONValue] = []
+    /// Why each kept entry couldn't be read, for the Activity Log (not saved).
+    public var unreadableReasons: [String] = []
 
     public init(notes: [ProjectNote] = [], items: [PlanItem] = []) {
         self.notes = notes
@@ -174,8 +182,10 @@ public struct AssistantData: Codable, Equatable, Sendable {
             throw DecodingError.dataCorruptedError(forKey: .version, in: c,
                                                    debugDescription: "Saved by a newer Claudio (version \(version))")
         }
-        (notes, unreadableNotes) = try AssistantData.decodeEach(ProjectNote.self, c, .notes)
-        (items, unreadableItems) = try AssistantData.decodeEach(PlanItem.self, c, .items)
+        let noteReasons: [String], itemReasons: [String]
+        (notes, unreadableNotes, noteReasons) = try AssistantData.decodeEach(ProjectNote.self, c, .notes, "A note")
+        (items, unreadableItems, itemReasons) = try AssistantData.decodeEach(PlanItem.self, c, .items, "A plan item")
+        unreadableReasons = noteReasons + itemReasons
         mode = try c.decodeIfPresent(AssistantMode.self, forKey: .mode) ?? .automatic
         // Version 1 had notes only; what it lacks takes its default.
         version = AssistantData.currentVersion
@@ -193,23 +203,41 @@ public struct AssistantData: Codable, Equatable, Sendable {
         for raw in unreadableItems { try itemsArray.encode(raw) }
     }
 
-    /// Decodes an array one entry at a time: the entries that read, and the
-    /// ones that don't, as they were.
+    /// Decodes an array one entry at a time: the entries that read, the
+    /// ones that don't (as they were), and why each didn't.
     private static func decodeEach<T: Decodable>(_ type: T.Type, _ c: KeyedDecodingContainer<CodingKeys>,
-                                                 _ key: CodingKeys) throws -> ([T], [JSONValue]) {
-        guard let raw = try c.decodeIfPresent([JSONValue].self, forKey: key) else { return ([], []) }
+                                                 _ key: CodingKeys, _ noun: String) throws -> ([T], [JSONValue], [String]) {
+        guard let raw = try c.decodeIfPresent([JSONValue].self, forKey: key) else { return ([], [], []) }
         var read: [T] = []
         var unread: [JSONValue] = []
+        var reasons: [String] = []
         let encoder = JSONEncoder()
         let decoder = JSONFileStore.decoder
-        for entry in raw {
-            if let data = try? encoder.encode(entry), let value = try? decoder.decode(T.self, from: data) {
-                read.append(value)
-            } else {
+        for (index, entry) in raw.enumerated() {
+            do {
+                read.append(try decoder.decode(T.self, from: encoder.encode(entry)))
+            } catch {
                 unread.append(entry)
+                reasons.append("\(noun) (entry \(index + 1)): \(AssistantData.describe(error))")
             }
         }
-        return (read, unread)
+        return (read, unread, reasons)
+    }
+
+    /// "status: an unknown value", from a DecodingError.
+    static func describe(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else { return String(describing: error) }
+        func path(_ context: DecodingError.Context) -> String {
+            context.codingPath.map(\.stringValue).filter { Int($0) == nil }.joined(separator: ".")
+        }
+        switch decoding {
+        case .keyNotFound(let key, _): return "\(key.stringValue) is missing"
+        case .valueNotFound(_, let context): return "\(path(context)) is empty"
+        case .typeMismatch(_, let context), .dataCorrupted(let context):
+            let field = path(context)
+            return field.isEmpty ? context.debugDescription : "\(field): \(context.debugDescription)"
+        @unknown default: return String(describing: error)
+        }
     }
 
     /// Entries that couldn't be read, for the panel to say so.

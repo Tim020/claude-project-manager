@@ -20,19 +20,28 @@ public struct AssistantCall: Equatable, Sendable {
     /// turn, so it stops a call that runs away (more turns, an unexpected
     /// tool) rather than capping one turn exactly.
     public var maxBudgetUSD: Double
+    /// Seconds before the call is stopped (the launch's own timeout).
+    public var timeout: Int
 
     public init(job: String, model: String, systemPrompt: String, schema: String, input: String,
-                maxBudgetUSD: Double = AssistantCall.quickBudgetUSD) {
+                maxBudgetUSD: Double = AssistantCall.quickBudgetUSD, timeout: Int = AssistantCall.quickTimeout) {
         self.job = job
         self.model = model
         self.systemPrompt = systemPrompt
         self.schema = schema
         self.input = input
         self.maxBudgetUSD = maxBudgetUSD
+        self.timeout = timeout
     }
 
     /// A quick check costs $0.004–0.006 (Haiku, measured with 2.1.284).
     public static let quickBudgetUSD = 0.05
+    /// A quick check answers in 5–8 s.
+    public static let quickTimeout = 60
+    /// `CLAUDE_CODE_MAX_RETRIES` for assistant calls. Claude Code's default
+    /// retried a rejected API key for 190 s; with 2 it fails in about 3 s,
+    /// with the real error (checked with 2.1.284). Overloads still get retries.
+    public static let maxRetries = 2
 }
 
 public enum AssistantModels {
@@ -48,7 +57,7 @@ public enum AssistantModels {
 ///
 /// None, normally: loading the user's settings can bring tools into the call
 /// that it doesn't need. With 2.1.284 a user-settings call sometimes consulted
-/// an Opus advisor tool the user had set up, costing about 15 times as much
+/// an Opus advisor tool the user had set up, costing about 20 times as much
 /// and taking over 40 s. The user's settings are loaded only when signing in
 /// may depend on them: an `apiKeyHelper`, or a provider chosen in `env`.
 public enum AssistantSettingSources {
@@ -76,6 +85,8 @@ extension AgentCommands {
                              + TerminalLaunch.promptArguments(call.input),
                              in: directory)
         launch.label = "claude -p (assistant: \(call.job), \(AssistantModels.displayName(call.model)))"
+        launch.environment["CLAUDE_CODE_MAX_RETRIES"] = String(AssistantCall.maxRetries)
+        launch.timeout = TimeInterval(call.timeout)
         return launch
     }
 }
@@ -101,7 +112,7 @@ public enum AssistantFailure: Equatable, Sendable, Error {
         case .signedOut:
             return "Claude Code is installed but not signed in. Run claude in a Shell and sign in, then try again."
         case .timedOut(let seconds):
-            return "No answer came back within \(seconds) seconds. Nothing was changed."
+            return "No answer came back within \(seconds) seconds. Nothing was changed. If this keeps happening, check that Claude Code is signed in: run claude in a Shell."
         case .apiError(let text):
             return "Claude Code couldn't answer: \(text)"
         case .invalidReply:
@@ -132,11 +143,11 @@ public enum AssistantReplyParser {
     public static func parse(_ result: CommandResult, timeout: Int, budget: Double = AssistantCall.quickBudgetUSD)
         -> Result<AssistantReply, AssistantFailure> {
         if result.timedOut { return .failure(.timedOut(seconds: timeout)) }
-        let json = result.output.firstIndex(of: "{").flatMap { start in
-            try? JSONDecoder().decode(JSONValue.self, from: Data(result.output[start...].utf8))
-        }
-        guard let json else {
-            return .failure(result.exitCode == 0 ? .invalidReply : .failed(result.failureMessage))
+        guard let json = envelope(in: result.output) else {
+            // Not the JSON reply at all: stderr says why ("command not found"),
+            // and stdout (which may hold the note) is never shown.
+            let error = result.errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure(result.exitCode == 0 ? .invalidReply : .failed(error.isEmpty ? "exit code \(result.exitCode)" : String(error.prefix(300))))
         }
         let text = json["result"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if json["subtype"]?.stringValue == "error_max_budget_usd" || json["terminal_reason"]?.stringValue == "budget_exhausted" {
@@ -144,11 +155,44 @@ public enum AssistantReplyParser {
         }
         if json["is_error"]?.boolValue == true || result.exitCode != 0 {
             if text.localizedCaseInsensitiveContains("not logged in") || text.contains("/login") { return .failure(.signedOut) }
-            return .failure(.apiError(text.isEmpty ? result.failureMessage : String(text.prefix(300))))
+            return .failure(.apiError(text.isEmpty ? errorDescription(of: json, exitCode: result.exitCode) : String(text.prefix(300))))
         }
         guard let output = json["structured_output"], output.objectValue != nil else { return .failure(.invalidReply) }
         return .success(AssistantReply(output: output, costUSD: json["total_cost_usd"]?.doubleValue,
                                        durationMS: json["duration_ms"]?.doubleValue.map { Int($0) }))
+    }
+
+    /// The reply is the last line that's a JSON object: a login shell's
+    /// profile may print lines of its own first.
+    static func envelope(in output: String) -> JSONValue? {
+        for line in output.split(whereSeparator: \.isNewline).reversed() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("{"),
+                  let json = try? JSONDecoder().decode(JSONValue.self, from: Data(trimmed.utf8)), json.objectValue != nil
+            else { continue }
+            return json
+        }
+        return nil
+    }
+
+    /// An error with no `result` text (`error_during_execution`,
+    /// `error_max_turns`…): its `errors`, else its subtype and reason.
+    static func errorDescription(of json: JSONValue, exitCode: Int32) -> String {
+        let errors = (json["errors"]?.arrayValue ?? []).compactMap { $0.stringValue ?? $0["message"]?.stringValue }
+        if !errors.isEmpty { return String(errors.joined(separator: "; ").prefix(300)) }
+        let parts = [json["subtype"]?.stringValue, json["terminal_reason"]?.stringValue].compactMap { $0 }
+        return parts.isEmpty ? "exit code \(exitCode)" : parts.joined(separator: ", ")
+    }
+
+    /// What a reply looked like, for the Activity Log when it wasn't usable:
+    /// its type, subtype, reason and keys, never its contents (which may
+    /// hold the note).
+    public static func summary(of output: String) -> String {
+        guard let json = envelope(in: output), let object = json.objectValue else {
+            return "No JSON reply (\(output.count) characters of output)."
+        }
+        let fields = ["type", "subtype", "terminal_reason"].compactMap { key in json[key]?.stringValue.map { "\(key): \($0)" } }
+        return (fields + ["keys: " + object.keys.sorted().joined(separator: ", ")]).joined(separator: " · ")
     }
 }
 
@@ -177,26 +221,39 @@ public enum PromoteCheck {
         items.filter { $0.status != .done }.enumerated().map { ("i\($0.offset + 1)", $0.element) }
     }
 
-    public static func call(note: ProjectNote, items: [PlanItem], model: String = AssistantModels.quick) -> AssistantCall {
-        let plan: [JSONValue] = refs(for: items).map {
+    /// A check to run: the call, and which item each ref in it stands for.
+    /// Refs are positions, so they're resolved with the map made for the
+    /// call, never renumbered from the plan when the reply comes back.
+    public struct Request: Equatable, Sendable {
+        public var call: AssistantCall
+        public var refs: [String: UUID]
+    }
+
+    public static func request(note: ProjectNote, items: [PlanItem], model: String = AssistantModels.quick) -> Request {
+        let offered = refs(for: items)
+        let plan: [JSONValue] = offered.map {
             .object(["ref": .string($0.ref), "title": .string($0.item.title), "status": .string($0.item.status.rawValue)])
         }
         let input = JSONValue.object(["note": .string(note.text), "plan": .array(plan)])
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let text = (try? encoder.encode(input)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        return AssistantCall(job: job, model: model, systemPrompt: systemPrompt, schema: schema, input: text)
+        return Request(call: AssistantCall(job: job, model: model, systemPrompt: systemPrompt, schema: schema, input: text),
+                       refs: Dictionary(uniqueKeysWithValues: offered.map { ($0.ref, $0.item.id) }))
     }
 
-    /// The suggestion to show, or nil for none. The reply is untrusted: a
-    /// `duplicateOf` that isn't one of `refs` is ignored, and the title is
-    /// cleaned, falling back to one from the note. `askedFor`: the user
-    /// pressed Promote…, so they get a Promote suggestion even when the model
-    /// wouldn't have made one.
-    public static func suggestion(from reply: JSONValue, note: ProjectNote, items: [PlanItem], askedFor: Bool) -> NoteSuggestion? {
+    /// The suggestion to show, or nil for none. The reply is untrusted: its
+    /// `duplicateOf` is looked up in the call's own `refs`, and only counts
+    /// if that item is still in the plan and not done (`items`: the plan
+    /// now). The title is cleaned, falling back to one from the note.
+    /// `askedFor`: the user pressed Promote…, so they get a Promote
+    /// suggestion even when the model wouldn't have made one.
+    public static func suggestion(from reply: JSONValue, note: ProjectNote, refs: [String: UUID], items: [PlanItem],
+                                  askedFor: Bool) -> NoteSuggestion? {
         let reason = PlanTitle.clean(reply["reason"]?.stringValue ?? "")
-        if let ref = reply["duplicateOf"]?.stringValue, let match = refs(for: items).first(where: { $0.ref == ref }) {
-            return .attach(itemID: match.item.id, reason: reason)
+        if let ref = reply["duplicateOf"]?.stringValue, let itemID = refs[ref],
+           items.contains(where: { $0.id == itemID && $0.status != .done }) {
+            return .attach(itemID: itemID, reason: reason)
         }
         guard reply["promote"]?.boolValue == true || askedFor else { return nil }
         let title = PlanTitle.clean(reply["title"]?.stringValue ?? "")

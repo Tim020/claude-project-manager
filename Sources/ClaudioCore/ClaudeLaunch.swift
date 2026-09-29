@@ -14,6 +14,9 @@ public struct TerminalLaunch: Equatable, Sendable {
     public var claudeArguments: [String]
     /// Shown in logs instead of the `claude` command (for other scripts).
     public var label: String? = nil
+    /// For a short-lived command: how long the runner lets it run (nil: the
+    /// runner's own default).
+    public var timeout: TimeInterval? = nil
 
     /// A readable form of the `claude` command for logs: hook settings are
     /// abbreviated and only arguments that need it are quoted.

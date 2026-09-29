@@ -74,7 +74,8 @@ final class AssistantJobTests: XCTestCase {
         XCTAssertEqual(AssistantReplyParser.parse(CommandResult(exitCode: 0, output: #"{"is_error":false,"result":"hi"}"#, errorOutput: ""),
                                                   timeout: 60),
                        .failure(.invalidReply), "no structured output")
-        XCTAssertEqual(AssistantFailure.timedOut(seconds: 60).message, "No answer came back within 60 seconds. Nothing was changed.")
+        XCTAssertEqual(AssistantFailure.timedOut(seconds: 60).message,
+                       "No answer came back within 60 seconds. Nothing was changed. If this keeps happening, check that Claude Code is signed in: run claude in a Shell.")
 
         let overBudget = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-over-budget.json"), errorOutput: "")
         XCTAssertEqual(AssistantReplyParser.parse(overBudget, timeout: 60, budget: 0.05), .failure(.overBudget(0.05)),
@@ -88,8 +89,10 @@ final class AssistantJobTests: XCTestCase {
     func testTheCommand() {
         let commands = AgentCommands(claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", hookEventsPath: "/h.log")
         let note = ProjectNote(text: "- [ ] starts with a dash", author: .user, createdAt: Date())
-        let call = PromoteCheck.call(note: note, items: [])
+        let call = PromoteCheck.request(note: note, items: []).call
         let launch = commands.assistant(call, in: "/runs", settingSources: "")
+        XCTAssertEqual(launch.environment["CLAUDE_CODE_MAX_RETRIES"], "2", "a rejected key fails in seconds, not minutes")
+        XCTAssertEqual(launch.timeout, 60, "the call's own timeout, not the runner's default")
         let args = launch.claudeArguments
         XCTAssertEqual(Array(args.prefix(3)), ["-p", "--model", "haiku"])
         for flag in ["--json-schema", "--system-prompt", "--tools", "--strict-mcp-config", "--no-session-persistence"] {
@@ -125,25 +128,55 @@ final class AssistantJobTests: XCTestCase {
         let items = [done, height]
         XCTAssertEqual(PromoteCheck.refs(for: items).map(\.ref), ["i1"], "done items aren't offered")
 
+        let request = PromoteCheck.request(note: note, items: items)
+        XCTAssertEqual(request.refs, ["i1": height.id])
         func reply(_ json: String) throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8)) }
-        XCTAssertEqual(PromoteCheck.suggestion(from: try reply(#"{"kind":"bug","promote":false,"title":"x","duplicateOf":"i1","reason":"Same work."}"#),
-                                               note: note, items: items, askedFor: false),
-                       .attach(itemID: height.id, reason: "Same work."))
-        XCTAssertEqual(PromoteCheck.suggestion(from: try reply(#"{"kind":"bug","promote":true,"title":"","duplicateOf":"i9","reason":"Reads like a bug."}"#),
-                                               note: note, items: items, askedFor: false),
+        func suggestion(_ json: String, items: [PlanItem] = items, askedFor: Bool = false) throws -> NoteSuggestion? {
+            PromoteCheck.suggestion(from: try reply(json), note: note, refs: request.refs, items: items, askedFor: askedFor)
+        }
+        let duplicate = #"{"kind":"bug","promote":false,"title":"x","duplicateOf":"i1","reason":"Same work."}"#
+        XCTAssertEqual(try suggestion(duplicate), .attach(itemID: height.id, reason: "Same work."))
+        XCTAssertEqual(try suggestion(#"{"kind":"bug","promote":true,"title":"","duplicateOf":"i9","reason":"Reads like a bug."}"#),
                        .promote(title: "The shell panel forgets its height", status: .planned, reason: "Reads like a bug."),
                        "an unknown ref is ignored, and a blank title comes from the note")
-        XCTAssertEqual(PromoteCheck.suggestion(from: try reply(#"{"kind":"idea","promote":true,"title":"Shell themes","duplicateOf":null,"reason":"An idea."}"#),
-                                               note: note, items: items, askedFor: false),
+        XCTAssertEqual(try suggestion(#"{"kind":"idea","promote":true,"title":"Shell themes","duplicateOf":null,"reason":"An idea."}"#),
                        .promote(title: "Shell themes", status: .idea, reason: "An idea."))
-        let fact = try reply(#"{"kind":"fact","promote":false,"title":"Fact","duplicateOf":null,"reason":"Worth keeping."}"#)
-        XCTAssertNil(PromoteCheck.suggestion(from: fact, note: note, items: items, askedFor: false), "nothing to suggest")
-        XCTAssertEqual(PromoteCheck.suggestion(from: fact, note: note, items: items, askedFor: true),
+        let fact = #"{"kind":"fact","promote":false,"title":"Fact","duplicateOf":null,"reason":"Worth keeping."}"#
+        XCTAssertNil(try suggestion(fact), "nothing to suggest")
+        XCTAssertEqual(try suggestion(fact, askedFor: true),
                        .promote(title: "Fact", status: .planned, reason: "Worth keeping."), "but Promote… was asked for")
 
-        let input = try JSONDecoder().decode(JSONValue.self, from: Data(PromoteCheck.call(note: note, items: items).input.utf8))
+        var finished = height
+        finished.status = .done
+        XCTAssertNil(try suggestion(duplicate, items: [done, finished]), "an item done since the call isn't suggested")
+        XCTAssertNil(try suggestion(duplicate, items: [done]), "nor one deleted since")
+
+        let input = try JSONDecoder().decode(JSONValue.self, from: Data(request.call.input.utf8))
         XCTAssertEqual(input["plan"], .array([.object(["ref": .string("i1"), "title": .string(height.title), "status": .string("planned")])]),
                        "the model sees refs, never ids")
+    }
+
+    func testRepliesArentMisreadAfterThePlanChanges() async throws {
+        let f = try await MainActor.run { try makeFixture() }
+        // The model answers "same work as i2": B, as the call numbered it.
+        f.runner.reply = CommandResult(exitCode: 0, output: #"{"is_error":false,"structured_output":{"kind":"bug","promote":false,"title":"t","duplicateOf":"i2","reason":"Same work."}}"#,
+                                       errorOutput: "")
+        let (noteID, b) = try await MainActor.run { () -> (UUID, UUID) in
+            var ids: [UUID] = []
+            for text in ["A", "B", "C"] {
+                let note = try XCTUnwrap(f.model.addNote(text, author: .user, projectID: f.project, sessionID: nil))
+                ids.append(try XCTUnwrap(f.model.promoteNote(note.id, projectID: f.project)).id)
+            }
+            let note = try XCTUnwrap(f.model.addNote("Like B", author: .user, projectID: f.project, sessionID: nil))
+            f.model.requestPromote(note.id, projectID: f.project)
+            // Before the reply: A is done, so renumbering now would make i2 C.
+            f.model.setStatus(.done, ofItem: ids[0], projectID: f.project)
+            return (note.id, ids[1])
+        }
+        await f.model.waitForAssistantJobs()
+        await MainActor.run {
+            XCTAssertEqual(f.model.noteSuggestions[noteID], .attach(itemID: b, reason: "Same work."))
+        }
     }
 
     // MARK: - The model
@@ -196,6 +229,8 @@ final class AssistantJobTests: XCTestCase {
         XCTAssertEqual(job.model, "Haiku")
         XCTAssertTrue(job.succeeded)
         XCTAssertEqual(job.durationMS, 6514)
+        XCTAssertEqual(job.costUSD ?? 0, 0.004279, accuracy: 0.000001, "for step 4's Activity Log")
+        XCTAssertNil(job.failure)
     }
 
     func testAFailureYouAskedForIsShownAndABackgroundOneIsNot() async throws {
@@ -225,20 +260,29 @@ final class AssistantJobTests: XCTestCase {
     func testAResultForANoteThatMovedOnIsDropped() async throws {
         let f = try await MainActor.run { try makeFixture() }
         f.runner.reply = try reply("assistant-promote-new.json")
-        let (promoted, deleted) = try await MainActor.run { () -> (UUID, UUID) in
+        let (promoted, deleted, linked) = try await MainActor.run { () -> (UUID, UUID, UUID) in
             let a = try XCTUnwrap(f.model.addNote("A", author: .user, projectID: f.project, sessionID: nil))
             let b = try XCTUnwrap(f.model.addNote("B", author: .user, projectID: f.project, sessionID: nil))
-            f.model.requestPromote(a.id, projectID: f.project)
-            f.model.requestPromote(b.id, projectID: f.project)
-            // Before the replies arrive: A promoted by hand, B deleted.
+            let c = try XCTUnwrap(f.model.addNote("C", author: .user, projectID: f.project, sessionID: nil))
+            for note in [a, b, c] { f.model.requestPromote(note.id, projectID: f.project) }
+            // Before the replies arrive: A promoted by hand, B deleted, and C
+            // given an item without its check being cleared (the reply's own
+            // guard must catch it).
             f.model.promoteNote(a.id, projectID: f.project)
             f.model.deleteNote(b.id, projectID: f.project)
-            return (a.id, b.id)
+            var data = try XCTUnwrap(f.model.assistantData[f.project])
+            let index = try XCTUnwrap(data.notes.firstIndex { $0.id == c.id })
+            data.notes[index].itemID = f.model.items(inProject: f.project).first?.id
+            f.model.assistantData[f.project] = data
+            XCTAssertEqual(f.model.noteSuggestions[c.id], .checking)
+            return (a.id, b.id, c.id)
         }
         await f.model.waitForAssistantJobs()
         await MainActor.run {
             XCTAssertNil(f.model.noteSuggestions[promoted])
             XCTAssertNil(f.model.noteSuggestions[deleted])
+            XCTAssertNil(f.model.noteSuggestions[linked], "no spinner left behind")
+            XCTAssertEqual(f.model.items(inProject: f.project).count, 1, "only the item made by hand")
         }
     }
 
@@ -329,6 +373,113 @@ final class AssistantJobTests: XCTestCase {
             XCTAssertEqual(f.runner.calls.count, 3)
             XCTAssertEqual(f.model.assistantJobsRunning, 0)
             XCTAssertTrue(f.model.assistantJobTasks.isEmpty, "finished calls aren't held")
+        }
+    }
+
+    func testPromoteTwiceDuringACheckMakesOneCall() async throws {
+        let f = try await MainActor.run { try makeFixture() }
+        f.runner.reply = try reply("assistant-promote-new.json")
+        try await MainActor.run {
+            let note = try XCTUnwrap(f.model.addNote("Once", author: .user, projectID: f.project, sessionID: nil))
+            f.model.requestPromote(note.id, projectID: f.project)
+            f.model.requestPromote(note.id, projectID: f.project)
+        }
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1)
+    }
+
+    func testCreditsAreDecidedBeforeTheThreshold() async throws {
+        let f = try await MainActor.run { try makeFixture(auth: #"{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "pro"}"#) }
+        await f.model.checkEnvironment(force: true)
+        // A full 5-hour window with credits enabled: Claude Code is spending credits.
+        f.runner.base.usageOutput = try Fixtures.string("usage-stream.jsonl").replacingOccurrences(of: #""percent":5"#, with: #""percent":100"#)
+        await f.model.refreshUsage()
+        await MainActor.run {
+            XCTAssertEqual(f.model.usage?.current(at: AssistantJobTests.beforeReset).isUsingCredits, true)
+            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Using credits"))
+            XCTAssertEqual(f.model.usageHighNote, "Using credits. Things you start still run.")
+            var settings = f.model.settings
+            settings.assistant.allowWhileUsingCredits = true
+            f.model.updateSettings(settings)
+            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .run, "allowed, even though the window is over the threshold")
+            XCTAssertNil(f.model.usageHighNote)
+        }
+    }
+
+    func testTheAuditRecordsAFailedCall() async throws {
+        let assistant = MemoryAssistantStore()
+        let runner = AssistantRunner()
+        runner.base.authOutput = #"{"loggedIn": true, "authMethod": "api_key"}"#
+        runner.reply = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-api-error.json"), errorOutput: "")
+        let (model, project) = try await MainActor.run { () -> (AppModel, UUID) in
+            let store = MemoryStore()
+            let project = store.state.workspace.addProject(path: "/code/app")
+            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                                 assistantStore: assistant, locateClaude: { _ in "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
+            let note = try XCTUnwrap(model.addNote("x", author: .user, projectID: project, sessionID: nil))
+            model.requestPromote(note.id, projectID: project)
+            return (model, project)
+        }
+        await model.waitForAssistantJobs()
+        let job = try XCTUnwrap(assistant.audit[project]?.last?.job)
+        XCTAssertFalse(job.succeeded)
+        XCTAssertEqual(job.failure, AssistantFailure.apiError("Failed to authenticate. API Error: 401 API key is invalid.").message)
+        XCTAssertNil(job.costUSD)
+    }
+
+    func testAnUnusableReplyIsLoggedByItsShapeNotItsContents() async throws {
+        let f = try await MainActor.run { try makeFixture() }
+        f.runner.reply = CommandResult(exitCode: 0, output: "Welcome from .zshrc {not json}\n" + #"{"type":"result","subtype":"success","is_error":false,"result":"The note: secret"}"#,
+                                       errorOutput: "")
+        try await MainActor.run {
+            let note = try XCTUnwrap(f.model.addNote("secret", author: .user, projectID: f.project, sessionID: nil))
+            f.model.requestPromote(note.id, projectID: f.project)
+        }
+        await f.model.waitForAssistantJobs()
+        await MainActor.run {
+            let entry = f.model.log.entries.first { $0.title == "Assistant: Promote check gave a reply Claudio couldn't use" }
+            XCTAssertEqual(entry?.detail, "type: result · subtype: success · keys: is_error, result, subtype, type",
+                           "the reply is found after the profile's line, and described without its text")
+            XCTAssertEqual(f.model.errorMessage, AssistantFailure.invalidReply.message)
+        }
+    }
+
+    func testAnErrorWithoutResultTextIsDescribedFromItsFields() {
+        let noText = CommandResult(exitCode: 1, output: #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Tool failed"]}"#,
+                                   errorOutput: "")
+        XCTAssertEqual(AssistantReplyParser.parse(noText, timeout: 60), .failure(.apiError("Tool failed")))
+        let bare = CommandResult(exitCode: 1, output: #"{"type":"result","subtype":"error_max_turns","is_error":true,"terminal_reason":"max_turns"}"#,
+                                 errorOutput: "")
+        XCTAssertEqual(AssistantReplyParser.parse(bare, timeout: 60), .failure(.apiError("error_max_turns, max_turns")),
+                       "never the raw output")
+    }
+
+    func testTheRunnerStopsACommandAtItsOwnTimeout() async {
+        var launch = TerminalLaunch(executable: "/bin/sleep", arguments: ["5"], environment: [:], workingDirectory: "/", claudeArguments: [])
+        launch.timeout = 0.3
+        let started = Date()
+        let result = await ProcessCommandRunner(timeout: 60).run(launch)
+        XCTAssertTrue(result.timedOut)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+        let quick = await ProcessCommandRunner(timeout: 60).run(TerminalLaunch(executable: "/bin/sh", arguments: ["-c", "true"],
+                                                                            environment: [:], workingDirectory: "/", claudeArguments: []))
+        XCTAssertFalse(quick.timedOut)
+    }
+
+    func testADanglingItemLinkIsShownAndCanBeDetached() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            let note = try XCTUnwrap(f.model.addNote("Orphan", author: .user, projectID: f.project, sessionID: nil))
+            var data = try XCTUnwrap(f.model.assistantData[f.project])
+            data.notes[0].itemID = UUID()   // an item kept unread, or removed by hand
+            f.model.assistantData[f.project] = data
+            let linked = try XCTUnwrap(f.model.notes(inProject: f.project).first)
+            XCTAssertEqual(f.model.attachedItem(of: linked, inProject: f.project), .unreadable)
+            f.model.detachNote(note.id, projectID: f.project)
+            let freed = try XCTUnwrap(f.model.notes(inProject: f.project).first)
+            XCTAssertEqual(f.model.attachedItem(of: freed, inProject: f.project), .none)
+            XCTAssertNotNil(f.model.promoteNote(note.id, projectID: f.project), "and it can be promoted again")
         }
     }
 

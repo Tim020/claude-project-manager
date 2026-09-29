@@ -21,8 +21,6 @@ public enum AssistantGate: Equatable, Sendable {
 extension AppModel {
     /// How many assistant calls run at once.
     public static let maxAssistantJobs = 2
-    /// How long a call may take (the runner's timeout).
-    public static let assistantJobTimeout = 60
 
     // MARK: - The gate
 
@@ -42,10 +40,16 @@ extension AppModel {
         return .run
     }
 
-    /// "5-hour usage 84%" while a window is at or over the threshold, or
-    /// "Using credits" while credits are being spent (unless allowed).
+    /// "Using credits" while credits are being spent (unless that's
+    /// allowed), else "5-hour usage 84%" while a window is at or over the
+    /// threshold. Credits come first: they're spent when a window is full,
+    /// which is over any threshold, so otherwise the setting could never
+    /// let work run.
     public var usagePauseReason: String? {
         guard let usage = usage?.current(at: now()) else { return nil }
+        if usage.isUsingCredits {
+            return settings.assistant.allowWhileUsingCredits ? nil : "Using credits"
+        }
         let threshold = Double(settings.assistant.pauseThreshold)
         if let window = usage.fiveHour, window.usedPercentage >= threshold {
             return "5-hour usage \(Int(window.usedPercentage.rounded()))%"
@@ -53,7 +57,6 @@ extension AppModel {
         if let window = usage.sevenDay, window.usedPercentage >= threshold {
             return "Weekly usage \(Int(window.usedPercentage.rounded()))%"
         }
-        if usage.isUsingCredits && !settings.assistant.allowWhileUsingCredits { return "Using credits" }
         return nil
     }
 
@@ -107,8 +110,8 @@ extension AppModel {
     private func checkNote(_ note: ProjectNote, projectID: UUID, askedFor: Bool) {
         guard noteSuggestions[note.id] != .checking else { return }
         noteSuggestions[note.id] = .checking
-        let call = PromoteCheck.call(note: note, items: items(inProject: projectID))
-        runAssistantJob(call, projectID: projectID, subject: note.id.uuidString) { [weak self] result in
+        let request = PromoteCheck.request(note: note, items: items(inProject: projectID))
+        runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString) { [weak self] result in
             guard let self else { return }
             // The note may have gone, or been promoted by hand, meanwhile.
             guard self.noteSuggestions[note.id] == .checking,
@@ -119,13 +122,15 @@ extension AppModel {
             }
             switch result {
             case .success(let reply):
-                let suggestion = PromoteCheck.suggestion(from: reply.output, note: current, items: self.items(inProject: projectID),
-                                                         askedFor: askedFor)
+                // Refs as they were when the call was made; the item must
+                // still be in the plan, and not done, to be suggested.
+                let suggestion = PromoteCheck.suggestion(from: reply.output, note: current, refs: request.refs,
+                                                         items: self.items(inProject: projectID), askedFor: askedFor)
                 if let suggestion { self.noteSuggestions[note.id] = suggestion } else { self.clearNoteSuggestion(note.id) }
             case .failure(let failure):
                 self.clearNoteSuggestion(note.id)
                 // Only something you asked for says so (step 4 brings the
-                // Needs You card for background failures).
+                // Job Failed card for background failures).
                 if askedFor { self.report(failure.message) }
             }
         }
@@ -179,7 +184,13 @@ extension AppModel {
         let launch = commands.assistant(call, in: directory.path, settingSources: AssistantSettingSources.value(userSettings: userSettings))
         // The output holds the note and the reply, so it isn't logged.
         let result = await run(launch, hideOutput: true)
-        return AssistantReplyParser.parse(result, timeout: AppModel.assistantJobTimeout, budget: call.maxBudgetUSD)
+        let parsed = AssistantReplyParser.parse(result, timeout: call.timeout, budget: call.maxBudgetUSD)
+        if case .failure(.invalidReply) = parsed {
+            // The output is hidden (it holds the note), so say what shape it had.
+            log.append(.error, "Assistant: \(call.job) gave a reply Claudio couldn't use",
+                       detail: AssistantReplyParser.summary(of: result.output))
+        }
+        return parsed
     }
 
     private func recordJob(_ call: AssistantCall, projectID: UUID, subject: String, result: Result<AssistantReply, AssistantFailure>) {

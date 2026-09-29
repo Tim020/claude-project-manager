@@ -13,7 +13,13 @@ extension AppModel {
         var unreadable = Set<UUID>()
         for project in state.workspace.projects {
             do {
-                loaded[project.id] = try assistantStore.load(projectID: project.id)
+                let data = try assistantStore.load(projectID: project.id)
+                loaded[project.id] = data
+                if !data.unreadableReasons.isEmpty {
+                    let place = assistantStore.location(projectID: project.id).map { "\($0)\n" } ?? ""
+                    log.append(.error, "Some of the assistant's entries for \(project.name) couldn't be read",
+                               detail: place + data.unreadableReasons.joined(separator: "\n") + "\nThey're kept as they were.")
+                }
             } catch {
                 unreadable.insert(project.id)
                 let place = assistantStore.location(projectID: project.id).map { "\($0): " } ?? ""
