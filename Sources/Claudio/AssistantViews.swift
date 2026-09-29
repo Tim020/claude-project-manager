@@ -114,6 +114,18 @@ private struct NoteCaptureBox: View {
                 Text(model.noteCaptureLinkText)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                if model.noteCapture?.sessionID != nil {
+                    // For a thought that isn't about this session.
+                    Button {
+                        model.unlinkNoteCapture()
+                        focused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 10.5))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.dim)
+                    .help("Don't link this note to a session")
+                }
                 Spacer(minLength: 4)
                 Button("Cancel") { model.cancelNoteCapture() }
                     .buttonStyle(.plain)

@@ -303,7 +303,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 #### Notes and authorship
 
 Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
-- **user:** from the capture box (⌘⇧N). The note may still be *linked* to the focused session, but the author is you.
+- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2). An unlinked note's promoted item goes to Unfiled.
 - **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
 - **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. Its marker is a teal `terminal` icon, with "A session" in the legend (build 9a; step 1 ships it).
 
@@ -335,6 +335,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
    - **Done in step 2:**
      - Plan items in `assistant.json`, now version 2, so a step 1 build refuses the file (read-only) rather than dropping the plan. A note's link to its item is stored on the note only.
      - **Lenient decoding** (carried over from step 1's review, PR #21): notes and items are decoded one by one. An entry that fails is kept as raw JSON, written back unchanged, and counted in the panel. The project is refused whole only for a newer version.
+     - **Added (Tim's request, PR #24):** an × on "Linked to <session>" in the capture box, so a note that isn't about the focused session (a new feature idea, say) can be saved unlinked. New Note pressed again keeps it unlinked.
      - **Moved earlier from step 4:** app-level Settings › Assistant (the switch, the threshold and the credits toggle), so the first Claude call ships with a way to turn it off. The project's mode is stored now (Automatic by default; Off makes Promote… add an Idea with no call). Its UI waits for step 4's Assistant Settings.
      - Each call is recorded in `audit.jsonl` (`jobRan`), for step 4's Activity Log view.
    - **Moved on to step 4:** tolerant reading of `audit.jsonl` (carried over from step 1's review). Step 2 doesn't read the log; the first reader is step 4's Activity Log view.

@@ -413,6 +413,9 @@ public final class AssistantFileStore: AssistantStoring {
 public struct NoteCapture: Equatable, Sendable {
     public var projectID: UUID
     public var sessionID: UUID?
+    /// You removed the link (the × in the capture box), so New Note pressed
+    /// again doesn't put it back.
+    public var isLinkRemoved = false
 
     public init(projectID: UUID, sessionID: UUID?) {
         self.projectID = projectID

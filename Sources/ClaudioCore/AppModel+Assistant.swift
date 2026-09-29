@@ -75,11 +75,23 @@ extension AppModel {
         setAssistantListMode(.notes)
         // Even when the box is already open, it takes the keyboard back.
         noteCaptureFocusRequest &+= 1
+        // Pressed again with the link removed, it stays unlinked: the unlink
+        // was a choice about this note, not the session in front of you.
+        if let current = noteCapture, current.projectID == projectID, current.isLinkRemoved { return }
         let capture = NoteCapture(projectID: projectID, sessionID: selectedSession.flatMap { $0.projectID == projectID ? $0.id : nil })
         // Pressed again for the same place, it keeps what's been typed.
         guard capture != noteCapture else { return }
         noteCapture = capture
         if !noteDraft.isEmpty { noteDraft = "" }
+    }
+
+    /// The × on "Linked to Shell Follow Up": this note isn't about that
+    /// session (a new idea, say), so it's saved without a link.
+    public func unlinkNoteCapture() {
+        guard var capture = noteCapture, capture.sessionID != nil else { return }
+        capture.sessionID = nil
+        capture.isLinkRemoved = true
+        noteCapture = capture
     }
 
     /// Whether the capture box is on screen: it's open, the Assistant is

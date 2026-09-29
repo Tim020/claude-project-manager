@@ -52,6 +52,33 @@ final class AssistantNotesTests: XCTestCase {
         }
     }
 
+    func testTheLinkCanBeRemovedForAThoughtThatIsntAboutTheSession() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            f.model.select(f.sessions[1])
+            f.model.beginNoteCapture()
+            f.model.updateNoteDraft("A new feature idea")
+            f.model.unlinkNoteCapture()
+            XCTAssertNil(f.model.noteCapture?.sessionID)
+            XCTAssertEqual(f.model.noteCaptureLinkText, "Not linked to a session")
+
+            f.model.beginNoteCapture()
+            XCTAssertNil(f.model.noteCapture?.sessionID, "New Note again doesn't put the link back")
+            XCTAssertEqual(f.model.noteDraft, "A new feature idea", "or lose what's typed")
+
+            let note = try XCTUnwrap(f.model.saveNoteCapture())
+            XCTAssertNil(note.sessionID)
+            XCTAssertNil(note.sessionName)
+            XCTAssertEqual(f.model.metaLine(for: note), "You · now")
+
+            f.model.beginNoteCapture()
+            XCTAssertEqual(f.model.noteCapture?.sessionID, f.sessions[1], "the next note is linked again")
+            f.model.cancelNoteCapture()
+            f.model.unlinkNoteCapture()
+            XCTAssertNil(f.model.noteCapture, "nothing to unlink without a capture")
+        }
+    }
+
     func testBlankNotesAreNotSaved() throws {
         try MainActor.assumeIsolated {
             let f = try makeFixture()
