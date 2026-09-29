@@ -136,6 +136,23 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// "Notification Grouping" (2.1.285): its Stop hook marked it Completed,
+    /// but the agent list says `state: "working"` (Claude Code thinks the task
+    /// goes on: it was waiting on CI) with `status: "idle"`. It stays Completed,
+    /// and says it finished.
+    func testAnIdleAgentWhoseTaskGoesOnIsntWorking() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertEqual(notifier.posted.map(\.kind), [.finished])
+        }
+    }
+
     func testStoppedUnexpectedlyIsOptional() throws {
         try MainActor.assumeIsolated {
             let (model, a, _) = try makeModel()
