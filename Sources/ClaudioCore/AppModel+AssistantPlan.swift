@@ -16,14 +16,48 @@ public enum AssistantPanelView: Equatable, Sendable {
 }
 
 /// What the assistant suggests for a note, shown on it until you answer.
-/// Kept in memory only: after a relaunch the note shows Promote… again.
-public enum NoteSuggestion: Equatable, Sendable {
+/// Saved per project in `suggestions.json`, so a relaunch shows it again
+/// (`checking` isn't saved: its call ends with the app).
+public enum NoteSuggestion: Codable, Equatable, Sendable {
     /// Being checked against the plan.
     case checking
-    /// "Reads like a bug. Promote it to the plan?"
+    /// "Create a plan item from this note?", with the reason ("Reads like a
+    /// bug.") and the item it would make.
     case promote(title: String, status: PlanStatus, reason: String)
-    /// "Looks like '…'. Attach it?"
+    /// "Attach this note to an existing plan item?", with the reason and the item.
     case attach(itemID: UUID, reason: String)
+}
+
+/// The words on a note's suggestion: a clear question first, then the
+/// assistant's reason as a sentence of its own, then what would happen.
+public enum SuggestionCopy {
+    public static let createQuestion = "Create a plan item from this note?"
+    public static let createButton = "Create Plan Item"
+    public static let attachQuestion = "Attach this note to an existing plan item?"
+    public static let attachButton = "Attach"
+
+    /// The model's reason as a sentence: one line, capitalised, ending in a
+    /// full stop, and cut at a word if it's long. Empty stays empty.
+    public static func sentence(_ text: String, maxLength: Int = 160) -> String {
+        var sentence = text.split(whereSeparator: \.isNewline).first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        guard let first = sentence.first else { return "" }
+        sentence = first.uppercased() + sentence.dropFirst()
+        if sentence.count > maxLength {
+            let cut = sentence.prefix(maxLength)
+            sentence = (cut.lastIndex(of: " ").map { String(cut[..<$0]) } ?? String(cut))
+                .trimmingCharacters(in: .whitespaces.union(.punctuationCharacters)) + "…"
+            return sentence
+        }
+        if let last = sentence.last, !".!?…".contains(last) { sentence += "." }
+        return sentence
+    }
+
+    /// What Create Plan Item would make: "New Planned item: Support
+    /// unlimited folder nesting", or "New Idea: …".
+    public static func createDetail(title: String, status: PlanStatus) -> String {
+        status == .idea ? "New Idea: \(title)" : "New \(status.label) item: \(title)"
+    }
 }
 
 /// What a note is attached to (see `AppModel.attachedItem(of:inProject:)`).
@@ -262,6 +296,50 @@ extension AppModel {
     /// Removes what the assistant suggested for a note (after Promote or
     /// Attach, Keep as Note, or when the note goes).
     public func clearNoteSuggestion(_ noteID: UUID) {
-        if noteSuggestions[noteID] != nil { noteSuggestions[noteID] = nil }
+        setNoteSuggestion(nil, for: noteID)
+    }
+
+    /// Every change to a note's suggestion comes through here, so what's
+    /// showing is saved for the next launch.
+    func setNoteSuggestion(_ suggestion: NoteSuggestion?, for noteID: UUID) {
+        guard noteSuggestions[noteID] != suggestion else { return }
+        noteSuggestions[noteID] = suggestion
+        persistNoteSuggestions()
+    }
+
+    /// Saves each project's suggestions if they've changed: those on its
+    /// notes, apart from Checking… (its call ends with the app).
+    func persistNoteSuggestions() {
+        for project in workspace.projects where !isAssistantDataUnreadable(project.id) {
+            let notes = Set(assistantData[project.id]?.notes.map(\.id) ?? [])
+            let current = noteSuggestions.filter { notes.contains($0.key) && $0.value != .checking }
+            guard current != savedNoteSuggestions[project.id] ?? [:] else { continue }
+            do {
+                try assistantStore.saveSuggestions(current, projectID: project.id)
+                savedNoteSuggestions[project.id] = current
+            } catch {
+                log.append(.error, "Couldn't save the assistant's suggestions for \(project.name)", detail: AppModel.describe(error))
+            }
+        }
+    }
+
+    /// At launch: the suggestions saved for a project that still apply.
+    /// Its note must be there without a plan item, and an Attach target
+    /// still in the plan and not done.
+    func restoreNoteSuggestions(projectID: UUID) {
+        let saved = assistantStore.loadSuggestions(projectID: projectID)
+        savedNoteSuggestions[projectID] = saved
+        guard let data = assistantData[projectID] else { return }
+        for (noteID, suggestion) in saved {
+            guard let note = data.notes.first(where: { $0.id == noteID }), note.itemID == nil else { continue }
+            switch suggestion {
+            case .checking:
+                continue
+            case .promote:
+                noteSuggestions[noteID] = suggestion
+            case .attach(let itemID, _):
+                if data.items.contains(where: { $0.id == itemID && $0.status != .done }) { noteSuggestions[noteID] = suggestion }
+            }
+        }
     }
 }

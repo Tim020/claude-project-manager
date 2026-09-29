@@ -81,6 +81,22 @@ final class AssistantPlanTests: XCTestCase {
         XCTAssertFalse(title.contains("  "))
     }
 
+    func testSuggestionWording() {
+        XCTAssertEqual(SuggestionCopy.sentence("concrete feature work with clear requirements stated"),
+                       "Concrete feature work with clear requirements stated.",
+                       "a sentence of its own: capitalised, with a full stop")
+        XCTAssertEqual(SuggestionCopy.sentence("Reads like a bug."), "Reads like a bug.")
+        XCTAssertEqual(SuggestionCopy.sentence("Is this a bug?"), "Is this a bug?")
+        XCTAssertEqual(SuggestionCopy.sentence("  \n "), "")
+        XCTAssertEqual(SuggestionCopy.sentence("First line\nsecond"), "First line.")
+        let long = SuggestionCopy.sentence(String(repeating: "word ", count: 60))
+        XCTAssertTrue(long.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(long.count, 161)
+        XCTAssertEqual(SuggestionCopy.createDetail(title: "Support unlimited folder nesting", status: .planned),
+                       "New Planned item: Support unlimited folder nesting")
+        XCTAssertEqual(SuggestionCopy.createDetail(title: "Shell themes", status: .idea), "New Idea: Shell themes")
+    }
+
     func testAttachDetachAndMetaLines() throws {
         try MainActor.assumeIsolated {
             let f = try makeFixture()

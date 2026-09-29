@@ -29,6 +29,12 @@ extension AppModel {
         }
         if loaded != assistantData { assistantData = loaded }
         if unreadable != unreadableAssistantProjects { unreadableAssistantProjects = unreadable }
+        // The suggestions that were showing, where they still apply; any
+        // that don't are dropped from the file too.
+        for project in state.workspace.projects where !unreadable.contains(project.id) {
+            restoreNoteSuggestions(projectID: project.id)
+        }
+        persistNoteSuggestions()
     }
 
     /// Whether a project's assistant file couldn't be read at launch: its

@@ -230,6 +230,9 @@ public final class AppModel {
     public var assistantFieldHasFocus = false
     /// What the assistant suggests for notes, by note id (see AppModel+AssistantPlan).
     public internal(set) var noteSuggestions: [UUID: NoteSuggestion] = [:]
+    /// What's in each project's `suggestions.json`, so it's only rewritten
+    /// when it changes.
+    @ObservationIgnored var savedNoteSuggestions: [UUID: [UUID: NoteSuggestion]] = [:]
     /// Assistant calls running now, and those waiting for a turn (see
     /// AppModel+AssistantJobs).
     @ObservationIgnored var assistantJobsRunning = 0

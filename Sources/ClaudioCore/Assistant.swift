@@ -320,11 +320,18 @@ public protocol AssistantStoring: AnyObject {
     /// The working directory for assistant calls: somewhere with no
     /// CLAUDE.md or project settings (nil: a temporary directory).
     func runsDirectory() -> URL?
+    /// The suggestions showing on a project's notes, so a relaunch shows
+    /// them again. Kept apart from `assistant.json`: they're throwaway (no
+    /// audit, no version), so a file that can't be read is just empty.
+    func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion]
+    func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws
 }
 
 extension AssistantStoring {
     public func location(projectID: UUID) -> String? { nil }
     public func runsDirectory() -> URL? { nil }
+    public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { [:] }
+    public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {}
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -332,12 +339,17 @@ extension AssistantStoring {
 public final class MemoryAssistantStore: AssistantStoring {
     public var data: [UUID: AssistantData] = [:]
     public var audit: [UUID: [AuditEntry]] = [:]
+    public var suggestions: [UUID: [UUID: NoteSuggestion]] = [:]
 
     public init() {}
 
     public func load(projectID: UUID) throws -> AssistantData { data[projectID] ?? AssistantData() }
     public func save(_ data: AssistantData, projectID: UUID) throws { self.data[projectID] = data }
     public func appendAudit(_ entry: AuditEntry, projectID: UUID) throws { audit[projectID, default: []].append(entry) }
+    public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { suggestions[projectID] ?? [:] }
+    public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {
+        self.suggestions[projectID] = suggestions
+    }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -365,6 +377,37 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func runsDirectory() -> URL? {
         root.appendingPathComponent("runs")
+    }
+
+    /// `suggestions.json`: note id → suggestion. Entries that can't be read
+    /// are skipped; the next save writes what's showing.
+    public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] {
+        let url = directory(projectID: projectID).appendingPathComponent("suggestions.json")
+        guard let data = try? Data(contentsOf: url),
+              let raw = try? JSONDecoder().decode([String: JSONValue].self, from: data)
+        else { return [:] }
+        var suggestions: [UUID: NoteSuggestion] = [:]
+        for (key, value) in raw {
+            guard let id = UUID(uuidString: key), let encoded = try? JSONEncoder().encode(value),
+                  let suggestion = try? JSONDecoder().decode(NoteSuggestion.self, from: encoded)
+            else { continue }
+            suggestions[id] = suggestion
+        }
+        return suggestions
+    }
+
+    public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {
+        let directory = directory(projectID: projectID)
+        let url = directory.appendingPathComponent("suggestions.json")
+        if suggestions.isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            return
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let keyed = Dictionary(uniqueKeysWithValues: suggestions.map { ($0.key.uuidString.lowercased(), $0.value) })
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(keyed).write(to: url, options: .atomic)
     }
 
     public func load(projectID: UUID) throws -> AssistantData {

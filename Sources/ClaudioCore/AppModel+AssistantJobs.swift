@@ -107,9 +107,17 @@ extension AppModel {
         clearNoteSuggestion(noteID)
     }
 
+    /// Check Again, on a suggestion or from a note's menu: asks afresh, as
+    /// Promote… does. The new answer replaces the old one; if the check
+    /// fails, the old one comes back.
+    public func recheckNote(_ noteID: UUID, projectID: UUID) {
+        requestPromote(noteID, projectID: projectID)
+    }
+
     private func checkNote(_ note: ProjectNote, projectID: UUID, askedFor: Bool) {
-        guard noteSuggestions[note.id] != .checking else { return }
-        noteSuggestions[note.id] = .checking
+        let previous = noteSuggestions[note.id]
+        guard previous != .checking else { return }
+        setNoteSuggestion(.checking, for: note.id)
         let request = PromoteCheck.request(note: note, items: items(inProject: projectID))
         runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString) { [weak self] result in
             guard let self else { return }
@@ -126,9 +134,10 @@ extension AppModel {
                 // still be in the plan, and not done, to be suggested.
                 let suggestion = PromoteCheck.suggestion(from: reply.output, note: current, refs: request.refs,
                                                          items: self.items(inProject: projectID), askedFor: askedFor)
-                if let suggestion { self.noteSuggestions[note.id] = suggestion } else { self.clearNoteSuggestion(note.id) }
+                self.setNoteSuggestion(suggestion, for: note.id)
             case .failure(let failure):
-                self.clearNoteSuggestion(note.id)
+                // A failed Check Again leaves the earlier answer in place.
+                self.setNoteSuggestion(previous, for: note.id)
                 // Only something you asked for says so (step 4 brings the
                 // Job Failed card for background failures).
                 if askedFor { self.report(failure.message) }

@@ -233,6 +233,8 @@ struct NoteCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Room for the ⋯ menu in the corner.
+                .padding(.trailing, 16)
             HStack(spacing: 6) {
                 AuthorMarker(author: note.author)
                 Text(model.metaLine(for: note))
@@ -240,9 +242,14 @@ struct NoteCard: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 if attached == .none && suggestion == nil {
-                    LinkLabelButton(title: "Promote…") { model.requestPromote(note.id, projectID: projectID) }
-                        .help(model.isAssistantOn(inProject: projectID)
-                              ? "Check this note against the plan" : "Add this note to the plan as an Idea")
+                    // Named for what it does: with the assistant on it asks
+                    // Claude, and nothing changes until you answer.
+                    let isOn = model.isAssistantOn(inProject: projectID)
+                    LinkLabelButton(title: isOn ? "Check Against Plan…" : "Add as Idea") {
+                        model.requestPromote(note.id, projectID: projectID)
+                    }
+                    .help(isOn ? "Ask the assistant whether this note is new work or part of an existing plan item"
+                               : "Add this note to the plan as an Idea")
                 }
                 if note.canUndo {
                     LinkLabelButton(title: "Undo") { model.undoNote(note.id, projectID: projectID) }
@@ -284,29 +291,66 @@ struct NoteCard: View {
         .padding(.vertical, 9)
         .background(RoundedRectangle(cornerRadius: 4).fill(isFresh ? DS.blue.opacity(0.12) : DS.input))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(isFresh ? DS.blue.opacity(0.5) : DS.border, lineWidth: 1))
-        .contextMenu {
-            Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(note.text, forType: .string)
+        // The ⋯ in the corner, for everywhere a right-click is taken by the
+        // selectable text's own menu.
+        .overlay(alignment: .topTrailing) {
+            Menu {
+                NoteMenuItems(note: note, projectID: projectID)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.muted)
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
             }
-            if attached == .none {
-                // Straight in, without the check (Promote… asks Claude first).
-                Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(.top, 6)
+            .padding(.trailing, 6)
+            .help("More")
+            .accessibilityLabel("Note actions")
+        }
+        .contextMenu { NoteMenuItems(note: note, projectID: projectID) }
+    }
+}
+
+/// A note's actions: its ⋯ menu and its right-click menu.
+private struct NoteMenuItems: View {
+    @Environment(AppModel.self) private var model
+    let note: ProjectNote
+    let projectID: UUID
+
+    var body: some View {
+        let attached = model.attachedItem(of: note, inProject: projectID)
+        let suggestion = model.noteSuggestions[note.id]
+        Button("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(note.text, forType: .string)
+        }
+        if attached == .none {
+            if model.isAssistantOn(inProject: projectID) {
+                Button(suggestion == nil ? "Check Against Plan" : "Check Again") {
+                    model.recheckNote(note.id, projectID: projectID)
+                }
+                .disabled(suggestion == .checking)
             }
-            let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
-            if !others.isEmpty {
-                Menu("Attach To") {
-                    ForEach(others.reversed()) { other in
-                        Button(other.title) { model.attachNote(note.id, to: other.id, projectID: projectID) }
-                    }
+            // Straight in, without the check.
+            Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
+        }
+        let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
+        if !others.isEmpty {
+            Menu("Attach To") {
+                ForEach(others.reversed()) { other in
+                    Button(other.title) { model.attachNote(note.id, to: other.id, projectID: projectID) }
                 }
             }
-            if attached != .none {
-                Button("Detach from Plan Item") { model.detachNote(note.id, projectID: projectID) }
-            }
-            Divider()
-            Button("Delete Note", role: .destructive) { model.deleteNote(note.id, projectID: projectID) }
         }
+        if attached != .none {
+            Button("Detach from Plan Item") { model.detachNote(note.id, projectID: projectID) }
+        }
+        Divider()
+        Button("Delete Note", role: .destructive) { model.deleteNote(note.id, projectID: projectID) }
     }
 }
 
@@ -330,17 +374,18 @@ private struct SuggestionBox: View {
                     Text(note).font(DS.font(11.5)).foregroundStyle(DS.dim)
                 }
             case .promote(let title, let status, let reason):
-                prompt(reason.isEmpty ? "Promote it to the plan?" : "\(reason) Promote it to the plan?",
-                       detail: "As \(status == .idea ? "an Idea" : status.label): \(title)")
-                actions(primary: "Promote") {
+                prompt(SuggestionCopy.createQuestion, reason: reason,
+                       detail: SuggestionCopy.createDetail(title: title, status: status))
+                actions(primary: SuggestionCopy.createButton) {
                     model.promoteNote(note.id, projectID: projectID, title: title, status: status)
                 }
-            case .attach(let itemID, _):
-                let title = model.item(itemID, inProject: projectID)?.title ?? "a plan item"
-                prompt("Looks like \"\(title)\". Attach it?", detail: nil)
+            case .attach(let itemID, let reason):
+                let item = model.item(itemID, inProject: projectID)
+                prompt(SuggestionCopy.attachQuestion, reason: reason,
+                       detail: item.map { "\"\($0.title)\" (\($0.status.label))" })
                 // New Item Instead: otherwise Keep as Note, then Promote…,
                 // would only suggest the same item again.
-                actions(primary: "Attach", secondary: ("New Item Instead", {
+                actions(primary: SuggestionCopy.attachButton, secondary: ("New Item Instead", {
                     model.promoteNote(note.id, projectID: projectID)
                 })) {
                     model.attachNote(note.id, to: itemID, projectID: projectID)
@@ -354,13 +399,26 @@ private struct SuggestionBox: View {
         .background(RoundedRectangle(cornerRadius: 4).fill(DS.window))
     }
 
-    private func prompt(_ text: String, detail: String?) -> some View {
+    /// The question, bold, on its own line; the assistant's reason under it;
+    /// then what would change.
+    private func prompt(_ question: String, reason: String, detail: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "sparkles").foregroundStyle(DS.blue)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(text).foregroundStyle(DS.text).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(question)
+                    .font(DS.font(12.5, .bold))
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !reason.isEmpty {
+                    Text(reason)
+                        .foregroundStyle(DS.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let detail {
-                    Text(detail).font(DS.font(11.5)).foregroundStyle(DS.dim).lineLimit(2)
+                    Text(detail)
+                        .font(DS.font(11.5))
+                        .foregroundStyle(DS.dim)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -375,6 +433,10 @@ private struct SuggestionBox: View {
                 LinkLabelButton(title: secondary.0, action: secondary.1)
             }
             LinkLabelButton(title: "Keep as Note") { model.keepAsNote(note.id) }
+            if model.isAssistantOn(inProject: projectID) {
+                LinkLabelButton(title: "Check Again") { model.recheckNote(note.id, projectID: projectID) }
+                    .help("Ask the assistant again, against the plan as it is now")
+            }
         }
         .padding(.leading, 22)
     }

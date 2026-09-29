@@ -385,9 +385,9 @@ private struct AssistantSettingsPage: View {
 
     var body: some View {
         SettingsGroup(title: "Assistant",
-                      footer: "Things you start yourself, such as Promote… on a note, always run.") {
+                      footer: "Things you start yourself, such as Check Against Plan… on a note, always run.") {
             SettingsToggleRow(title: "Use the assistant",
-                              subtitle: "Off turns it off in every project. Notes and plans stay, and Promote… adds an Idea without asking Claude.",
+                              subtitle: "Off turns it off in every project. Notes and plans stay, and a note's Add as Idea adds it to the plan without asking Claude.",
                               isOn: settingBinding(model, \.assistant.isEnabled))
             SettingsRow(title: "Pause background work at", subtitle: currentUsage) {
                 Stepper(value: settingBinding(model, \.assistant.pauseThreshold),
