@@ -163,6 +163,9 @@ public final class AppModel {
     @ObservationIgnored private let summaryCache = SessionSummaryCache()
     @ObservationIgnored private var lastOutputs: [String: String] = [:]
     @ObservationIgnored private var isRefreshingAgents = false
+    /// `claude --bg` commands still running. Their agents can be listed
+    /// before the command prints the id that links them to their session.
+    @ObservationIgnored private var launchingAgents = 0
     @ObservationIgnored private var isRefreshingProjects = false
     /// The message to send once the user confirms resuming a copy.
     @ObservationIgnored private var pendingCopyMessages: [UUID: String] = [:]
@@ -1255,6 +1258,11 @@ public final class AppModel {
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
                 }
+            } else if launchingAgents > 0 {
+                // It may be the agent a launch is starting, listed before the
+                // launch linked it: don't import it (a duplicate in Unfiled),
+                // or note its state. The poll after linking picks up the rest.
+                continue
             } else if !workspace.isRemoved(claudeSessionID: agent.sessionID, agentID: agent.id),
                       let projectID = workspace.projectID(forWorkingDirectory: agent.cwd) {
                 var session = Session(projectID: projectID, claudeSessionID: agent.sessionID, hasConversation: true,
@@ -1304,7 +1312,7 @@ public final class AppModel {
             return
         }
         let assistant = assistantLaunch(forProject: session.projectID)
-        let result = await run(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
+        let result = await launchAgent(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
         if await linkDispatched(sessionID, result: result) {
             if markLaunchedWithAssistant(sessionID, assistant) { save() }
             finishItemStart(sessionID, started: true)
@@ -1326,8 +1334,8 @@ public final class AppModel {
         // Resuming an agent with flags would copy it, so only a session that
         // isn't one yet gets the assistant's.
         let assistant = continuingAgent ? nil : assistantLaunch(forProject: session.projectID)
-        let result = await run(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent,
-                                               assistant: assistant))
+        let result = await launchAgent(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent,
+                                                       assistant: assistant))
         if await linkDispatched(sessionID, result: result), markLaunchedWithAssistant(sessionID, assistant) { save() }
     }
 
@@ -1339,6 +1347,15 @@ public final class AppModel {
     static func backgroundResumeMode(_ current: PermissionMode, default preferred: PermissionMode) -> PermissionMode? {
         guard current == .standard, preferred != .standard else { return nil }
         return preferred == .bypassPermissions ? .auto : preferred
+    }
+
+    /// Runs a `claude --bg` command, holding off imports from the agent list
+    /// until it's done: see `apply(_:)`. Link the result straight after,
+    /// before any suspension point.
+    private func launchAgent(_ launch: TerminalLaunch) async -> CommandResult {
+        launchingAgents += 1
+        defer { launchingAgents -= 1 }
+        return await run(launch)
     }
 
     /// True when the session is now the agent that started (not a copy).
