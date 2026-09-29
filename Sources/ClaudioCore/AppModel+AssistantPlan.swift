@@ -228,7 +228,7 @@ extension AppModel {
         if case .item(_, itemID) = assistantPanel { assistantPanel = .list }
     }
 
-    /// A project's mode (Automatic, Manual or Off; its UI comes in build step 5).
+    /// A project's mode (Automatic, Manual or Off; its UI comes in build step 4).
     public func assistantMode(ofProject projectID: UUID) -> AssistantMode {
         assistantData[projectID]?.mode ?? .automatic
     }

@@ -30,11 +30,18 @@ enum ToolRail {
 struct ToolHeader<Accessory: View>: View {
     let title: String
     var leadingInset: CGFloat = 0
+    /// A ‹ back button before the title, for a tool drilled into something.
+    var onBack: (() -> Void)? = nil
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
         HStack(spacing: 8) {
             Spacer().frame(width: leadingInset)
+            if let onBack {
+                IconButton(systemName: "chevron.left", help: "Back", size: 13, action: onBack)
+                    .padding(.leading, -6)
+                    .padding(.trailing, -4)
+            }
             Text(title.uppercased())
                 .font(DS.font(11, .extraBold))
                 .kerning(0.66)

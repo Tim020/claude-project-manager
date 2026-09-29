@@ -4,7 +4,7 @@ import ClaudioCore
 import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, sessions, notifications, roles, about
+    case general, sessions, notifications, roles, assistant, about
 
     var id: String { rawValue }
 
@@ -14,6 +14,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .sessions: return "New Sessions"
         case .notifications: return "Notifications"
         case .roles: return "Roles"
+        case .assistant: return "Assistant"
         case .about: return "About Claudio"
         }
     }
@@ -24,6 +25,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .sessions: return "How new sessions start: as background agents or directly, with which model and permissions."
         case .notifications: return "Choose which session changes tap you on the shoulder."
         case .roles: return "Labels for sessions, offered when you create one and shown on tabs."
+        case .assistant: return "The Project Assistant, in every project: whether it's on, and when background work pauses."
         case .about: return "A native home for your Claude Code sessions."
         }
     }
@@ -34,6 +36,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .sessions: return "plus.bubble.fill"
         case .notifications: return "bell.badge.fill"
         case .roles: return "tag.fill"
+        case .assistant: return "note.text"
         case .about: return "info.circle.fill"
         }
     }
@@ -44,11 +47,12 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .sessions: return DS.teal
         case .notifications: return DS.red
         case .roles: return DS.blue
+        case .assistant: return Color(hex: 0x5E5CE6)
         case .about: return DS.slate
         }
     }
 
-    static let main: [SettingsPane] = [.general, .sessions, .notifications, .roles]
+    static let main: [SettingsPane] = [.general, .sessions, .notifications, .roles, .assistant]
 }
 
 struct SettingsView: View {
@@ -105,6 +109,7 @@ struct SettingsView: View {
         case .sessions: SessionSettings()
         case .notifications: NotificationSettingsPage()
         case .roles: RoleSettings()
+        case .assistant: AssistantSettingsPage()
         case .about: AboutSettings()
         }
     }
@@ -368,6 +373,44 @@ private struct NotificationSettingsPage: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Assistant
+
+/// Settings › Assistant (design 9a): app-wide, because plan usage is the
+/// account's. Each project's mode comes with Assistant Settings (build step 4).
+private struct AssistantSettingsPage: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        SettingsGroup(title: "Assistant",
+                      footer: "Things you start yourself, such as Promote… on a note, always run.") {
+            SettingsToggleRow(title: "Use the assistant",
+                              subtitle: "Off turns it off in every project. Notes and plans stay, and Promote… adds an Idea without asking Claude.",
+                              isOn: settingBinding(model, \.assistant.isEnabled))
+            SettingsRow(title: "Pause background work at", subtitle: currentUsage) {
+                Stepper(value: settingBinding(model, \.assistant.pauseThreshold),
+                        in: AssistantAppSettings.pauseThresholdRange, step: 5) {
+                    Text("\(model.settings.assistant.pauseThreshold)%")
+                        .monospacedDigit()
+                        .frame(minWidth: 40, alignment: .trailing)
+                }
+            }
+            SettingsToggleRow(title: "Allow background work while using credits",
+                              subtitle: "Off by default, so background work doesn't spend usage credits.",
+                              showsSeparator: false,
+                              isOn: settingBinding(model, \.assistant.allowWhileUsingCredits))
+        }
+    }
+
+    /// "Of the 5-hour or weekly limit. Now: 5-hour 12% · Week 40%".
+    private var currentUsage: String {
+        let base = "Of the 5-hour or weekly limit."
+        guard let usage = model.usage?.current(at: Date()) else { return base }
+        let figures = [usage.fiveHour.map { "5-hour \(Int($0.usedPercentage.rounded()))%" },
+                       usage.sevenDay.map { "Week \(Int($0.usedPercentage.rounded()))%" }].compactMap { $0 }
+        return figures.isEmpty ? base : "\(base) Now: \(figures.joined(separator: " · "))"
     }
 }
 

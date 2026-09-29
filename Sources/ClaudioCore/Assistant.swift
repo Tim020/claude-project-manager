@@ -127,7 +127,7 @@ public struct PlanItem: Identifiable, Codable, Equatable, Sendable {
 }
 
 /// How much the assistant does in a project (design 9a, Assistant Settings;
-/// its UI comes in build step 5).
+/// its UI comes in build step 4).
 public enum AssistantMode: String, Codable, CaseIterable, Sendable {
     /// Also works in the background, such as checking a note you've just
     /// captured against the plan.
@@ -230,7 +230,7 @@ public struct AuditEntry: Codable, Equatable, Sendable {
         case jobRan
     }
 
-    /// One assistant call, for the Assistant's Activity Log (build step 5).
+    /// One assistant call, for the Assistant's Activity Log (build step 4).
     public struct Job: Codable, Equatable, Sendable {
         public var name: String
         public var model: String

@@ -216,6 +216,9 @@ public final class AppModel {
     public internal(set) var assistantListMode = AssistantListMode.plan
     /// The Assistant panel's list, or a plan item drilled into.
     public internal(set) var assistantPanel = AssistantPanelView.list
+    /// A text field in the Assistant panel (renaming a plan item) has the
+    /// keyboard, so session terminals leave it alone. Set by the view.
+    public var assistantFieldHasFocus = false
     /// What the assistant suggests for notes, by note id (see AppModel+AssistantPlan).
     public internal(set) var noteSuggestions: [UUID: NoteSuggestion] = [:]
     /// Assistant calls running now, and those waiting for a turn (see
