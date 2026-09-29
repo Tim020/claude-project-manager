@@ -463,6 +463,15 @@ extension AppModel {
         }
     }
 
+    /// An error as a sentence, to go before another: with a full stop,
+    /// unless it already ends in punctuation ("Couldn't refresh: timed out"
+    /// → "…timed out.").
+    nonisolated public static func sentence(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last, !".!?…".contains(last) else { return trimmed }
+        return trimmed + "."
+    }
+
     static func firstLine(_ text: String) -> String? {
         text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
     }

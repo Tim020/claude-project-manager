@@ -238,7 +238,7 @@ struct PullRequestsErrorBanner: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(DS.orange)
-                    Text("\(error) Showing data from \(age == "now" ? "just now" : "\(age) ago").")
+                    Text("\(AppModel.sentence(error)) Showing data from \(age == "now" ? "just now" : "\(age) ago").")
                         .font(DS.font(12))
                         .foregroundStyle(DS.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -545,19 +545,24 @@ private struct ProjectPullRequestRow: View {
 
     /// A column the whole history doesn't load (checks, review, changes).
     /// Loads while hovered (after a moment, so scrolling past doesn't) or
-    /// when the row is clicked. After a failure, clicking the red "—" only
-    /// retries, so the row stays in view to show whether it worked.
-    private var notLoaded: some View {
+    /// when the row is clicked. After a failure, clicking one of these red
+    /// cells only retries, so the row stays in view to show whether it
+    /// worked; clicking elsewhere on the row retries too, and navigates.
+    private func notLoaded(_ column: Int, alignment: Alignment = .leading) -> some View {
         Group {
             if model.loadingPullRequestDetails.contains(pullRequest.key) {
-                ProgressView().controlSize(.mini)
+                ProgressView().controlSize(.mini).column(column, alignment: alignment)
             } else if let failure = model.pullRequestDetailFailures[pullRequest.key] {
+                // The whole cell, not just the glyph, so a near miss doesn't
+                // navigate away.
                 Text("—").foregroundStyle(DS.red)
+                    .column(column, alignment: alignment)
                     .contentShape(Rectangle())
                     .onTapGesture { Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) } }
                     .help("Couldn't load its details: \(failure). Click to try again")
             } else {
                 Text("—").foregroundStyle(DS.dim)
+                    .column(column, alignment: alignment)
                     .help("Older pull requests load their details when hovered or clicked")
             }
         }
@@ -604,8 +609,8 @@ private struct ProjectPullRequestRow: View {
                         .lineLimit(2)
                         .column(2)
                 } else {
-                    notLoaded.column(1)
-                    notLoaded.column(2)
+                    notLoaded(1)
+                    notLoaded(2)
                 }
                 if !compact {
                     SessionChips(sessions: sessions)
@@ -614,7 +619,7 @@ private struct ProjectPullRequestRow: View {
                         LineCounts(additions: pullRequest.additions, deletions: pullRequest.deletions)
                             .column(4, alignment: .trailing)
                     } else {
-                        notLoaded.column(4, alignment: .trailing)
+                        notLoaded(4, alignment: .trailing)
                     }
                     Text(pullRequest.updatedAt.map { RelativeAge.string(from: $0, now: context.date) } ?? "")
                         .font(DS.font(12))

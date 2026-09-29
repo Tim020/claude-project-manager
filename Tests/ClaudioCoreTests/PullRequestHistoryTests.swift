@@ -564,6 +564,15 @@ final class PullRequestHistoryTests: XCTestCase {
         await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.error, "Couldn't refresh: timed out") }
     }
 
+    /// Errors go before "Showing data from…" in the banner, as sentences.
+    func testErrorsAsSentences() {
+        XCTAssertEqual(AppModel.sentence("Couldn't refresh: timed out"), "Couldn't refresh: timed out.")
+        XCTAssertEqual(AppModel.sentence("Couldn't read the repository from gh (gh repo view)."),
+                       "Couldn't read the repository from gh (gh repo view).")
+        XCTAssertEqual(AppModel.sentence("Is it on GitHub?\n"), "Is it on GitHub?")
+        XCTAssertEqual(AppModel.sentence(""), "")
+    }
+
     func testHistorySummary() async throws {
         let fixture = try Fixtures.string("gh-pr-list-history.json")
         await MainActor.run {
