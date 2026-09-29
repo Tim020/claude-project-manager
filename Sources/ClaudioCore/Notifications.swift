@@ -38,6 +38,13 @@ public struct SessionNotification: Equatable, Sendable {
     /// Notification Centre's id: a newer notification with the same one
     /// replaces the last (one per session, one per usage window).
     public var identifier: String
+    /// Notification Centre's group. Notifications in a group stack together and
+    /// can be cleared at once, so it's shared (all sessions, all usage resets),
+    /// not per session like `identifier`.
+    public var threadIdentifier: String
+
+    public static let sessionsThread = "sessions"
+    public static let usageThread = "usage"
 
     public init(sessionID: UUID, kind: Kind, title: String, subtitle: String, body: String) {
         self.sessionID = sessionID
@@ -46,6 +53,7 @@ public struct SessionNotification: Equatable, Sendable {
         self.subtitle = subtitle
         self.body = body
         identifier = sessionID.uuidString
+        threadIdentifier = Self.sessionsThread
     }
 
     /// A plan limit that was reached has reset.
@@ -62,6 +70,7 @@ public struct SessionNotification: Equatable, Sendable {
         }
         subtitle = ""
         identifier = "usage-reset-\(window.rawValue)"
+        threadIdentifier = Self.usageThread
     }
 }
 
