@@ -292,6 +292,12 @@ struct NoteCard: View {
             if attached == .none {
                 // Straight in, without the check (Promote… asks Claude first).
                 Button("Add to Plan") { model.promoteNote(note.id, projectID: projectID) }
+                if model.isAssistantOn(inProject: projectID) {
+                    Button(suggestion == nil ? "Check Against Plan" : "Check Again") {
+                        model.recheckNote(note.id, projectID: projectID)
+                    }
+                    .disabled(suggestion == .checking)
+                }
             }
             let others = model.items(inProject: projectID).filter { $0.id != note.itemID && $0.status != .done }
             if !others.isEmpty {
@@ -389,6 +395,10 @@ private struct SuggestionBox: View {
                 LinkLabelButton(title: secondary.0, action: secondary.1)
             }
             LinkLabelButton(title: "Keep as Note") { model.keepAsNote(note.id) }
+            if model.isAssistantOn(inProject: projectID) {
+                LinkLabelButton(title: "Check Again") { model.recheckNote(note.id, projectID: projectID) }
+                    .help("Ask the assistant again, against the plan as it is now")
+            }
         }
         .padding(.leading, 22)
     }

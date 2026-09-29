@@ -62,8 +62,9 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
     index.tsv                        project path → project id, for bin/claudio
     runs/                            working directory for `claude -p` jobs
     <project-id>/
-      assistant.json                 notes, plan items, suggestions, skill records
+      assistant.json                 notes, plan items, skill records
       audit.jsonl                    append-only change log (backs Undo)
+      suggestions.json               the suggestions showing on notes (throwaway: no audit, no version)
       plan.md                        read-only snapshot that `claudio plan` prints
       skills/.claude/skills/<name>/SKILL.md    ← the --add-dir root: approved skills only
       drafts/<suggestion-id>/SKILL.md          proposals, outside the add-dir so nothing loads them
@@ -336,6 +337,12 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - Plan items in `assistant.json`, now version 2, so a step 1 build refuses the file (read-only) rather than dropping the plan. A note's link to its item is stored on the note only.
      - **Lenient decoding** (carried over from step 1's review, PR #21): notes and items are decoded one by one. An entry that fails is kept as raw JSON, written back unchanged, and counted in the panel. The project is refused whole only for a newer version.
      - **Added (Tim's request, PR #24):** an × on "Linked to <session>" in the capture box, so a note that isn't about the focused session (a new feature idea, say) can be saved unlinked. New Note pressed again keeps it unlinked.
+     - **Added after step 2 (Tim's request, PR #25):**
+       - Suggestions on notes survive a relaunch, in `suggestions.json` beside `assistant.json`. That file is kept apart because suggestions are throwaway: they need no audit entry, and no version bump that would make step 2 builds refuse `assistant.json`.
+       - "Checking…" isn't saved.
+       - At launch, a saved suggestion is only restored if it still applies: its note is there without an item, and an Attach target is still in the plan and not done. The file is then rewritten to match.
+       - **Check Again** on a suggestion, and **Check Against Plan** in a note's menu, run the check afresh. The new answer replaces the old one, and a failed check leaves the old one in place.
+       - The suggestion's wording became a question on its own line ("Create a plan item from this note?"), then the reason, then the item.
      - **Moved earlier from step 4:** app-level Settings › Assistant (the switch, the threshold and the credits toggle), so the first Claude call ships with a way to turn it off. The project's mode is stored now (Automatic by default; Off makes Promote… add an Idea with no call). Its UI waits for step 4's Assistant Settings.
      - Each call is recorded in `audit.jsonl` (`jobRan`), for step 4's Activity Log view.
    - **Moved on to step 4:** tolerant reading of `audit.jsonl` (carried over from step 1's review). Step 2 doesn't read the log; the first reader is step 4's Activity Log view.
