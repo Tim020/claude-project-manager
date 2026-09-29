@@ -329,6 +329,10 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
     var recent = "[]"
     var views: [String: String] = [:]
     var threads = #"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}"#
+    /// The totals query's output; nil fails it.
+    var totals: String?
+    /// `gh pr list --json historyFields`'s output; nil fails it.
+    var history: String?
     var openExit: Int32 = 0
     var recentExit: Int32 = 0
     var threadsExit: Int32 = 0
@@ -351,6 +355,14 @@ final class FakeGitHub: CommandRunning, @unchecked Sendable {
         }
         if args.starts(with: ["repo", "view"]) {
             return CommandResult(exitCode: repoExit, output: repoExit == 0 ? repo : "", errorOutput: repoExit == 0 ? "" : repoError)
+        }
+        if args.starts(with: ["pr", "list"]), args.contains(GitHubCLI.historyFields) {
+            guard let history else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 504: Gateway Timeout\n") }
+            return CommandResult(exitCode: 0, output: history, errorOutput: "")
+        }
+        if args.contains("query=\(GitHubCLI.pullRequestTotalsQuery)") {
+            guard let totals else { return CommandResult(exitCode: 1, output: "", errorOutput: "HTTP 502: Bad Gateway\n") }
+            return CommandResult(exitCode: 0, output: totals, errorOutput: "")
         }
         if args.starts(with: ["pr", "list"]) {
             let exit = args.contains("open") ? openExit : recentExit

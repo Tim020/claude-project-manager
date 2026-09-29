@@ -10,6 +10,8 @@ extension AppModel {
     static let recentPullRequestLimit = 40
     /// Pull requests sessions acted on but the lists missed, fetched one by one.
     static let extraPullRequestLimit = 20
+    /// The most pull requests the whole history loads (about 40 s of gh).
+    static let historyPullRequestLimit = 5000
 
     /// Why pull requests can't be loaded, when gh isn't set up.
     public var gitHubCLIProblem: String? {
@@ -87,6 +89,24 @@ extension AppModel {
     public func pullRequestCount(projectID: UUID, filter: PullRequestFilter) -> Int {
         PullRequestOverview.count(projectPullRequests[projectID], workspace: workspace, projectID: projectID,
                                   filter: filter, includeUnlinked: includeUnlinkedPullRequests)
+    }
+
+    /// When a filter's count is more than the list shows (only the open and
+    /// most recent pull requests load): how many are listed, the count, and
+    /// the repository's pull requests on GitHub for the rest.
+    public func unlistedPullRequests(projectID: UUID, filter: PullRequestFilter) -> (listed: Int, total: Int, url: String)? {
+        let known = projectPullRequests[projectID]
+        let listed = PullRequestOverview.loadedCount(known, workspace: workspace, projectID: projectID,
+                                                     filter: filter, includeUnlinked: includeUnlinkedPullRequests)
+        let total = pullRequestCount(projectID: projectID, filter: filter)
+        guard total > listed, let repository = known?.repository else { return nil }
+        let query: String
+        switch filter {
+        case .needsAttention, .open: query = "is%3Apr+is%3Aopen"
+        case .merged: query = "is%3Apr+is%3Amerged"
+        case .all: query = "is%3Apr"
+        }
+        return (listed, total, repository.url + "/pulls?q=" + query)
     }
 
     /// The project's GitHub repository ("owner/repo"): as gh reports it,
@@ -206,6 +226,16 @@ extension AppModel {
             problems.append("recent pull requests: " + (Self.firstLine(recent.errorOutput) ?? "gh pr list failed"))
         }
 
+        // The lists stop at their limits, so the counts come from GitHub. A
+        // failure keeps the totals from before; the lists still show.
+        if let repository = loaded.repository?.nameWithOwner,
+           let args = GitHubCLI.pullRequestTotalsArguments(repository: repository) {
+            let result = await runGitHub(args, key: "totals")
+            if result.exitCode == 0, let totals = GitHubCLI.parsePullRequestTotals(result.output) {
+                loaded.totals = totals
+            }
+        }
+
         // Pull requests sessions opened or reviewed that neither list had
         // (older ones). Only this repository's: others aren't the project's.
         // Merged and closed ones don't change, so known ones are kept as they
@@ -215,7 +245,8 @@ extension AppModel {
         var toFetch: [String] = []
         for link in linked {
             guard let key = PullRequestKey.key(link.url), keys.insert(key).inserted else { continue }
-            if let known = previous?.item(forURL: link.url), !known.isOpen {
+            // (One from the history has no checks or review: fetch it.)
+            if let known = previous?.item(forURL: link.url), !known.isOpen, known.hasDetails {
                 items.append(known)
             } else {
                 toFetch.append(link.url)
@@ -231,11 +262,46 @@ extension AppModel {
             }
         }
 
+        // The rest of the history, if it's loaded: detailed ones win.
+        for item in loaded.history where keys.insert(item.key).inserted { items.append(item) }
+
         loaded.items = items
         loaded.error = problems.isEmpty ? nil : "Couldn't load " + problems.joined(separator: "; ")
         loaded.updatedAt = now()
         projectPullRequests[projectID] = loaded
         return true
+    }
+
+    /// Loads every pull request, without details (`GitHubCLI.historyFields`),
+    /// when a list counts more than have loaded: Merged or All, with pull
+    /// requests without a session included. Merged and closed ones rarely
+    /// change, and the recent list keeps new ones current, so it's loaded
+    /// again only when the count still runs ahead of the list, at most once
+    /// per refresh interval. A failure keeps what loaded before.
+    public func loadPullRequestHistory(_ projectID: UUID) async {
+        guard gitHubCLIProblem == nil, let gh = locateGitHubCLI(), let project = workspace.project(projectID),
+              let known = projectPullRequests[projectID], known.hasLoaded,
+              unlistedPullRequests(projectID: projectID, filter: pullRequestFilter) != nil,
+              !loadingPullRequestHistory.contains(projectID) else { return }
+        if let loadedAt = known.historyLoadedAt, now().timeIntervalSince(loadedAt) < AppModel.pullRequestRefreshInterval { return }
+        loadingPullRequestHistory.insert(projectID)
+        defer { loadingPullRequestHistory.remove(projectID) }
+        // A little over the total, for ones opened meanwhile.
+        let limit = min((known.totals?.all ?? AppModel.historyPullRequestLimit) + 50, AppModel.historyPullRequestLimit)
+        let result = await run(GitHubCLI.command(["pr", "list", "--state", "all", "--limit", "\(limit)", "--json", GitHubCLI.historyFields],
+                                                 in: project.path, gh: gh),
+                               logOnlyChanges: true, changeKey: "gh-history|\(project.path)")
+        // Another load may have finished meanwhile: build on the latest.
+        guard var loaded = projectPullRequests[projectID] else { return }
+        loaded.historyLoadedAt = now()
+        if result.exitCode == 0, let history = GitHubCLI.parsePullRequestHistory(result.output) {
+            // Open ones come from the open list, with details; the history's
+            // could be out of date by the next refresh.
+            loaded.history = history.filter { !$0.isOpen }
+            var keys = Set(loaded.items.map(\.key))
+            for item in loaded.history where keys.insert(item.key).inserted { loaded.items.append(item) }
+        }
+        projectPullRequests[projectID] = loaded
     }
 
     /// Every project's pull requests (sidebar chips and counts).

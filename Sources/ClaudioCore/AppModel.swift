@@ -204,6 +204,8 @@ public final class AppModel {
     public internal(set) var reviewThreadFailures = Set<String>()
     @ObservationIgnored var refreshingPullRequests = Set<UUID>()
     public internal(set) var loadingPullRequests = Set<UUID>()
+    /// Projects whose every pull request (`loadPullRequestHistory`) is loading.
+    public internal(set) var loadingPullRequestHistory = Set<UUID>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
     @ObservationIgnored private let isGitRepository: (String) -> Bool

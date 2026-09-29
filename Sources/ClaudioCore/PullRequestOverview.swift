@@ -68,11 +68,21 @@ public struct ProjectPullRequests: Equatable, Sendable {
     /// gh found no GitHub repository here: it isn't polled again (the
     /// refresh button still tries).
     public var isNotGitHub: Bool
+    /// How many pull requests GitHub has, by state; `items` holds only the
+    /// open and most recent ones. Nil until they've loaded.
+    public var totals: GitHubCLI.PullRequestTotals?
+    /// Every pull request, without details (`loadPullRequestHistory`),
+    /// loaded when a list needs more than the open and recent ones. `items`
+    /// includes the ones the other lists don't have.
+    public var history: [PullRequestInfo] = []
+    public var historyLoadedAt: Date?
 
     public init(repository: GitHubCLI.Repository? = nil, items: [PullRequestInfo] = [], updatedAt: Date? = nil,
-                attemptedAt: Date? = nil, error: String? = nil, isNotGitHub: Bool = false) {
+                attemptedAt: Date? = nil, error: String? = nil, isNotGitHub: Bool = false,
+                totals: GitHubCLI.PullRequestTotals? = nil) {
         self.repository = repository
         self.items = items
+        self.totals = totals
         self.updatedAt = updatedAt
         self.attemptedAt = attemptedAt ?? updatedAt
         self.error = error
@@ -81,6 +91,18 @@ public struct ProjectPullRequests: Equatable, Sendable {
 
     /// Something has loaded, even if the last refresh failed.
     public var hasLoaded: Bool { updatedAt != nil }
+
+    /// GitHub's total for a filter, when it has one. Needs Attention is
+    /// worked out here, from the loaded (open) pull requests.
+    public func total(for filter: PullRequestFilter) -> Int? {
+        guard let totals else { return nil }
+        switch filter {
+        case .needsAttention: return nil
+        case .open: return totals.open
+        case .merged: return totals.merged
+        case .all: return totals.all
+        }
+    }
 
     public func item(forURL url: String) -> PullRequestInfo? {
         guard let key = PullRequestKey.key(url) else { return nil }
@@ -165,6 +187,16 @@ public enum PullRequestOverview {
     /// How many pull requests each filter tab would show.
     public static func count(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                              filter: PullRequestFilter, includeUnlinked: Bool) -> Int {
+        let loaded = loadedCount(known, workspace: workspace, projectID: projectID, filter: filter, includeUnlinked: includeUnlinked)
+        // Counting every pull request: GitHub's total, since only the open
+        // and most recent ones load. Never fewer than are listed.
+        guard includeUnlinked, let total = known?.total(for: filter) else { return loaded }
+        return max(total, loaded)
+    }
+
+    /// How many of the loaded pull requests a filter lists.
+    public static func loadedCount(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
+                                   filter: PullRequestFilter, includeUnlinked: Bool) -> Int {
         guard let known else { return 0 }
         let repository = known.repository?.nameWithOwner
         return known.items.filter { pullRequest in
