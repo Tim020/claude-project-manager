@@ -46,6 +46,8 @@ After a capture in Automatic mode, the note shows "Checking it against the plan�
 - **New item:** "Reads like a bug. Promote it to the plan?" with Promote or Keep as Note.
 - **Duplicate:** "Looks like 'Remember Shell panel height per project'. Attach it?" with Attach or Keep as Note. Attach links the note to that item.
 
+*(Changed in the build, not in the Claude Design file: the question now comes first, on its own line, as "Create a plan item from this note?" (button **Create Plan Item**) or "Attach this note to an existing plan item?" (**Attach**, plus **New Item Instead**). The assistant's reason follows as its own sentence, then the item: "New Planned item: …", or the existing item's title and status. The old single line ran the model's reason into the question, and "Promote" was unclear.)*
+
 What happens in other modes:
 - **Manual, or paused:** no automatic check. **Promote…** runs the same check. While usage is high, it shows "5-hour usage is 84%. Things you start still run."
 - **Off:** Promote… creates an Idea straight away, titled from the note, with no Claude call.

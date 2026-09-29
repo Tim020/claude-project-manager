@@ -20,10 +20,43 @@ public enum AssistantPanelView: Equatable, Sendable {
 public enum NoteSuggestion: Equatable, Sendable {
     /// Being checked against the plan.
     case checking
-    /// "Reads like a bug. Promote it to the plan?"
+    /// "Create a plan item from this note?", with the reason ("Reads like a
+    /// bug.") and the item it would make.
     case promote(title: String, status: PlanStatus, reason: String)
-    /// "Looks like '…'. Attach it?"
+    /// "Attach this note to an existing plan item?", with the reason and the item.
     case attach(itemID: UUID, reason: String)
+}
+
+/// The words on a note's suggestion: a clear question first, then the
+/// assistant's reason as a sentence of its own, then what would happen.
+public enum SuggestionCopy {
+    public static let createQuestion = "Create a plan item from this note?"
+    public static let createButton = "Create Plan Item"
+    public static let attachQuestion = "Attach this note to an existing plan item?"
+    public static let attachButton = "Attach"
+
+    /// The model's reason as a sentence: one line, capitalised, ending in a
+    /// full stop, and cut at a word if it's long. Empty stays empty.
+    public static func sentence(_ text: String, maxLength: Int = 160) -> String {
+        var sentence = text.split(whereSeparator: \.isNewline).first.map(String.init)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        guard let first = sentence.first else { return "" }
+        sentence = first.uppercased() + sentence.dropFirst()
+        if sentence.count > maxLength {
+            let cut = sentence.prefix(maxLength)
+            sentence = (cut.lastIndex(of: " ").map { String(cut[..<$0]) } ?? String(cut))
+                .trimmingCharacters(in: .whitespaces.union(.punctuationCharacters)) + "…"
+            return sentence
+        }
+        if let last = sentence.last, !".!?…".contains(last) { sentence += "." }
+        return sentence
+    }
+
+    /// What Create Plan Item would make: "New Planned item: Support
+    /// unlimited folder nesting", or "New Idea: …".
+    public static func createDetail(title: String, status: PlanStatus) -> String {
+        status == .idea ? "New Idea: \(title)" : "New \(status.label) item: \(title)"
+    }
 }
 
 /// What a note is attached to (see `AppModel.attachedItem(of:inProject:)`).

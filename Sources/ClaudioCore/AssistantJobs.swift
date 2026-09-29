@@ -250,7 +250,7 @@ public enum PromoteCheck {
     /// suggestion even when the model wouldn't have made one.
     public static func suggestion(from reply: JSONValue, note: ProjectNote, refs: [String: UUID], items: [PlanItem],
                                   askedFor: Bool) -> NoteSuggestion? {
-        let reason = PlanTitle.clean(reply["reason"]?.stringValue ?? "")
+        let reason = SuggestionCopy.sentence(reply["reason"]?.stringValue ?? "")
         if let ref = reply["duplicateOf"]?.stringValue, let itemID = refs[ref],
            items.contains(where: { $0.id == itemID && $0.status != .done }) {
             return .attach(itemID: itemID, reason: reason)

@@ -330,17 +330,18 @@ private struct SuggestionBox: View {
                     Text(note).font(DS.font(11.5)).foregroundStyle(DS.dim)
                 }
             case .promote(let title, let status, let reason):
-                prompt(reason.isEmpty ? "Promote it to the plan?" : "\(reason) Promote it to the plan?",
-                       detail: "As \(status == .idea ? "an Idea" : status.label): \(title)")
-                actions(primary: "Promote") {
+                prompt(SuggestionCopy.createQuestion, reason: reason,
+                       detail: SuggestionCopy.createDetail(title: title, status: status))
+                actions(primary: SuggestionCopy.createButton) {
                     model.promoteNote(note.id, projectID: projectID, title: title, status: status)
                 }
-            case .attach(let itemID, _):
-                let title = model.item(itemID, inProject: projectID)?.title ?? "a plan item"
-                prompt("Looks like \"\(title)\". Attach it?", detail: nil)
+            case .attach(let itemID, let reason):
+                let item = model.item(itemID, inProject: projectID)
+                prompt(SuggestionCopy.attachQuestion, reason: reason,
+                       detail: item.map { "\"\($0.title)\" (\($0.status.label))" })
                 // New Item Instead: otherwise Keep as Note, then Promote…,
                 // would only suggest the same item again.
-                actions(primary: "Attach", secondary: ("New Item Instead", {
+                actions(primary: SuggestionCopy.attachButton, secondary: ("New Item Instead", {
                     model.promoteNote(note.id, projectID: projectID)
                 })) {
                     model.attachNote(note.id, to: itemID, projectID: projectID)
@@ -354,13 +355,26 @@ private struct SuggestionBox: View {
         .background(RoundedRectangle(cornerRadius: 4).fill(DS.window))
     }
 
-    private func prompt(_ text: String, detail: String?) -> some View {
+    /// The question, bold, on its own line; the assistant's reason under it;
+    /// then what would change.
+    private func prompt(_ question: String, reason: String, detail: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: "sparkles").foregroundStyle(DS.blue)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(text).foregroundStyle(DS.text).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(question)
+                    .font(DS.font(12.5, .bold))
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !reason.isEmpty {
+                    Text(reason)
+                        .foregroundStyle(DS.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let detail {
-                    Text(detail).font(DS.font(11.5)).foregroundStyle(DS.dim).lineLimit(2)
+                    Text(detail)
+                        .font(DS.font(11.5))
+                        .foregroundStyle(DS.dim)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
