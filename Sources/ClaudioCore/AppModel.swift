@@ -239,8 +239,6 @@ public final class AppModel {
     /// AppModel+AssistantJobs).
     @ObservationIgnored var assistantJobsRunning = 0
     @ObservationIgnored var assistantJobQueue: [QueuedAssistantJob] = []
-    /// Projects with an assistant call running: one at a time each.
-    @ObservationIgnored var assistantProjectsRunning = Set<UUID>()
     /// Each project's Needs You (see AppModel+FollowUps).
     public internal(set) var needsYou: [UUID: NeedsYouData] = [:]
     /// What's in each project's `needs-you.json`, so it's only rewritten when it changes.
@@ -256,6 +254,11 @@ public final class AppModel {
     /// Where each session's history file was found, by conversation, so
     /// the check every 15 s only reads its size (finding it lists folders).
     @ObservationIgnored var followUpHistoryFiles: [UUID: (conversationID: String, url: URL)] = [:]
+    /// Conversations whose history file wasn't found (Claude Code deletes old
+    /// ones), so they aren't looked for every 15 s. Looked for again at launch.
+    @ObservationIgnored var followUpHistoryMissing: [UUID: String] = [:]
+    /// Projects with a background call running: one at a time each.
+    @ObservationIgnored var assistantBackgroundProjects = Set<UUID>()
     /// Failed follow-ups' digests, so Try Again asks the same question.
     @ObservationIgnored var retryDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
     /// Assistant calls running now, by a token, so tests can wait for them.
@@ -1146,6 +1149,10 @@ public final class AppModel {
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
         session.namedSkills = request.namedSkills
+        // Everything a new session does is new to the assistant: a mark that
+        // matches no conversation reads its history from the top. (Sessions
+        // without a mark are ones from before, and get a baseline instead.)
+        session.followUpMark = FollowUpMark(conversationID: "", offset: 0)
         // Give Claude Code the same name once the session has a history file.
         if session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }

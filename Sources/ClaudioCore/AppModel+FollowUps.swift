@@ -72,11 +72,21 @@ extension AppModel {
         if let cached = followUpHistoryFiles[session.id], cached.conversationID == conversationID, let bytes = size(cached.url) {
             return (cached.url, conversationID, bytes)
         }
-        guard let project = workspace.project(session.projectID),
-              let url = discovery.historyItems(projectPath: project.path, workingDirectory: session.workingDirectory,
-                                               claudeSessionID: conversationID).first(where: { $0.pathExtension == "jsonl" }),
-              let bytes = size(url)
-        else { return nil }
+        guard followUpHistoryMissing[session.id] != conversationID, let project = workspace.project(session.projectID) else {
+            return nil
+        }
+        // The newest, when a conversation has files in both the repository's
+        // folder and a worktree's.
+        let files = discovery.historyItems(projectPath: project.path, workingDirectory: session.workingDirectory,
+                                           claudeSessionID: conversationID).filter { $0.pathExtension == "jsonl" }
+        func modified(_ url: URL) -> Date {
+            (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
+        }
+        guard let url = files.max(by: { modified($0) < modified($1) }), let bytes = size(url) else {
+            followUpHistoryMissing[session.id] = conversationID
+            return nil
+        }
+        followUpHistoryMissing[session.id] = nil
         followUpHistoryFiles[session.id] = (conversationID, url)
         return (url, conversationID, bytes)
     }
@@ -178,7 +188,8 @@ extension AppModel {
                                           sessionNotes: notes(inProject: projectID).filter { $0.sessionID == sessionID },
                                           memoryIndex: memoryIndex(forProject: projectID))
         let id = followUp.id
-        runAssistantJob(request.call, projectID: projectID, subject: sessionID.uuidString, key: "followup:\(sessionID)") {
+        runAssistantJob(request.call, projectID: projectID, subject: sessionID.uuidString, key: "followup:\(sessionID)",
+                        isBackground: !askedFor) {
             [weak self] result in
             self?.finishFollowUp(id, sessionID: sessionID, projectID: projectID, request: request, digest: digest,
                                  result: result)

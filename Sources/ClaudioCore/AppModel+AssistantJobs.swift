@@ -22,6 +22,9 @@ public enum AssistantGate: Equatable, Sendable {
 struct QueuedAssistantJob {
     var key: String?
     var projectID: UUID
+    /// Background work: one at a time per project. Things you start only
+    /// wait for the overall limit, never behind a background call.
+    var isBackground: Bool
     var work: @MainActor () async -> Void
 }
 
@@ -154,7 +157,8 @@ extension AppModel {
         guard previous != .checking else { return }
         setNoteSuggestion(.checking, for: note.id)
         let request = PromoteCheck.request(note: note, items: items(inProject: projectID))
-        runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString) { [weak self] result in
+        runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString, isBackground: !askedFor) {
+            [weak self] result in
             guard let self else { return }
             // The note may have gone, or been promoted by hand, meanwhile.
             guard self.noteSuggestions[note.id] == .checking,
@@ -184,11 +188,13 @@ extension AppModel {
 
     /// Runs an assistant call when a slot is free, records it in the audit
     /// log and the Activity Log, and hands its result back on the main actor.
-    /// At most two run at once, and one per project. `key`: a newer job with
-    /// the same key replaces one still waiting (its completion isn't called).
+    /// At most two run at once, and one background call per project. `key`:
+    /// a newer job with the same key replaces one still waiting (its
+    /// completion isn't called).
     func runAssistantJob(_ call: AssistantCall, projectID: UUID, subject: String, key: String? = nil,
+                         isBackground: Bool = false,
                          completion: @escaping @MainActor (Result<AssistantReply, AssistantFailure>) -> Void) {
-        let job = QueuedAssistantJob(key: key, projectID: projectID) { [weak self] in
+        let job = QueuedAssistantJob(key: key, projectID: projectID, isBackground: isBackground) { [weak self] in
             guard let self else { return }
             let result = await self.performAssistantCall(call)
             self.recordJob(call, projectID: projectID, subject: subject, result: result)
@@ -209,16 +215,16 @@ extension AppModel {
 
     private func startQueuedAssistantJobs() {
         while assistantJobsRunning < AppModel.maxAssistantJobs,
-              let index = assistantJobQueue.firstIndex(where: { !assistantProjectsRunning.contains($0.projectID) }) {
+              let index = assistantJobQueue.firstIndex(where: { !$0.isBackground || !assistantBackgroundProjects.contains($0.projectID) }) {
             let job = assistantJobQueue.remove(at: index)
             assistantJobsRunning += 1
-            assistantProjectsRunning.insert(job.projectID)
+            if job.isBackground { assistantBackgroundProjects.insert(job.projectID) }
             let id = UUID()
             assistantJobTasks[id] = Task { @MainActor [weak self] in
                 await job.work()
                 guard let self else { return }
                 self.assistantJobsRunning -= 1
-                self.assistantProjectsRunning.remove(job.projectID)
+                if job.isBackground { self.assistantBackgroundProjects.remove(job.projectID) }
                 // Finished, so it's no longer held.
                 self.assistantJobTasks[id] = nil
                 self.startQueuedAssistantJobs()

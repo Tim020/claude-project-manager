@@ -378,16 +378,75 @@ final class FollowUpModelTests: XCTestCase {
         }
     }
 
+    /// The one that matters most: a session made after this build is
+    /// followed up the first time it finishes, not given a baseline.
+    func testANewSessionsFirstFinishIsFollowedUp() async throws {
+        let f = try await makeFixture(mark: true)
+        let id = try await MainActor.run { () -> UUID in
+            let request = NewSessionRequest(projectID: f.project, folderID: nil, name: "New", role: .code, prompt: "",
+                                            model: nil, permissionMode: .standard)
+            let id = try XCTUnwrap(f.model.createSession(request))
+            XCTAssertEqual(f.model.workspace.session(id)?.followUpMark, FollowUpMark(conversationID: "", offset: 0))
+            f.model.terminalExited(id, exitCode: 0)
+            f.model.applyTestSessionChange(id) {
+                $0.hasConversation = true
+                $0.status = .completed
+                $0.lastActivity = FollowUpModelTests.now.addingTimeInterval(-600)
+            }
+            return id
+        }
+        let conversation = try await MainActor.run { try XCTUnwrap(f.model.workspace.session(id)?.claudeSessionID) }
+        let history = f.history.deletingLastPathComponent().appendingPathComponent("\(conversation).jsonl")
+        try (substantial.joined(separator: "\n") + "\n").write(to: history, atomically: true, encoding: .utf8)
+        let before = f.runner.calls.count
+        await f.model.checkFollowUps()
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, before + 1, "no baseline: everything it did is new")
+        let state = await MainActor.run { f.model.followUpCard(forSession: id)?.state }
+        XCTAssertEqual(state, .ready)
+    }
+
+    func testAMissingHistoryFileIsntLookedForEveryTick() async throws {
+        let f = try await makeFixture(mark: true)
+        try FileManager.default.removeItem(at: f.history)
+        await f.model.checkFollowUps()
+        let missing = await MainActor.run { f.model.followUpHistoryMissing[f.session] }
+        XCTAssertEqual(missing, "c0ffee00-1111-2222-3333-444455556666", "remembered until the next launch")
+        XCTAssertTrue(f.runner.calls.isEmpty)
+    }
+
+    /// Background calls: one at a time per project. Things you start never
+    /// wait behind one.
+    func testBackgroundWorkIsOnePerProject() async throws {
+        let f = try await makeFixture(mark: true)
+        let call = AssistantCall(job: "t", model: "haiku", systemPrompt: "", schema: "{}", input: "{}")
+        await MainActor.run {
+            f.model.runAssistantJob(call, projectID: f.project, subject: "a", isBackground: true) { _ in }
+            f.model.runAssistantJob(call, projectID: f.project, subject: "b", key: "b", isBackground: true) { _ in }
+            XCTAssertTrue(f.model.isAssistantJobQueued(key: "b"), "a second background call in the project waits")
+            f.model.runAssistantJob(call, projectID: f.project, subject: "mine", key: "mine") { _ in }
+            XCTAssertFalse(f.model.isAssistantJobQueued(key: "mine"), "yours runs beside it")
+            XCTAssertEqual(f.model.assistantJobsRunning, 2)
+        }
+        await f.model.waitForAssistantJobs()
+    }
+
     func testAQueuedJobWithTheSameKeyIsReplaced() async throws {
         let f = try await makeFixture(mark: true)
         let finished = await MainActor.run { Finished() }
         let call = AssistantCall(job: "t", model: "haiku", systemPrompt: "", schema: "{}", input: "{}")
         await MainActor.run {
-            // One at a time per project: A runs, B waits and is replaced by B2.
-            f.model.runAssistantJob(call, projectID: f.project, subject: "a", key: "a") { _ in finished.names.append("a") }
-            f.model.runAssistantJob(call, projectID: f.project, subject: "b", key: "b") { _ in finished.names.append("b") }
+            // One background call at a time per project: A runs, B waits and is replaced by B2.
+            f.model.runAssistantJob(call, projectID: f.project, subject: "a", key: "a", isBackground: true) {
+                _ in finished.names.append("a")
+            }
+            f.model.runAssistantJob(call, projectID: f.project, subject: "b", key: "b", isBackground: true) {
+                _ in finished.names.append("b")
+            }
             XCTAssertTrue(f.model.isAssistantJobQueued(key: "b"), "same project: it waits")
-            f.model.runAssistantJob(call, projectID: f.project, subject: "b2", key: "b") { _ in finished.names.append("b2") }
+            f.model.runAssistantJob(call, projectID: f.project, subject: "b2", key: "b", isBackground: true) {
+                _ in finished.names.append("b2")
+            }
         }
         await f.model.waitForAssistantJobs()
         try await waitUntil { await MainActor.run { finished.names.count == 2 } }

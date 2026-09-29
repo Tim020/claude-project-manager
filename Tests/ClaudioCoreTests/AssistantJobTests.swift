@@ -357,19 +357,18 @@ final class AssistantJobTests: XCTestCase {
         }
     }
 
-    /// Two at once overall, and one at a time per project (step 4a).
-    func testAtMostTwoCallsRunAtOnceAndOnePerProject() async throws {
+    /// Two at once overall. Things you start aren't held to one per
+    /// project (that's for background work: see FollowUpModelTests).
+    func testAtMostTwoCallsRunAtOnce() async throws {
         let f = try await MainActor.run { try makeFixture() }
         f.runner.reply = try reply("assistant-promote-new.json")
         try await MainActor.run {
-            let other = f.model.addProject(path: "/code/other")
-            let third = f.model.addProject(path: "/code/third")
-            for (text, project) in [("A", f.project), ("B", f.project), ("C", other), ("D", third)] {
-                let note = try XCTUnwrap(f.model.addNote(text, author: .user, projectID: project, sessionID: nil))
-                f.model.requestPromote(note.id, projectID: project)
+            for text in ["A", "B", "C", "D"] {
+                let note = try XCTUnwrap(f.model.addNote(text, author: .user, projectID: f.project, sessionID: nil))
+                f.model.requestPromote(note.id, projectID: f.project)
             }
-            XCTAssertEqual(f.model.assistantJobsRunning, 2, "A and C")
-            XCTAssertEqual(f.model.assistantJobQueue.count, 2, "B waits for its project, D for a slot")
+            XCTAssertEqual(f.model.assistantJobsRunning, 2, "A and B, though they're in one project")
+            XCTAssertEqual(f.model.assistantJobQueue.count, 2, "C and D wait for a slot")
         }
         await f.model.waitForAssistantJobs()
         await MainActor.run {
