@@ -153,6 +153,20 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// A turn that ended with a question: the Stop hook says it's waiting on
+    /// you, and an idle agent in the list doesn't turn that into Completed.
+    func testAnIdleAgentKeepsAQuestionWaiting() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.applyStatus(a, .awaitingInput, summary: "Shall I open the PR?")
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .awaitingInput)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .working, "you answered, so it's working again")
+        }
+    }
+
     func testStoppedUnexpectedlyIsOptional() throws {
         try MainActor.assumeIsolated {
             let (model, a, _) = try makeModel()

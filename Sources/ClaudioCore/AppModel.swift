@@ -1250,7 +1250,12 @@ public final class AppModel {
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
-                    if stateChanged {
+                    // An idle agent doesn't undo "waiting on you": the hooks saw
+                    // a question or a permission prompt that the agent list
+                    // may not (it only says the process is idle). The next
+                    // prompt, or the agent going busy, moves it on.
+                    let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
+                    if stateChanged && !keepsWaiting {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
