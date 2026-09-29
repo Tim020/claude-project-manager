@@ -184,7 +184,7 @@ final class ProcessCommandRunnerTests: XCTestCase {
         XCTAssertEqual(result.errorOutput, "")
         await MainActor.run { XCTAssertEqual(AppModel.failureReason(result, command: "gh pr list"), "timed out") }
         #else
-        throw XCTSkip("ProcessCommandRunner's timeout kill doesn't take effect on Linux (swift-corelibs-foundation)")
+        throw XCTSkip("ProcessCommandRunner's timeout kill didn't take effect on Linux (swift:6.1-noble); not diagnosed")
         #endif
     }
 

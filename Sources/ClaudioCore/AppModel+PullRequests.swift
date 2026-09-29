@@ -187,8 +187,10 @@ extension AppModel {
         var loaded = previous ?? ProjectPullRequests()
         let attemptedAt = now()
         loaded.attemptedAt = attemptedAt
-        // Changes go onto the latest value, not `previous`: a history load or
-        // an older pull request's details may have landed meanwhile.
+        // A failure (or the repository, once known) goes onto the latest
+        // value, not `previous`: a history load or an older pull request's
+        // details may have landed meanwhile. The success path at the end
+        // writes `loaded`, taking the history from the latest value.
         func update(_ body: (inout ProjectPullRequests) -> Void) {
             var current = projectPullRequests[projectID] ?? loaded
             current.attemptedAt = attemptedAt

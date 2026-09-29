@@ -139,7 +139,8 @@ public struct ProjectPullRequests: Equatable, Sendable {
 public struct PullRequestHistory: Equatable, Sendable {
     /// Merged and closed ones, mostly without details (`hasDetails`).
     public var items: [PullRequestInfo] = []
-    /// When it was last tried, successful or not.
+    /// When it was last tried, successful or not; nil again after a
+    /// successful refresh button press clears a failure (to retry it).
     public var loadedAt: Date?
     /// GitHub's totals when it last loaded successfully (a failure keeps
     /// them).
@@ -147,7 +148,8 @@ public struct PullRequestHistory: Equatable, Sendable {
     /// The last successful load stopped at the limit
     /// (`historyPullRequestLimit`).
     public var isCapped = false
-    /// Why the last try failed; nil once one succeeds.
+    /// Why the last try failed; nil once one succeeds, or once a refresh
+    /// button press succeeds (which retries it).
     public var error: String?
 
     public init() {}
