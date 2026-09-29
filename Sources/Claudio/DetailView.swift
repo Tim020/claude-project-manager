@@ -469,7 +469,8 @@ struct SessionPane: View {
                 // and so does the Assistant's capture box while it shows:
                 // polling re-renders this view, which would take it back mid-word.
                 TerminalPane(sessionID: session.id, registry: terminals.registry,
-                             isFocused: isFocused && running && !model.shellHasFocus && !model.isNoteCaptureShowing)
+                             isFocused: isFocused && running && !model.shellHasFocus && !model.isNoteCaptureShowing
+                                 && !model.assistantFieldHasFocus)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)
                     .overlay(alignment: .top) {

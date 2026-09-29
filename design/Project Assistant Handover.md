@@ -19,7 +19,7 @@ Builds on the shipped two-rail layout: `ToolRails.swift`, `ToolWindows.swift`, `
    - **Off:** a card reading "The assistant is off for this project…" or "…turned off in Settings…", with Turn On.
    - **Paused** (Automatic mode, over the usage threshold): "Background work paused · 5-hour usage 84% · 2 waiting", in quiet muted text, with a Limits… link. The count is the number of held-back jobs.
    - **Manual:** "Manual: it only works when you ask."
-3. **Capture box:** shown while capturing. It has a text field, "Linked to <session>", and Cancel and Save Note buttons.
+3. **Capture box:** shown while capturing. It has a text field, "Linked to <session>", and Cancel and Save Note buttons. *(Added in the build, not in the Claude Design file: an × beside "Linked to <session>" removes the link for a note that isn't about that session, which then reads "Not linked to a session".)*
 4. **Needs You · n:** one card per item. When there's nothing, it shows "Nothing needs you." When the assistant is off, the section is hidden. Card kinds:
    - suggestion: icon, title and one-line reason, which opens a drill-in view
    - in progress: spinner, dashed border, "Usually a few seconds, up to about 30.", not clickable

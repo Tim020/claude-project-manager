@@ -52,6 +52,33 @@ final class AssistantNotesTests: XCTestCase {
         }
     }
 
+    func testTheLinkCanBeRemovedForAThoughtThatIsntAboutTheSession() throws {
+        try MainActor.assumeIsolated {
+            let f = try makeFixture()
+            f.model.select(f.sessions[1])
+            f.model.beginNoteCapture()
+            f.model.updateNoteDraft("A new feature idea")
+            f.model.unlinkNoteCapture()
+            XCTAssertNil(f.model.noteCapture?.sessionID)
+            XCTAssertEqual(f.model.noteCaptureLinkText, "Not linked to a session")
+
+            f.model.beginNoteCapture()
+            XCTAssertNil(f.model.noteCapture?.sessionID, "New Note again doesn't put the link back")
+            XCTAssertEqual(f.model.noteDraft, "A new feature idea", "or lose what's typed")
+
+            let note = try XCTUnwrap(f.model.saveNoteCapture())
+            XCTAssertNil(note.sessionID)
+            XCTAssertNil(note.sessionName)
+            XCTAssertEqual(f.model.metaLine(for: note), "You · now")
+
+            f.model.beginNoteCapture()
+            XCTAssertEqual(f.model.noteCapture?.sessionID, f.sessions[1], "the next note is linked again")
+            f.model.cancelNoteCapture()
+            f.model.unlinkNoteCapture()
+            XCTAssertNil(f.model.noteCapture, "nothing to unlink without a capture")
+        }
+    }
+
     func testBlankNotesAreNotSaved() throws {
         try MainActor.assumeIsolated {
             let f = try makeFixture()
@@ -240,9 +267,10 @@ final class AssistantNotesTests: XCTestCase {
         XCTAssertEqual(try JSONFileStore.decoder.decode(AssistantData.self, from: Data("{}".utf8)), AssistantData())
 
         let unknownAuthor = note.replacingOccurrences(of: #""session""#, with: #""someoneNew""#)
-        XCTAssertThrowsError(try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"notes":[\#(unknownAuthor)]}"#.utf8)),
-                             "rewriting an unknown author as a known one would change the note")
-        XCTAssertThrowsError(try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"version":2,"notes":[]}"#.utf8)),
+        let withUnknown = try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"notes":[\#(unknownAuthor)]}"#.utf8))
+        XCTAssertEqual(withUnknown.notes, [], "rewriting an unknown author as a known one would change the note…")
+        XCTAssertEqual(withUnknown.unreadableNotes.first?["author"], .string("someoneNew"), "…so it's kept as it was")
+        XCTAssertThrowsError(try JSONFileStore.decoder.decode(AssistantData.self, from: Data(#"{"version":3,"notes":[]}"#.utf8)),
                              "a newer Claudio's file isn't read, so it can't be downgraded")
 
         let tools = try JSONDecoder().decode(ToolWindows.self, from: Data(#"{"left":"assistant"}"#.utf8))
@@ -257,7 +285,7 @@ final class AssistantNotesTests: XCTestCase {
             let store = AssistantFileStore(root: root)
             let file = try XCTUnwrap(store.location(projectID: project).map(URL.init(fileURLWithPath:)))
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let newer = #"{"version":2,"notes":[],"plan":[{"title":"Something step 2 knows about"}]}"#
+            let newer = #"{"version":3,"notes":[],"skills":[{"name":"Something a later step knows about"}]}"#
             try Data(newer.utf8).write(to: file)
 
             let memory = MemoryStore()

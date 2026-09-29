@@ -30,7 +30,7 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
 
 ```
 ┌─────────────────────────── Claudio.app ────────────────────────────┐
-│  AssistantStoring (ClaudioCore)    AssistantRunner (ClaudioCore)    │
+│  AssistantStoring (ClaudioCore)    assistant job queue (ClaudioCore)│
 │   notes · items · suggestions ◄──── queue of jobs → `claude -p …`   │
 │   skills · audit.jsonl              --json-schema → typed result    │
 │        ▲            ▲                        ▲                      │
@@ -106,7 +106,7 @@ Why `--add-dir` rather than the other homes:
 
 ### 3. Runtime
 
-**Decision:** short, typed calls per event through an `AssistantRunner` queue, not a long-lived agent.
+**Decision:** short, typed calls per event through a job queue in `AppModel+AssistantJobs.swift`, not a long-lived agent.
 
 Why not a background agent per project:
 - It would appear in `claude agents`.
@@ -125,19 +125,20 @@ claude -p --model <haiku|sonnet> --output-format json \
   --tools '<"" or Read,Grep,Glob>' [--allowedTools 'Bash(git log:*)' …] \
   --add-dir <repo>            # only for jobs that read the code \
   --strict-mcp-config --no-session-persistence \
-  --settings '{"disableAllHooks":true}' --setting-sources user \
+  --settings '{"disableAllHooks":true}' --setting-sources '' \
   --max-budget-usd <cap> -- '<job input>'
 ```
 
-- **Run from `assistant/runs/`, not the project.** That way the project's `CLAUDE.md` and auto-memory aren't loaded into every call. Jobs that need them get them explicitly. `--no-session-persistence` means no history file is written, so `SessionDiscovery` never imports assistant calls. Exclude the `runs` encoded directory anyway.
-- **Don't use `--bare`.** It never reads OAuth or the keychain, so it fails for subscription users. `--setting-sources user` keeps the user's provider settings (Bedrock, `apiKeyHelper`) but drops project settings. My measured call used `""`. **Assumed:** `user` costs about the same.
+- **Run from `assistant/runs/`, not the project.** That way the project's `CLAUDE.md` and auto-memory aren't loaded into every call. Jobs that need them get them explicitly. `--no-session-persistence` means no history file is written, so `SessionDiscovery` never imports assistant calls (verified in step 2: no `…-runs` folder in `~/.claude/projects`, and no entry in `~/.claude.json`).
+- **Don't use `--bare`.** It never reads OAuth or the keychain, so it fails for subscription users.
+- **`--setting-sources ''`, not `user`** (measured in step 2, 2.1.284). Loading the user's settings can bring tools into the call. In 1 of 3 runs with `user`, Haiku consulted an Opus advisor tool the user had configured: $0.099 and 43 s, against $0.004–0.006 and 5–8 s otherwise, and 90% of it was the advisor. With `''` that never happened. The user's settings are loaded only when signing in may depend on them: an `apiKeyHelper`, or a provider or key in `env` (`AssistantSettingSources`).
 - **Hooks off**, for the same reason as `/usage`: each call would otherwise fire the user's SessionStart hooks.
-- **The result** is `structured_output` in the JSON (verified). Decode it into a `Codable` type per job, and reject anything that doesn't match. Also record `total_cost_usd`, `duration_ms` and `num_turns` in the audit entry.
+- **The result** is `structured_output` in the JSON (verified). Step 2 reads it as `JSONValue` and checks each field it uses (the Promote check trusts nothing it can't verify in code). The job's audit entry records `total_cost_usd` and `duration_ms`. A `Codable` result type per job, and `num_turns`, can come with the later jobs if they help.
 - **Models.** Haiku for classifying (promote a note, triage labels). Sonnet for follow-ups, skill drafts and Ask. These are Assistant Settings, per project.
-- **Concurrency:** one job at a time per project, and two at most overall. Jobs are coalesced: a newer follow-up job for the same session replaces a queued one.
+- **Concurrency:** two jobs at most overall, first in, first out (step 2). One job at a time per project, and coalescing (a newer follow-up job for the same session replaces a queued one), come with step 4's follow-ups, where they matter.
 - **Timeouts and failures.** A job is killed after 60 seconds (120 for Ask, which reads code), and nothing is changed. The runner sorts failures into the reasons the Job Failed view shows:
   - `claude` not found (`locateClaude` returned nil)
-  - signed out (checked with `claude auth status --json` after a failed call)
+  - signed out (step 2 reads it from the reply's text, "Not logged in"; a `claude auth status --json` check can be added if that text changes)
   - timed out
   - output that doesn't match the schema
   - any other exit, with the first line of stderr
@@ -149,7 +150,7 @@ claude -p --model <haiku|sonnet> --output-format json \
 - The same kind of task with the default system prompt and tools cost $0.064 on Haiku, over 6 turns. So the flags above matter about 15-fold.
 - A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. It hasn't been measured.
 
-**Code checks first; Claude only judges.** A background job reaches `AssistantRunner` only after a code check has found work for it. Anything a script could answer is done in code and never becomes a Claude call:
+**Code checks first; Claude only judges.** A background job reaches the job queue only after a code check has found work for it. Anything a script could answer is done in code and never becomes a Claude call:
 
 | Background work | Checked in code (no Claude) | Claude is called only when |
 |---|---|---|
@@ -161,17 +162,20 @@ claude -p --model <haiku|sonnet> --output-format json \
 | Skill retirement | usage counts from `PreToolUse` Skill events | never: the Retire card is made by code |
 | Skill drift | file hashes | never |
 | Plan usage | `claude -p /usage`, already polled, with no model call | never |
+| Checking a captured note (step 2) | the gate below, and whether the project is Automatic | the note was just saved, the assistant is on, and usage is under the threshold. Skipped otherwise, not queued (see below). |
 
 A job is also skipped when its input is the same as the last run's (a hash of the digest or issue list is stored with the watermark). And a queued job is replaced, not repeated, when newer input for the same thing arrives.
 
-**Plan-usage gate.** Before running a *background* job (follow-ups, skill drafts, retire checks, issue triage), `AssistantRunner` reads `AppModel.usage`. It defers the job if any of these holds:
+**Plan-usage gate.** Before running a *background* job (follow-ups, skill drafts, retire checks, issue triage), the gate (`backgroundGate(forProject:)`) reads `AppModel.usage`. It defers the job if any of these holds:
 - the 5-hour or weekly window is at or above the **app-level** threshold (Settings, default 80%, one number for both windows)
 - `isUsingCredits` is true, unless the user has allowed background work on credits (an app-level toggle, off by default)
 - there's no reading yet, but one is expected (a subscription sign-in whose first `/usage` hasn't come back)
 
 Deferred jobs stay queued and are retried on the next usage refresh.
 
-Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call and a daily job limit set in Assistant Settings. Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The threshold and the credits toggle are app-level settings in `AppSettings`, not per project, because plan usage belongs to the account, not the project.
+**One exception: checking a captured note** (step 2). It's skipped when the gate says no, not queued. The check is only useful while the note is fresh, and the note keeps its Promote… link, which runs the same check whenever you want it. This matches the design ("Manual, or paused: no automatic check").
+
+Some users never get a plan-usage reading: API-key and Console sign-in (issue #1), Bedrock and Vertex. For them the gate doesn't apply, so it mustn't block. Jobs run, capped only by `--max-budget-usd` per call ($0.05 for quick checks; Claude Code checks it after each turn, so it stops a runaway call rather than capping one turn) and a daily job limit set in Assistant Settings (the limit isn't built yet: step 2 has only the capture check, one Haiku call per note you write, so it comes with step 4's background work). Jobs the user starts (Promote from capture, Ask, Import Issues) always run, with a note in the panel when usage is high. The threshold and the credits toggle are app-level settings in `AppSettings`, not per project, because plan usage belongs to the account, not the project.
 
 ### 4. The learning loop
 
@@ -193,7 +197,7 @@ Add the three events to `HookSettings.events`. Record real payloads as fixtures 
 
 **When each job runs:**
 
-- **Promote (right after capture):** in Automatic mode this is background work, so the usage gate applies. Promote… on a note is started by you, so it always runs. In Off mode, Promote… makes an Idea from the note in code, with no call. One Haiku call per saved note. Input: the note, plus plan item titles for duplicates. Output: `{kind: bug|task|idea|fact, promote: Bool, reason, duplicateOf?}`. Measured at about 1.5–6 s, fast enough for the inline suggestion.
+- **Promote (right after capture):** in Automatic mode this is background work, so the usage gate applies. Promote… on a note is started by you, so it always runs. In Off mode, Promote… makes an Idea from the note in code, with no call. One Haiku call per saved note. Input: the note, plus the plan's items that aren't done, each as a ref ("i1"), title and status. The refs are resolved with the map made for that call, never renumbered when the reply comes back. Output: `{kind: bug|task|idea|fact, promote: Bool, title, reason, duplicateOf: ref|null}`. Measured at 5–8 s.
 - **Follow-ups (when a session finishes):**
   - `Stop` fires at the end of *every turn*, so it isn't "finished". A session counts as finished when it's Completed (not Awaiting Input), has been quiet for 2 minutes, and has new turns since its last follow-up (a watermark per session: the count of Stop events). Stopping the agent or closing its tab brings the job forward.
   - **Substance check (code):** only call Claude if, since the last follow-up, the session changed files, had a tool failure, acted on a PR, made a commit, got a prompt matching a correction pattern ("no,", "don't", "instead", "next time", "remember"), or had 3 or more prompts. Otherwise there's nothing to follow up, and no call is made. A quick question and answer never costs a follow-up.
@@ -299,7 +303,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 #### Notes and authorship
 
 Every note records who wrote it: `author: user | assistant | session`, plus `sessionID` when a session wrote it, or when the note came from a follow-up about a session.
-- **user:** from the capture box (⌘⇧N). The note may still be *linked* to the focused session, but the author is you.
+- **user:** from the capture box (⇧⌘N). The note may still be *linked* to the focused session, but the author is you. The link is optional: an × in the capture box removes it for a thought that isn't about that session (step 2). An unlinked note's promoted item goes to Unfiled.
 - **assistant:** from a follow-up job. Shown with the ✦ marker and Undo, as designed.
 - **session:** from `claudio note` inside a session. Shown as "<session name> · time", with Undo like assistant notes. Its marker is a teal `terminal` icon, with "A session" in the legend (build 9a; step 1 ships it).
 
@@ -315,7 +319,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 |---|---|---|
 | `AssistantStoring` (`AssistantFileStore`, and `MemoryAssistantStore` as `AppModel`'s default), models (`ProjectNote`, `AssistantData`, `AuditEntry`; later `PlanItem`, `Suggestion`, `SkillRecord`), Undo | ClaudioCore | One file per project. A file from a newer version is refused (read-only), never downgraded. Most tests use the memory store; file behaviour is tested in a temporary directory. |
 | `AssistantJobs`: prompt, schema and `Codable` result for each job | ClaudioCore | Pure functions. Tests use recorded `structured_output` fixtures. |
-| `AssistantRunner`: queue, usage gate, coalescing | ClaudioCore | Uses the injectable command runner (`FakeRunner` in tests). |
+| `AppModel+AssistantJobs.swift`: queue, usage gate (coalescing in step 4) | ClaudioCore | Uses the injectable command runner (a fake in tests). |
 | `SessionDigest`: history, hooks and changes into a capped digest | ClaudioCore | Builds on `Transcript` and `SessionChanges`. |
 | `SkillFiles`: frontmatter, write/approve/revert, hashes, checks | ClaudioCore | Uses `Diff.swift` for the added-lines view. |
 | `InboxTailer` | ClaudioCore | Same shape as `HookEventTailer`. |
@@ -327,16 +331,23 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 ## Build order (the handover's order, with backend steps)
 
 1. **Notes and capture.** `AssistantStoring`, `audit.jsonl`, and Undo. No model calls.
-2. **Plan items and promotion.** The first job (Promote, Haiku) brings in `AssistantRunner`, the usage gate, and the job fixtures.
-   - **Carried over from step 1's review (PR #21):**
-     - **Lenient decoding of `assistant.json`.** Today one malformed note (a bad `createdAt`, a missing `text`) makes the whole project unreadable and read-only. That's safe, but coarse. With plan items joining notes in the file, decode each entry on its own. Keep entries that fail as raw JSON, so they're written back unchanged, and show the rest. The project stays refused only for a newer version.
-     - **Tolerant reading of `audit.jsonl`.** `AuditEntry` still uses the synthesized, strict `Codable`, because nothing reads the log yet. The first reader (the Assistant's Activity Log view, listing this step's job entries) must skip or tolerate lines it can't decode: lines from a newer version, or a line cut short. It must also check each entry against the data before acting on it (see Audit and Undo).
+2. **Plan items and promotion.** The first job (Promote, Haiku) brings in the job queue, the usage gate, and the job fixtures.
+   - **Done in step 2:**
+     - Plan items in `assistant.json`, now version 2, so a step 1 build refuses the file (read-only) rather than dropping the plan. A note's link to its item is stored on the note only.
+     - **Lenient decoding** (carried over from step 1's review, PR #21): notes and items are decoded one by one. An entry that fails is kept as raw JSON, written back unchanged, and counted in the panel. The project is refused whole only for a newer version.
+     - **Added (Tim's request, PR #24):** an × on "Linked to <session>" in the capture box, so a note that isn't about the focused session (a new feature idea, say) can be saved unlinked. New Note pressed again keeps it unlinked.
+     - **Moved earlier from step 4:** app-level Settings › Assistant (the switch, the threshold and the credits toggle), so the first Claude call ships with a way to turn it off. The project's mode is stored now (Automatic by default; Off makes Promote… add an Idea with no call). Its UI waits for step 4's Assistant Settings.
+     - Each call is recorded in `audit.jsonl` (`jobRan`), for step 4's Activity Log view.
+   - **Moved on to step 4:** tolerant reading of `audit.jsonl` (carried over from step 1's review). Step 2 doesn't read the log; the first reader is step 4's Activity Log view.
 3. **Start Session from an item.**
    - The opening prompt builder.
    - The skills root and `--add-dir`.
    - The bundled plugin, `--plugin-dir`, `bin/claudio`, and the inbox.
    - Skill chip scoring. Before this ships, the list of approved skills is empty, but the flags are in place.
 4. **Follow-ups.** The three new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+   - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out.
+   - **Assistant Settings** (per project: the mode's UI, "Don't send transcripts", models), the paused status line, the daily job limit for users without a plan-usage reading, and **the Assistant's Activity Log view**, with the Job Failed view for background failures.
+   - **Carried over from step 1's review (PR #21), moved here from step 2:** tolerant reading of `audit.jsonl`. `AuditEntry` still uses the synthesized, strict `Codable`. The Activity Log view, the log's first reader, must skip or tolerate lines it can't decode (from a newer version, or cut short), and check each entry against the data before showing it as done (see Audit and Undo).
 5. **Skills.** Lesson candidates, the drafting job, checks, approval, history, drift, retirement, and Save to Repository.
 6. **GitHub.** Polling, triage, export, and status suggestions.
 7. **Ask.**
@@ -354,13 +365,16 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) weren't checked. |
 | Costs listed under Runtime | `total_cost_usd` from the calls above. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
+| `--setting-sources user` can bring in the user's tools; `''` doesn't | Six real Promote-check calls (Haiku, 2.1.284): with `user`, 1 in 3 consulted an Opus advisor ($0.099, 43 s); with `''`, $0.004 and 5–7 s. |
+| `--max-budget-usd` stops a call after the turn that crosses it: `"subtype": "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, no `result` | Real Haiku calls (2.1.284): a normal check at $0.05 succeeded; one at $0.0001 was stopped after spending $0.0046. Recorded in `Fixtures/assistant-over-budget.json`. |
+| Assistant calls from `assistant/runs` with `--no-session-persistence` don't show up as a project | After the probe calls: no `…-runs` folder in `~/.claude/projects`, no entry in `~/.claude.json`. (Calls that loaded user settings left an empty `memory/` folder, which import ignores: it needs a `.jsonl`.) |
+| A failed `-p` call still reports `"subtype": "success"`; `is_error`, `terminal_reason: "api_error"` and exit 1 tell | A signed-out container, and one with a rejected API key (2.1.284). The rejected key took 190 s of retries, so the 60 s timeout matters. Recorded in `Fixtures/assistant-*.json`. |
 
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
 - hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
 - `CLAUDE_CODE_SESSION_ID` in direct-mode tabs (step 3)
 - whether the skill loader follows symlinks (only for skill sets per session)
-- the cost of `--setting-sources user` compared with `""` (step 2)
 
 ## Decisions
 
