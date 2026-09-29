@@ -36,6 +36,26 @@ final class ObservationChurnTests: XCTestCase {
         XCTAssertFalse(fired, "the same agent list again must not invalidate views")
     }
 
+    func testTypingANoteDoesNotInvalidateThePanes() async throws {
+        let model = try await MainActor.run { () -> AppModel in
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            model.addProject(path: "/code")
+            model.beginNoteCapture()
+            return model
+        }
+        // What a session's terminal reads to decide whether to take the keyboard.
+        let fired = await fires({ _ = model.isNoteCaptureShowing }) {
+            await MainActor.run { model.updateNoteDraft("Typing") }
+        }
+        XCTAssertFalse(fired, "a keystroke only redraws the capture box")
+        let unchanged = await fires({ _ = model.noteDraft }) {
+            await MainActor.run { model.updateNoteDraft("Typing") }
+        }
+        XCTAssertFalse(unchanged, "the same text again changes nothing")
+    }
+
     func testMenuFlagsOnlyChangeWhenTheirValuesDo() async throws {
         let model = try await MainActor.run {
             AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
