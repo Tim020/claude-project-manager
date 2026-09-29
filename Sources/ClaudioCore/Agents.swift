@@ -187,7 +187,8 @@ public struct AgentCommands: Sendable {
     /// when it's resumed.
     public func dispatch(session: Session, prompt: String, isolation: BackgroundIsolation?,
                          assistant: AssistantLaunch? = nil) -> TerminalLaunch {
-        command(["--bg"] + sessionOptions(session, isolation: isolation) + (assistant?.arguments ?? [])
+        command(["--bg"] + sessionOptions(session, isolation: isolation, allowsClaudio: assistant?.pluginDirectory != nil)
+                + (assistant?.arguments ?? [])
                 + TerminalLaunch.promptArguments(prompt),
                 in: session.workingDirectory)
     }
@@ -267,12 +268,12 @@ public struct AgentCommands: Sendable {
 
     private var home: String { baseEnvironment["HOME"] ?? NSHomeDirectory() }
 
-    private func sessionOptions(_ session: Session, isolation: BackgroundIsolation? = nil) -> [String] {
+    private func sessionOptions(_ session: Session, isolation: BackgroundIsolation? = nil, allowsClaudio: Bool = false) -> [String] {
         var args: [String] = []
         if let model = session.model, !model.isEmpty { args += ["--model", model] }
         if session.permissionMode != .standard { args += ["--permission-mode", session.permissionMode.rawValue] }
         args += ["--settings", HookSettings.json(appSessionID: session.id, eventsPath: hookEventsPath, statusLine: statusLine,
-                                                 isolation: isolation)]
+                                                 isolation: isolation, allowsClaudio: allowsClaudio)]
         return args
     }
 

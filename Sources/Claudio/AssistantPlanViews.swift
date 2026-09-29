@@ -195,8 +195,10 @@ struct PlanItemView: View {
                         }
                     }
                 }
-                PlanItemSessionSection(item: item, projectID: projectID) { startingSession = true }
-                    .padding(.top, 6)
+                if item.status != .done {
+                    PlanItemSessionSection(item: item, projectID: projectID) { startingSession = true }
+                        .padding(.top, 6)
+                }
                 LinkLabelButton(title: "Delete Item…") { confirmingDelete = true }
                     .font(DS.font(12))
                     .padding(.top, 8)

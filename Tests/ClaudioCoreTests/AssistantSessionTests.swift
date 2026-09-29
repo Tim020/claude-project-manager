@@ -123,6 +123,24 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertTrue(direct.claudeArguments.contains("--session-id"))
         XCTAssertTrue(direct.claudeArguments.containsSequence(["--plugin-dir", "/Support/Claudio/plugin/claudio"]))
         XCTAssertTrue(direct.claudeArguments.containsSequence(["--add-dir", "/Support/Claudio/assistant/p/skills"]))
+
+        // In Ask mode, `claudio` needs a rule to run without a prompt.
+        XCTAssertEqual(allowRules(dispatch), ["Bash(claudio:*)"])
+        XCTAssertEqual(allowRules(direct.claudeArguments), ["Bash(claudio:*)"])
+        let plain = commands().dispatch(session: session, prompt: "Fix it", isolation: .worktree).claudeArguments
+        XCTAssertNil(allowRules(plain), "no plugin, no rule")
+        let resumed = TerminalLaunch.make(session: Session(projectID: UUID(), hasConversation: true, name: "s", workingDirectory: "/c"),
+                                          claudeExecutable: "/usr/local/bin/claude", shell: "/bin/zsh", initialPrompt: nil,
+                                          hookEventsPath: "/tmp/h.log", assistant: assistant)
+        XCTAssertNil(allowRules(resumed.claudeArguments))
+    }
+
+    /// `permissions.allow` from the `--settings` JSON.
+    private func allowRules(_ arguments: [String]) -> [String]? {
+        guard let index = arguments.firstIndex(of: "--settings"), index + 1 < arguments.count,
+              let json = try? JSONDecoder().decode(JSONValue.self, from: Data(arguments[index + 1].utf8))
+        else { return nil }
+        return json["permissions"]?["allow"]?.arrayValue?.compactMap(\.stringValue)
     }
 
     /// Resuming a background agent with flags starts a copy, so the flags
