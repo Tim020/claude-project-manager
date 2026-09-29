@@ -3,8 +3,8 @@ import AppKit
 import ClaudioCore
 import UserNotifications
 
-/// Posts session notifications to Notification Centre, and opens the session
-/// when one is clicked.
+/// Posts session (and usage reset) notifications to Notification Centre, and
+/// opens the session when one is clicked.
 @MainActor
 final class SessionNotifier: NSObject, NotificationPosting {
     private weak var model: AppModel?
@@ -30,12 +30,14 @@ final class SessionNotifier: NSObject, NotificationPosting {
         content.title = notification.title
         content.subtitle = notification.subtitle
         content.body = notification.body
-        content.threadIdentifier = notification.sessionID.uuidString
-        content.userInfo = ["sessionID": notification.sessionID.uuidString]
+        content.threadIdentifier = notification.identifier
+        if let sessionID = notification.sessionID {
+            content.userInfo = ["sessionID": sessionID.uuidString]
+        }
         if sound { content.sound = .default }
 
-        // One notification per session: a newer one replaces the last.
-        let request = UNNotificationRequest(identifier: notification.sessionID.uuidString,
+        // One notification per session (or usage window): a newer one replaces the last.
+        let request = UNNotificationRequest(identifier: notification.identifier,
                                             content: content, trigger: nil)
         let log = model?.log
         UNUserNotificationCenter.current().add(request) { error in

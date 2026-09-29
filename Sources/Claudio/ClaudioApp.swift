@@ -143,10 +143,12 @@ struct ClaudioApp: App {
                     .keyboardShortcut("3")
                 Button(model.menuFlags.rightTool == .changes ? "Hide Changes" : "Show Changes") { model.toggleTool(.changes) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
+                    .disabled(!model.menuFlags.hasSelection)
                 Button(model.menuFlags.rightTool == .pullRequest ? "Hide Session's Pull Request" : "Show Session's Pull Request") {
                     model.toggleTool(.pullRequest)
                 }
                 .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(!model.menuFlags.hasSelection)
                 Divider()
                 // As in VS Code: ⌃` toggles the panel, ⌃⇧` opens another shell.
                 Button(model.menuFlags.isShellOpen ? "Hide Shell" : "Show Shell") { model.toggleShellPanel() }

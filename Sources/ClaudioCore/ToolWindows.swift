@@ -13,8 +13,9 @@ public enum RightTool: String, Codable, CaseIterable, Sendable {
 }
 
 /// Which tool each side of the window shows, and whether that side is open.
-/// The rails always show; as in PyCharm or VS Code, clicking the tool that's
-/// showing hides its side, and clicking another switches to it.
+/// As in PyCharm or VS Code, clicking the tool that's showing hides its side,
+/// and clicking another switches to it. The left rail always shows; the right
+/// one only while a session's tab is selected (`AppModel.showsSessionTools`).
 public struct ToolWindows: Codable, Equatable, Sendable {
     public var left: LeftTool = .sessions
     public var isLeftOpen = true
@@ -97,6 +98,16 @@ public struct PullRequestPanelItem: Identifiable, Equatable, Sendable {
 
 extension AppModel {
     public var toolWindows: ToolWindows { state.settings.toolWindows }
+
+    /// The right rail covers the selected session, so it shows only while a
+    /// session's tab is selected: not for an overview tab, or with no tabs.
+    public var showsSessionTools: Bool { selectedSession != nil }
+
+    /// The right rail's tool on screen: the one that's open, if the rail shows.
+    /// Whether it's open is kept, so it comes back with the next session.
+    public var visibleSessionTool: RightTool? {
+        showsSessionTools ? toolWindows.visibleRight : nil
+    }
 
     public func toggleTool(_ tool: LeftTool) {
         var settings = state.settings

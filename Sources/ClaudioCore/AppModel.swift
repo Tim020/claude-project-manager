@@ -180,6 +180,8 @@ public final class AppModel {
     @ObservationIgnored private let runner: CommandRunning
     /// `/usage` ran but gave no figures; logged once until it reads again.
     @ObservationIgnored private var usageUnreadable = false
+    /// Which plan limits were reached, for the usage-reset notification.
+    @ObservationIgnored private var usageResets = UsageResetTracker()
     @ObservationIgnored private var isRefreshingUsage = false
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored let locateGitHubCLI: () -> String?
@@ -754,6 +756,14 @@ public final class AppModel {
         let archived = state.workspace.sessions(in: group).filter { $0.status == .completed }.map(\.id)
         state.workspace.archiveCompleted(in: group)
         // Archived sessions leave the panes.
+        archived.forEach { state.workspace.closeTab($0) }
+        save()
+    }
+
+    /// Archives the completed sessions in all of a project's folders and Unfiled.
+    public func archiveCompleted(inProject projectID: UUID) {
+        let archived = state.workspace.archiveCompleted(inProject: projectID)
+        guard !archived.isEmpty else { return }
         archived.forEach { state.workspace.closeTab($0) }
         save()
     }
@@ -1557,6 +1567,24 @@ public final class AppModel {
         case .stopped:
             return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) stopped unexpectedly", subtitle: project,
                                        body: "The agent exited while it was working.")
+        case .usageReset:
+            // Not about a session: see `checkUsageNotifications`.
+            preconditionFailure("a usage reset has no session")
+        }
+    }
+
+    /// Posts a notification when a plan limit you'd reached resets: its reset
+    /// time passes, or a new reading shows it below the limit. Checked on the
+    /// fast poll, since the reset time needs no new reading. Posted even while
+    /// Claudio is in front: usage is app-wide, and the status bar's change is
+    /// easy to miss.
+    public func checkUsageNotifications() {
+        let reset = usageResets.check(usage, now: now())
+        let settings = state.settings.notifications
+        for window in reset {
+            let notification = SessionNotification(usageReset: window)
+            log.append(.info, notification.title)
+            if settings.usageReset { notifier?.post(notification, sound: settings.sound) }
         }
     }
 
@@ -1588,7 +1616,7 @@ public final class AppModel {
         }
         flags.isShellOpen = shellPanel.isOpen
         flags.leftTool = state.settings.toolWindows.visibleLeft
-        flags.rightTool = state.settings.toolWindows.visibleRight
+        flags.rightTool = visibleSessionTool
         if flags != menuFlags { menuFlags = flags }
     }
 

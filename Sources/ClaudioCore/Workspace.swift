@@ -415,6 +415,15 @@ public struct Workspace: Codable, Equatable, Sendable {
         return ids.count
     }
 
+    /// Archives the completed sessions in a project, whichever folder they're
+    /// in (or Unfiled). Returns the ids archived.
+    @discardableResult
+    public mutating func archiveCompleted(inProject projectID: UUID) -> [UUID] {
+        let ids = sessions.filter { $0.projectID == projectID && $0.status == .completed && !$0.isArchived }.map(\.id)
+        for id in ids { updateSession(id) { $0.isArchived = true } }
+        return ids
+    }
+
     // MARK: - Sessions
 
     public mutating func addSession(_ session: Session, toFolder folderID: UUID? = nil) throws {
