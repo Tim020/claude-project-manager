@@ -98,7 +98,7 @@ struct PlanSessionSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 heading("SKILLS")
                 if skills.isEmpty {
-                    Text("No approved skills match this item.")
+                    Text(removedSkills.isEmpty ? "No approved skills match this item." : "None named in the prompt.")
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
                 } else {

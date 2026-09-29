@@ -293,7 +293,7 @@ Nothing is installed into `~/.claude`, the repository or the user's settings by 
 ### The session-side plugin
 
 - **`bin/claudio`** is a POSIX `sh` script: no dependencies, and testable on Linux.
-  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in a background agent's Bash tool (verified in 2.1.284). Direct-mode tabs weren't checked; for those it falls back to `$CLAUDIO_SESSION_ID`, which `TerminalLaunch.make` already sets. It identifies its project its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
+  - It identifies its session from `$CLAUDE_CODE_SESSION_ID`, which is set in the Bash tool of background agents (verified in 2.1.284) and of direct-mode tabs (verified in 2.1.285, step 3). `$CLAUDIO_SESSION_ID`, which `TerminalLaunch.make` sets, is kept as a fallback. It identifies its project from `$PWD` via `index.tsv`, matching the longest path (worktrees sit under the repository).
   - It writes base64 text, so nothing needs JSON escaping in shell: `printf '%s\t%s\tnote\t%s\n' "$sid" "$PWD" "$(printf %s "$text" | base64 | tr -d '\n')" >> inbox.log`. The `tr` matters: GNU `base64` wraps its output at 76 columns, and BSD `base64` doesn't. That's the same single-write append as `HookSettings.command`.
   - Commands:
     - `claudio plan`: prints `plan.md`
@@ -363,6 +363,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - **The inbox:** Claudio reads `inbox.log` every half second (with hook events) and at launch. `InboxReader` saves its position in `inbox.offset` rather than starting at the end like the hook tailer, so notes written while Claudio was closed arrive, and none arrives twice. The session is found by Claude Code's id, then by Claudio's id (direct tabs), then the project by the longest project path containing the directory. A note from the session working on an item joins that item. Notes are capped at 4,000 characters. `inbox.log` isn't compacted; notes are small.
      - **Skill chips** (`SkillChips`, `SkillFiles`, `Glob`): scored in code from `paths` globs against files the item's sessions changed (worktree paths read as repository paths), and `metadata.claudio-folders` against the folder picked in the sheet (the chips are picked again when it changes, leaving out any you removed). At most 3, and none that score nothing. The frontmatter reader handles only what skill files use.
    - **Notes and plan items have no folder** (Tim's call, PR #26). `PlanItem.folderID` is gone, so Promote no longer files an item in its session's folder, and the item view has no folder line. A step 2 file's `folderID` is ignored and dropped on the next save; step 2 builds already read items without one, so `assistant.json` stays at version 2. The only folder is the new session's, picked in New Session from Plan, starting at Unfiled.
+   - **Tested in the app** (Tim, 2.1.285, PR #26): the sheet with and without a folder-matched skill; the session's opening prompt and `Skill(test-skill)` loading; `respawnFlags` holding `--plugin-dir`, `--add-dir` and the `Bash(claudio:*)` rule; `claudio plan`, `item` and `note` from a worktree agent (in auto mode), the note attached to the item and undone; a note written while Claudio was closed arriving once; a direct-mode tab's note; a resume with no new flags.
    - **Moved on to step 4:** `claudio suggest` (a plan change from a session, into Needs You). Needs You doesn't exist yet, so the command and the note skill leave it out.
    - **Moved on to step 5:**
      - Chip scoring's usage term (skill use from `PreToolUse` Skill events).
@@ -386,7 +387,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | A skill in `<repo>/.claude/skills/` (uncommitted) loads in a session started in `<repo>/.claude/worktrees/w` | A real `claude -p` call run from the worktree listed it. |
 | Skills under an `--add-dir` root's `.claude/skills/` load | The same call listed `addprobe`. |
 | A launch's environment isn't saved for respawns | `CLAUDIO_SESSION_ID=… claude --bg` in a container. The job's `providerEnv` is `{}`. Whether the variable reaches the *first* agent process couldn't be settled. Agents are often started in pre-spawned `bg-spare` processes, and `/proc/<pid>/environ` doesn't show what those set once claimed. So nothing here relies on per-launch environment variables. |
-| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) weren't checked. |
+| `CLAUDE_CODE_SESSION_ID` is set in a background agent's Bash tool | Read from this session's own Bash tool (2.1.284). Direct-mode tabs (`--session-id`) have it too: Tim's step 3 test (2.1.285) printed the conversation id, and `claudio note` from that tab wrote it to the inbox. |
 | Costs listed under Runtime | `total_cost_usd` from the calls above. |
 | `--plugin-dir` and `--add-dir` work from a path with a space in it (`…/a b/Claudio/…`, as under `Application Support`) | Real Haiku calls (2.1.284, step 3): `claudio:note` loaded, `bin/claudio` ran from the Bash tool (with an allow rule; see the next row), and an `--add-dir` skill loaded. |
 | A session in Ask mode can't run `claudio` without an allow rule; `permissions.allow: ["Bash(claudio:*)"]` in `--settings` lets it | Real Haiku calls (2.1.284, `--permission-mode default`): without the rule the Bash call was denied (`permission_denials`); with it in the `--settings` JSON, `claudio ping` ran. |
@@ -400,7 +401,6 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
 - hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
-- `CLAUDE_CODE_SESSION_ID` in direct-mode tabs. Not checked in step 3, because that needs a signed-in interactive session. `bin/claudio` falls back to `$CLAUDIO_SESSION_ID`, and the inbox resolves either id.
 - whether the skill loader follows symlinks (only for skill sets per session)
 
 ## Decisions

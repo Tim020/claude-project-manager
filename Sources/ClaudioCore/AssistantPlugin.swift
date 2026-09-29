@@ -243,7 +243,7 @@ public enum PlanSnapshot {
 
 /// A line `bin/claudio` appended to `inbox.log`.
 public struct InboxEntry: Equatable, Sendable {
-    /// `CLAUDE_CODE_SESSION_ID` (a background agent's conversation id), or
+    /// `CLAUDE_CODE_SESSION_ID` (the conversation id, set in background and direct sessions), or
     /// `CLAUDIO_SESSION_ID` (the app's session id, set for direct tabs). Empty
     /// when neither was set.
     public var sessionID: String
