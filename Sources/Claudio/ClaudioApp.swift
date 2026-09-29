@@ -19,6 +19,7 @@ enum AppEnvironment {
                                          configFile: SessionDiscovery.defaultConfigFile),
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
             statusDirectory: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("status"),
+            assistantStore: AssistantFileStore(root: AssistantFileStore.defaultRoot),
             logFileURL: ActivityLog.defaultFileURL)
     }
 
@@ -90,8 +91,12 @@ struct ClaudioApp: App {
                         model.createFolder(in: project)
                     }
                 }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                // ⌘⇧N is New Note (design 9a), so New Folder moved to ⌥⌘N.
+                .keyboardShortcut("n", modifiers: [.command, .option])
                 .disabled(!model.menuFlags.hasProjects)
+                Button("New Note") { model.beginNoteCapture() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(!model.menuFlags.hasProjects)
                 Divider()
                 Button("Add Project…") { chooseProjectDirectory(model: model) }
                     .keyboardShortcut("o")
@@ -134,6 +139,8 @@ struct ClaudioApp: App {
                     .keyboardShortcut("1")
                 Button(model.menuFlags.leftTool == .pullRequests ? "Hide Pull Requests" : "Show Pull Requests") { model.toggleTool(.pullRequests) }
                     .keyboardShortcut("2")
+                Button(model.menuFlags.leftTool == .assistant ? "Hide Assistant" : "Show Assistant") { model.toggleTool(.assistant) }
+                    .keyboardShortcut("3")
                 Button(model.menuFlags.rightTool == .changes ? "Hide Changes" : "Show Changes") { model.toggleTool(.changes) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
                     .disabled(!model.menuFlags.hasSelection)

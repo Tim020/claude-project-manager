@@ -465,9 +465,11 @@ struct SessionPane: View {
                 // terminal keeps running meanwhile.
                 FileDiffPane(session: session)
             } else if running || (exitCode != nil && terminals.registry.hasTerminal(session.id)) {
-                // A shell with the keyboard keeps it (see `AppModel.shellHasFocus`).
+                // A shell with the keyboard keeps it (see `AppModel.shellHasFocus`),
+                // and so does the Assistant's capture box while it shows:
+                // polling re-renders this view, which would take it back mid-word.
                 TerminalPane(sessionID: session.id, registry: terminals.registry,
-                             isFocused: isFocused && running && !model.shellHasFocus)
+                             isFocused: isFocused && running && !model.shellHasFocus && !model.isNoteCaptureShowing)
                     .id("\(session.id)-\(running)")
                     .background(DS.window)
                     .overlay(alignment: .top) {

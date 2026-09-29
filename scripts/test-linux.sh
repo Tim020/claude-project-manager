@@ -12,5 +12,6 @@ done
 if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
   PROXY_ARGS+=(-v "$SSL_CERT_FILE:/etc/ssl/certs/host-ca.pem:ro" -e SSL_CERT_FILE=/etc/ssl/certs/host-ca.pem -e GIT_SSL_CAINFO=/etc/ssl/certs/host-ca.pem)
 fi
-exec docker run --rm --network host "${PROXY_ARGS[@]}" -v "$PWD":/src -w /src "$IMAGE" \
+# The `+` form: macOS's bash 3.2 treats an empty array as unbound under `set -u`.
+exec docker run --rm --network host ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"} -v "$PWD":/src -w /src "$IMAGE" \
   swift test --scratch-path .build/linux "$@"

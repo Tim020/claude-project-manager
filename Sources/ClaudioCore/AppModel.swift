@@ -206,6 +206,21 @@ public final class AppModel {
     public internal(set) var loadingPullRequests = Set<UUID>()
     public var pullRequestFilter: PullRequestFilter = .needsAttention
     public var includeUnlinkedPullRequests = true
+    /// Each project's assistant data, as saved (see AppModel+Assistant).
+    public internal(set) var assistantData: [UUID: AssistantData] = [:]
+    /// The capture box's target, while a note is being written.
+    public internal(set) var noteCapture: NoteCapture?
+    /// What's typed in the capture box.
+    public internal(set) var noteDraft = ""
+    /// A confirmation shown at the foot of the window; the view clears it.
+    public internal(set) var toast: Toast?
+    @ObservationIgnored let assistantStore: AssistantStoring
+    /// Projects whose assistant file failed to load; never written to. Set
+    /// once, at launch.
+    public internal(set) var unreadableAssistantProjects = Set<UUID>()
+    /// Bumped by every New Note, so the capture box takes the keyboard even
+    /// when it's already open.
+    public internal(set) var noteCaptureFocusRequest = 0
     @ObservationIgnored private let isGitRepository: (String) -> Bool
     @ObservationIgnored let shell: String
     @ObservationIgnored let now: () -> Date
@@ -217,6 +232,7 @@ public final class AppModel {
         hookEventsURL: URL,
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
+        assistantStore: AssistantStoring = MemoryAssistantStore(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
@@ -233,6 +249,7 @@ public final class AppModel {
         self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
+        self.assistantStore = assistantStore
         self.gitExecutable = git
         self.locateClaude = locateClaude
         self.locateGitHubCLI = locateGitHubCLI
@@ -252,6 +269,7 @@ public final class AppModel {
         for session in state.workspace.sessions where session.status == .working {
             state.workspace.updateSession(session.id) { $0.status = .completed }
         }
+        loadAssistantData()
     }
 
     // MARK: - Derived state

@@ -1,9 +1,9 @@
 import Foundation
 
 /// A tool on the left rail (design 8c). The left rail's tools cover
-/// projects: the session tree, and their pull requests.
+/// projects: the session tree, their pull requests, and the assistant.
 public enum LeftTool: String, Codable, CaseIterable, Sendable {
-    case sessions, pullRequests
+    case sessions, pullRequests, assistant
 }
 
 /// A tool on the right rail (design 8c). The right rail's tools cover the
