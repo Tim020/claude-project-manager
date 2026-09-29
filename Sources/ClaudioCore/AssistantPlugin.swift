@@ -115,6 +115,7 @@ public enum ClaudioPlugin {
       claudio item <id>         one plan item and its notes
       claudio note "<text>"     save a note (the user can undo it)
       claudio note -            save a note read from standard input
+      claudio suggest "<text>"  suggest a plan change; the user decides in Claudio
     EOF
     }
 
@@ -160,24 +161,29 @@ public enum ClaudioPlugin {
                         { on = 0 }' "$file" | grep . \
           || { echo "claudio: no item $2 in the plan (see claudio plan)" >&2; exit 1; }
         ;;
-      note)
+      note|suggest)
+        command=$1
         shift
         if [ "${1:-}" = "-" ]; then text=$(cat); else text="$*"; fi
         if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then usage >&2; exit 2; fi
         if [ "${#text}" -gt 4000 ]; then
-          echo "claudio: notes can be 4000 characters at most; this one is ${#text}" >&2
+          echo "claudio: $command text can be 4000 characters at most; this one is ${#text}" >&2
           exit 2
         fi
         session="${CLAUDE_CODE_SESSION_ID:-${CLAUDIO_SESSION_ID:-}}"
         # Without a session, Claudio places a note by its project.
         if [ -z "$session" ] && [ -z "$(project_id)" ]; then
-          echo "claudio: $PWD isn't in a Claudio project, so the note wasn't saved" >&2
+          echo "claudio: $PWD isn't in a Claudio project, so it wasn't sent" >&2
           exit 1
         fi
         encoded=$(printf '%s' "$text" | base64 | tr -d '\n')
         mkdir -p "$data" || exit 1
-        printf '%s\t%s\tnote\t%s\n' "$session" "$PWD" "$encoded" >> "$data/inbox.log" || exit 1
-        echo "Saved to the project's notes in Claudio."
+        printf '%s\t%s\t%s\t%s\n' "$session" "$PWD" "$command" "$encoded" >> "$data/inbox.log" || exit 1
+        if [ "$command" = note ]; then
+          echo "Saved to the project's notes in Claudio."
+        else
+          echo "Sent to Claudio. The user will see it in Needs You and decide."
+        fi
         ;;
       help|-h|--help)
         usage
@@ -193,7 +199,7 @@ public enum ClaudioPlugin {
     static let noteSkill = #"""
     ---
     name: note
-    description: Save a note to this project's notebook in Claudio, the app that started this session, with the `claudio note` command. Use it for something worth keeping that isn't in the code, the git history, CLAUDE.md or memory, such as a decision and why it was made, a gotcha found the hard way, or follow-up work that's out of scope. Not for progress updates, and not every turn. `claudio plan` and `claudio item <id>` read the project's plan.
+    description: Save a note to this project's notebook in Claudio, the app that started this session, with the `claudio note` command. Use it for something worth keeping that isn't in the code, the git history, CLAUDE.md or memory, such as a decision and why it was made, a gotcha found the hard way, or follow-up work that's out of scope. Not for progress updates, and not every turn. `claudio plan` and `claudio item <id>` read the project's plan, and `claudio suggest` proposes a change to it.
     ---
 
     # Claudio's notes and plan
@@ -205,6 +211,7 @@ public enum ClaudioPlugin {
     - `claudio note "<text>"` saves a note straight away. For long text, pipe it in: `printf '%s' "…" | claudio note -`.
     - `claudio plan` prints the plan's items, grouped by status, each with an id.
     - `claudio item <id>` prints one item with its attached notes.
+    - `claudio suggest "<text>"` proposes a plan change, such as new work you found that's out of scope. It goes to the user's Needs You list; nothing changes until they add it.
 
     When a note is worth writing:
 

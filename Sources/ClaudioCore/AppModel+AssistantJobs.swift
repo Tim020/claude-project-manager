@@ -18,6 +18,13 @@ public enum AssistantGate: Equatable, Sendable {
     case waitingForUsage
 }
 
+/// An assistant call waiting for a slot.
+struct QueuedAssistantJob {
+    var key: String?
+    var projectID: UUID
+    var work: @MainActor () async -> Void
+}
+
 extension AppModel {
     /// How many assistant calls run at once.
     public static let maxAssistantJobs = 2
@@ -37,7 +44,34 @@ extension AppModel {
         guard assistantMode(ofProject: projectID) == .automatic else { return .manual }
         if let reason = usagePauseReason { return .paused(reason) }
         if usage == nil && expectsUsageReading { return .waitingForUsage }
+        // Without a plan-usage reading, the daily limit is the only cap.
+        if !expectsUsageReading, backgroundJobsToday >= AppModel.dailyJobLimit {
+            return .paused("Daily limit of \(AppModel.dailyJobLimit) reached")
+        }
         return .run
+    }
+
+    /// Background calls a day, for users without a plan-usage reading (its
+    /// editing UI comes in step 4b).
+    public static let dailyJobLimit = 20
+
+    /// Background calls made today.
+    var backgroundJobsToday: Int {
+        let today = DailyJobCount.day(of: now())
+        if dailyJobs == nil { dailyJobs = assistantStore.loadDailyJobs() }
+        return dailyJobs?.day == today ? dailyJobs?.count ?? 0 : 0
+    }
+
+    /// Counts a background call against today's limit.
+    func countBackgroundJob() {
+        let today = DailyJobCount.day(of: now())
+        let count = DailyJobCount(day: today, count: backgroundJobsToday + 1)
+        dailyJobs = count
+        do {
+            try assistantStore.saveDailyJobs(count)
+        } catch {
+            log.append(.error, "Couldn't save today's count of assistant calls", detail: AppModel.describe(error))
+        }
     }
 
     /// "Using credits" while credits are being spent (unless that's
@@ -99,6 +133,7 @@ extension AppModel {
     /// check is only useful while the note is fresh.
     func checkCapturedNote(_ note: ProjectNote, projectID: UUID) {
         guard backgroundGate(forProject: projectID) == .run else { return }
+        countBackgroundJob()
         checkNote(note, projectID: projectID, askedFor: false)
     }
 
@@ -149,26 +184,41 @@ extension AppModel {
 
     /// Runs an assistant call when a slot is free, records it in the audit
     /// log and the Activity Log, and hands its result back on the main actor.
-    func runAssistantJob(_ call: AssistantCall, projectID: UUID, subject: String,
+    /// At most two run at once, and one per project. `key`: a newer job with
+    /// the same key replaces one still waiting (its completion isn't called).
+    func runAssistantJob(_ call: AssistantCall, projectID: UUID, subject: String, key: String? = nil,
                          completion: @escaping @MainActor (Result<AssistantReply, AssistantFailure>) -> Void) {
-        assistantJobQueue.append { [weak self] in
+        let job = QueuedAssistantJob(key: key, projectID: projectID) { [weak self] in
             guard let self else { return }
             let result = await self.performAssistantCall(call)
             self.recordJob(call, projectID: projectID, subject: subject, result: result)
             completion(result)
         }
+        if let key, let index = assistantJobQueue.firstIndex(where: { $0.key == key }) {
+            assistantJobQueue[index] = job
+        } else {
+            assistantJobQueue.append(job)
+        }
         startQueuedAssistantJobs()
     }
 
+    /// Whether a job with this key is waiting (not yet running).
+    func isAssistantJobQueued(key: String) -> Bool {
+        assistantJobQueue.contains { $0.key == key }
+    }
+
     private func startQueuedAssistantJobs() {
-        while assistantJobsRunning < AppModel.maxAssistantJobs, !assistantJobQueue.isEmpty {
-            let job = assistantJobQueue.removeFirst()
+        while assistantJobsRunning < AppModel.maxAssistantJobs,
+              let index = assistantJobQueue.firstIndex(where: { !assistantProjectsRunning.contains($0.projectID) }) {
+            let job = assistantJobQueue.remove(at: index)
             assistantJobsRunning += 1
+            assistantProjectsRunning.insert(job.projectID)
             let id = UUID()
             assistantJobTasks[id] = Task { @MainActor [weak self] in
-                await job()
+                await job.work()
                 guard let self else { return }
                 self.assistantJobsRunning -= 1
+                self.assistantProjectsRunning.remove(job.projectID)
                 // Finished, so it's no longer held.
                 self.assistantJobTasks[id] = nil
                 self.startQueuedAssistantJobs()

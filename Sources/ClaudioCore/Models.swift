@@ -126,10 +126,15 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var hasAssistant = false
     /// The skills its opening prompt named, when it was started from a plan item.
     public var namedSkills: [String] = []
+    /// Its last turn ended with an API error (StopFailure), so it isn't
+    /// followed up until a turn ends normally.
+    public var lastTurnFailed = false
+    /// Where its last follow-up got to in its history (see `FollowUpMark`).
+    public var followUpMark: FollowUpMark?
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
-        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills
+        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark
     }
 
     public init(

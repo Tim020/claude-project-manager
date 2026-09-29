@@ -238,7 +238,23 @@ public final class AppModel {
     /// Assistant calls running now, and those waiting for a turn (see
     /// AppModel+AssistantJobs).
     @ObservationIgnored var assistantJobsRunning = 0
-    @ObservationIgnored var assistantJobQueue: [@MainActor () async -> Void] = []
+    @ObservationIgnored var assistantJobQueue: [QueuedAssistantJob] = []
+    /// Projects with an assistant call running: one at a time each.
+    @ObservationIgnored var assistantProjectsRunning = Set<UUID>()
+    /// Each project's Needs You (see AppModel+FollowUps).
+    public internal(set) var needsYou: [UUID: NeedsYouData] = [:]
+    /// What's in each project's `needs-you.json`, so it's only rewritten when it changes.
+    @ObservationIgnored var savedNeedsYou: [UUID: NeedsYouData] = [:]
+    /// Each session's history file as last checked for a follow-up
+    /// (conversation and size), so unchanged files aren't read again.
+    @ObservationIgnored var followUpChecked: [UUID: String] = [:]
+    /// Sessions whose follow-up needn't wait for them to be quiet (stopped,
+    /// or their tab closed).
+    @ObservationIgnored var followUpDue = Set<UUID>()
+    /// Background calls today, for the daily limit.
+    @ObservationIgnored var dailyJobs: DailyJobCount?
+    /// Failed follow-ups' digests, so Try Again asks the same question.
+    @ObservationIgnored var retryDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
     /// Assistant calls running now, by a token, so tests can wait for them.
     @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
@@ -1497,6 +1513,8 @@ public final class AppModel {
 
     /// Called by the UI when a session's terminal process exits.
     public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
+        // Its follow-up needn't wait for it to go quiet.
+        followUpDue.insert(sessionID)
         running.remove(sessionID)
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
@@ -1515,6 +1533,7 @@ public final class AppModel {
 
     /// Stops the session: its background agent (`claude stop`) or its process.
     public func stop(_ sessionID: UUID) {
+        followUpDue.insert(sessionID)
         detach(sessionID)
         if let agentID = state.workspace.session(sessionID)?.agentID {
             runAgentCommand { $0.stop(agentID: agentID) }
@@ -1545,7 +1564,7 @@ public final class AppModel {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
             // A tool may have changed files.
-            if event.name == .postToolUse || event.name == .stop { markChangesDirty(target) }
+            if [.postToolUse, .postToolUseFailure, .stop, .stopFailure].contains(event.name) { markChangesDirty(target) }
             changed = true
         }
         if changed { save() }
@@ -1590,6 +1609,13 @@ public final class AppModel {
     /// For tests: adds a session directly.
     func applyTestSession(_ session: Session) {
         try? state.workspace.addSession(session)
+    }
+
+    /// Moves a session's follow-up mark (see AppModel+FollowUps).
+    func setFollowUpMark(_ sessionID: UUID, _ mark: FollowUpMark) {
+        guard let session = workspace.session(sessionID), session.followUpMark != mark else { return }
+        state.workspace.updateSession(sessionID) { $0.followUpMark = mark }
+        save()
     }
 
     /// For tests: gives a session a conversation, as its first prompt would.

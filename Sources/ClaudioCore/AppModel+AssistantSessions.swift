@@ -40,6 +40,7 @@ extension AppModel {
             refreshApprovedSkills(projectID: project.id)
         }
         writeAssistantIndex()
+        loadNeedsYou()
         pollAssistantInbox()
     }
 
@@ -223,7 +224,7 @@ extension AppModel {
     // MARK: - Notes from sessions
 
     /// The longest a session's note can be; the rest is cut.
-    public static let sessionNoteLimit = 4000
+    nonisolated public static let sessionNoteLimit = 4000
 
     /// Reads notes sessions wrote with `claudio note` (polled with hook
     /// events, and at launch for any written while Claudio was closed).
@@ -249,6 +250,7 @@ extension AppModel {
             }
             switch entry.command {
             case "note": addSessionNote(entry)
+            case "suggest": addSessionSuggestion(entry)
             default: log.append(.error, "Skipped an unknown command from a session: \(entry.command)")
             }
         }
@@ -276,6 +278,17 @@ extension AppModel {
             return
         }
         log.append(.info, "\(session?.name ?? "A session") wrote a note", detail: note.itemID == nil ? nil : "Attached to its plan item")
+    }
+
+    private func addSessionSuggestion(_ entry: InboxEntry) {
+        let session = inboxSession(entry.sessionID)
+        guard let projectID = session?.projectID ?? projectID(containing: entry.directory),
+              !isAssistantDataUnreadable(projectID) else {
+            log.append(.error, "A session suggested a plan change outside Claudio's projects, so it wasn't kept",
+                       detail: entry.text)
+            return
+        }
+        addSessionSuggestion(entry.text, session: session, projectID: projectID)
     }
 
     /// The session an inbox line names: by its Claude Code id (background
