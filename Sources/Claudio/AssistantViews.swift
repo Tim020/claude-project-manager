@@ -240,9 +240,14 @@ struct NoteCard: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
                 if attached == .none && suggestion == nil {
-                    LinkLabelButton(title: "Promote…") { model.requestPromote(note.id, projectID: projectID) }
-                        .help(model.isAssistantOn(inProject: projectID)
-                              ? "Check this note against the plan" : "Add this note to the plan as an Idea")
+                    // Named for what it does: with the assistant on it asks
+                    // Claude, and nothing changes until you answer.
+                    let isOn = model.isAssistantOn(inProject: projectID)
+                    LinkLabelButton(title: isOn ? "Check Against Plan…" : "Add as Idea") {
+                        model.requestPromote(note.id, projectID: projectID)
+                    }
+                    .help(isOn ? "Ask the assistant whether this note is new work or part of an existing plan item"
+                               : "Add this note to the plan as an Idea")
                 }
                 if note.canUndo {
                     LinkLabelButton(title: "Undo") { model.undoNote(note.id, projectID: projectID) }

@@ -39,7 +39,7 @@ Notes are listed newest first, with a legend at the top (You, Assistant, A sessi
 | A session | `console-line`, teal `#00bc8c` | "Shell Follow Up · 2m" (the session name is the author) | Yes |
 
 - Each note links to its plan item with a chip, if it has one.
-- Notes without an item show a **Promote…** link, which you start yourself.
+- Notes without an item show a **Promote…** link, which you start yourself. *(Renamed in the build: **Check Against Plan…** while the assistant is on, since it asks Claude and changes nothing until you answer; **Add as Idea** while it's off. "Promote…" read as though it would create the item.)*
 
 ## Promote suggestions
 After a capture in Automatic mode, the note shows "Checking it against the plan…", then one of:

@@ -66,7 +66,7 @@ struct PlanList: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No plan yet.")
                     .foregroundStyle(DS.muted)
-                Text("The plan grows out of your notes: use Promote… on a note to add it.")
+                Text("The plan grows out of your notes: use Check Against Plan… on a note, or right-click it and choose Add to Plan.")
                     .foregroundStyle(DS.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
