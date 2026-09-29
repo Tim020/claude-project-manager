@@ -141,11 +141,13 @@ public struct PullRequestHistory: Equatable, Sendable {
     public var items: [PullRequestInfo] = []
     /// When it was last tried, successful or not.
     public var loadedAt: Date?
-    /// GitHub's totals when it last loaded.
+    /// GitHub's totals when it last loaded successfully (a failure keeps
+    /// them).
     public var totals: GitHubCLI.PullRequestTotals?
-    /// The last load stopped at `historyPullRequestLimit`.
+    /// The last successful load stopped at the limit
+    /// (`historyPullRequestLimit`).
     public var isCapped = false
-    /// Why the last load failed.
+    /// Why the last try failed; nil once one succeeds.
     public var error: String?
 
     public init() {}

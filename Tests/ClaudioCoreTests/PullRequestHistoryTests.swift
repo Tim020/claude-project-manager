@@ -228,29 +228,40 @@ final class PullRequestHistoryTests: XCTestCase {
         XCTAssertEqual(merged?.state, .merged)
     }
 
-    /// Past the limit, the gap stays, and a history cut off there isn't
-    /// reloaded for it.
+    /// Past the limit (3 here), the gap stays, and a history cut off there
+    /// isn't reloaded for it, even as the totals change.
     func testAGapTheHistoryCantCloseDoesntReload() async throws {
-        let limit = await MainActor.run { AppModel.historyPullRequestLimit }
         let runner = FakeGitHub()
         runner.totals = Self.totals(all: 9000, open: 0, merged: 9000)
-        runner.history = Self.list(PullRequestFixtures.pr(1300, state: "MERGED"))
+        runner.history = Self.list(PullRequestFixtures.pr(1300, state: "MERGED"), PullRequestFixtures.pr(1200, state: "MERGED"),
+                                   PullRequestFixtures.pr(1100, state: "MERGED"))
         let (model, project) = try await MainActor.run { try makeModel(runner) }
+        await MainActor.run { model.historyLimit = 3 }
         await model.refreshPullRequests(project)
         await MainActor.run { model.pullRequestFilter = .all }
 
         await model.loadPullRequestHistory(project)
         let args = try XCTUnwrap(historyCalls(runner).first)
-        XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--limit")) + 1], "\(limit)", "capped")
-        for _ in 0..<3 {
+        XCTAssertEqual(args[try XCTUnwrap(args.firstIndex(of: "--limit")) + 1], "3", "capped")
+        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.history.isCapped, true) }
+        for merged in 9001...9003 {
+            runner.totals = Self.totals(all: merged, open: 0, merged: merged)
             await later()
             await model.refreshPullRequests(project)
             await model.loadPullRequestHistory(project)
         }
-        XCTAssertEqual(historyCalls(runner).count, 1, "the totals haven't changed")
+        XCTAssertEqual(historyCalls(runner).count, 1, "not reloaded, though the totals changed")
         await MainActor.run {
-            XCTAssertEqual(model.unlistedPullRequests(projectID: project, filter: .all)?.listed, 1, "the footnote links to GitHub")
+            XCTAssertEqual(model.unlistedPullRequests(projectID: project, filter: .all)?.listed, 3, "the footnote links to GitHub")
         }
+    }
+
+    /// A full load under the limit isn't capped.
+    func testAHistoryUnderTheLimitIsntCapped() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        await model.loadPullRequestHistory(project)
+        XCTAssertEqual(runner.historyTimeouts, [180], "its own timeout")
+        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.history.isCapped, false) }
     }
 
     /// The reload rule on its own: a history cut off at the limit isn't
@@ -330,7 +341,14 @@ final class PullRequestHistoryTests: XCTestCase {
         await model.loadPullRequestHistory(project)
         XCTAssertEqual(historyCalls(runner).count, 1)
 
-        // The refresh button clears it; the next check loads.
+        // A refresh button press that fails keeps the error (and so the
+        // retry for the next press).
+        runner.openExit = 1
+        await model.refreshPullRequests(project, force: true)
+        await MainActor.run { XCTAssertEqual(model.pullRequests(forProject: project)?.history.error, "timed out") }
+        runner.openExit = 0
+
+        // One that succeeds clears it; the next check loads.
         await model.refreshPullRequests(project, force: true)
         await model.loadPullRequestHistory(project)
         XCTAssertEqual(historyCalls(runner).count, 2)
@@ -462,7 +480,7 @@ final class PullRequestHistoryTests: XCTestCase {
 
         await model.loadPullRequestDetails(older, projectID: project)
         await MainActor.run {
-            XCTAssertTrue(model.pullRequestDetailFailures.contains(older.key))
+            XCTAssertNotNil(model.pullRequestDetailFailures[older.key])
             XCTAssertFalse(model.loadingPullRequestDetails.contains(older.key))
         }
         await model.loadPullRequestDetails(older, projectID: project)
@@ -473,6 +491,100 @@ final class PullRequestHistoryTests: XCTestCase {
         XCTAssertEqual(views(), 2)
         let detailed = await item(model, project, 1200)
         XCTAssertEqual(detailed?.hasDetails, true)
-        await MainActor.run { XCTAssertFalse(model.pullRequestDetailFailures.contains(older.key)) }
+        await MainActor.run { XCTAssertNil(model.pullRequestDetailFailures[older.key]) }
+    }
+
+    func testADetailsFailureKeepsWhy() async throws {
+        let (_, model, project) = try await makeLoaded()
+        await model.loadPullRequestHistory(project)
+        let found = await item(model, project, 1200)
+        let older = try XCTUnwrap(found)
+        await model.loadPullRequestDetails(older, projectID: project)
+        await MainActor.run { XCTAssertEqual(model.pullRequestDetailFailures[older.key], "not found") }
+    }
+
+    /// A hover that waited while a click loaded the details doesn't fetch
+    /// them again (it holds the row's old copy).
+    func testAHoverAfterAClickDoesntFetchAgain() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        await model.loadPullRequestHistory(project)
+        let found = await item(model, project, 1300)
+        let stale = try XCTUnwrap(found)
+        runner.views[base + "1300"] = PullRequestFixtures.pr(1300, state: "MERGED")
+        await model.loadPullRequestDetails(stale, projectID: project, force: true)
+        await model.loadPullRequestDetails(stale, projectID: project)
+        XCTAssertEqual(runner.calls.filter { $0.starts(with: ["pr", "view"]) }.count, 1)
+    }
+
+    /// Details are dropped when the history shows the pull request changed.
+    func testDetailsGoWhenThePullRequestChanges() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        await model.loadPullRequestHistory(project)
+        let found = await item(model, project, 1300)
+        runner.views[base + "1300"] = PullRequestFixtures.pr(1300, state: "MERGED")
+        await model.loadPullRequestDetails(try XCTUnwrap(found), projectID: project)
+
+        runner.totals = Self.totals(all: 6, open: 1, merged: 4)
+        runner.history = Self.list(PullRequestFixtures.pr(1300, state: "MERGED", updated: "2026-09-28T10:00:00Z"),
+                                   PullRequestFixtures.pr(1250, state: "MERGED"), PullRequestFixtures.pr(1200, state: "MERGED"),
+                                   PullRequestFixtures.pr(1100, state: "CLOSED"))
+        await later()
+        await model.refreshPullRequests(project)
+        await model.loadPullRequestHistory(project)
+        XCTAssertEqual(historyCalls(runner).count, 2)
+        let changed = await item(model, project, 1300)
+        XCTAssertEqual(changed?.hasDetails, false)
+    }
+
+    /// Details that load while the history reloads are kept.
+    func testDetailsLoadedDuringAHistoryReloadStay() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        await model.loadPullRequestHistory(project)
+        let found = await item(model, project, 1300)
+        let older = try XCTUnwrap(found)
+        runner.views[base + "1300"] = PullRequestFixtures.pr(1300, state: "MERGED")
+        runner.totals = Self.totals(all: 6, open: 1, merged: 4)
+        await later()
+        await model.refreshPullRequests(project)
+
+        runner.historyDelay = 100_000_000
+        async let history: Void = model.loadPullRequestHistory(project)
+        async let details: Void = model.loadPullRequestDetails(older, projectID: project)
+        _ = await (history, details)
+        XCTAssertEqual(historyCalls(runner).count, 2)
+        let kept = await item(model, project, 1300)
+        XCTAssertEqual(kept?.hasDetails, true)
+    }
+
+    /// A refresh that fails after a history load landed (during it) keeps
+    /// the history, rather than writing back what it started from.
+    func testAFailedRefreshKeepsANewerHistory() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        runner.openExit = 1
+        runner.historyDelay = 20_000_000
+        runner.listDelay = 100_000_000
+        await later()
+        async let history: Void = model.loadPullRequestHistory(project)
+        async let refresh: Void = model.refreshPullRequests(project, force: true)
+        _ = await (history, refresh)
+        await MainActor.run {
+            let loaded = model.pullRequests(forProject: project)
+            XCTAssertEqual(loaded?.items.count, 5)
+            XCTAssertNotNil(loaded?.history.loadedAt)
+            XCTAssertEqual(loaded?.error, "Couldn't refresh: HTTP 502: Bad Gateway")
+            XCTAssertEqual(loaded?.attemptedAt, clock)
+        }
+    }
+
+    func testUnreadableHistoryOutput() async throws {
+        let (runner, model, project) = try await makeLoaded()
+        runner.history = "<html>Unicorn!</html>"
+        await model.loadPullRequestHistory(project)
+        await MainActor.run {
+            XCTAssertEqual(model.pullRequests(forProject: project)?.history.error, "couldn't read gh pr list's output")
+            XCTAssertEqual(AppModel.historySummary("<html>Unicorn!</html>"), "<html>Unicorn!</html>", "logged as it is")
+            XCTAssertEqual(AppModel.historySummary(try! Fixtures.string("gh-pr-list-history.json")), "3 pull requests")
+            XCTAssertEqual(AppModel.historySummary("[]\n"), "0 pull requests")
+        }
     }
 }

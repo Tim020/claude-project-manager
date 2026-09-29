@@ -168,6 +168,19 @@ final class ProcessCommandRunnerTests: XCTestCase {
         XCTAssertTrue(result.errorOutput.contains("args: stop 1234abcd"))
     }
 
+    /// A command's own timeout beats the runner's; a kill reads as exit 15
+    /// with nothing on stderr (what "timed out" is worked out from).
+    func testACommandsTimeout() async {
+        var command = TerminalLaunch(executable: "/bin/sleep", arguments: ["5"], environment: [:], workingDirectory: "/", claudeArguments: [])
+        command.timeout = 0.3
+        let started = Date()
+        let result = await ProcessCommandRunner(timeout: 60).run(command)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+        XCTAssertEqual(result.exitCode, 15)
+        XCTAssertEqual(result.errorOutput, "")
+        await MainActor.run { XCTAssertEqual(AppModel.failureReason(result, command: "gh pr list"), "timed out") }
+    }
+
     func testReportsFailures() async {
         let commands = AgentCommands(claudeExecutable: "/nonexistent/claude", shell: "/bin/sh", hookEventsPath: "/tmp/x", loginShell: false)
         let result = await ProcessCommandRunner().run(commands.list())

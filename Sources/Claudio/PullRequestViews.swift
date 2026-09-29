@@ -545,22 +545,20 @@ private struct ProjectPullRequestRow: View {
 
     /// A column the whole history doesn't load (checks, review, changes).
     /// Loads while hovered (after a moment, so scrolling past doesn't) or
-    /// when clicked, which also retries a failure.
+    /// when the row is clicked, which also retries a failure.
     private var notLoaded: some View {
         Group {
             if model.loadingPullRequestDetails.contains(pullRequest.key) {
                 ProgressView().controlSize(.mini)
-            } else if model.pullRequestDetailFailures.contains(pullRequest.key) {
+            } else if let failure = model.pullRequestDetailFailures[pullRequest.key] {
                 Text("—").foregroundStyle(DS.red)
-                    .help("Couldn't load its details. Click to try again")
+                    .help("Couldn't load its details: \(failure). Click the row to try again")
             } else {
                 Text("—").foregroundStyle(DS.dim)
                     .help("Older pull requests load their details when hovered or clicked")
             }
         }
         .font(DS.font(12.5))
-        .contentShape(Rectangle())
-        .onTapGesture { Task { await model.loadPullRequestDetails(pullRequest, projectID: projectID, force: true) } }
     }
 
     static let detailsHoverDelay: UInt64 = 400_000_000

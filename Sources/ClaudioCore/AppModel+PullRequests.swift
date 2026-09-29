@@ -157,11 +157,6 @@ extension AppModel {
     /// failure keeps what loaded before, with the error. Forced (the refresh
     /// button), it also reloads the review threads on screen.
     public func refreshPullRequests(_ projectID: UUID, force: Bool = false) async {
-        // The refresh button also retries the history after a failure.
-        if force, projectPullRequests[projectID]?.history.error != nil {
-            projectPullRequests[projectID]?.history.error = nil
-            projectPullRequests[projectID]?.history.loadedAt = nil
-        }
         guard await loadPullRequests(projectID, force: force), force else { return }
         // After "Updating…" has cleared: threads load one by one.
         let shown = (projectPullRequests[projectID]?.items ?? []).filter { shownReviewThreads[$0.key, default: 0] > 0 }
@@ -190,35 +185,47 @@ extension AppModel {
         }
 
         var loaded = previous ?? ProjectPullRequests()
-        loaded.attemptedAt = now()
+        let attemptedAt = now()
+        loaded.attemptedAt = attemptedAt
+        // Changes go onto the latest value, not `previous`: a history load or
+        // an older pull request's details may have landed meanwhile.
+        func update(_ body: (inout ProjectPullRequests) -> Void) {
+            var current = projectPullRequests[projectID] ?? loaded
+            current.attemptedAt = attemptedAt
+            body(&current)
+            projectPullRequests[projectID] = current
+        }
         if loaded.repository == nil {
             await loadRemoteRepositories()
             let result = await runGitHub(["repo", "view", "--json", "nameWithOwner,url"], key: "repo")
             guard let repository = GitHubCLI.parseRepository(result.output), result.exitCode == 0 else {
-                if result.exitCode != 0 {
-                    loaded.error = Self.firstLine(result.errorOutput) ?? "gh repo view failed."
-                    // Only gh saying so means it isn't on GitHub: then stop
-                    // polling it (and logging the same failure every 2
-                    // minutes). Anything else (offline, VPN not up yet) is
-                    // retried after the usual interval.
-                    loaded.isNotGitHub = GitHubCLI.isNotGitHubRepository(result.errorOutput)
-                } else {
-                    loaded.error = "Couldn't read the repository from gh (gh repo view)."
+                update { current in
+                    if result.exitCode != 0 {
+                        current.error = Self.firstLine(result.errorOutput) ?? "gh repo view failed."
+                        // Only gh saying so means it isn't on GitHub: then
+                        // stop polling it (and logging the same failure
+                        // every 2 minutes). Anything else (offline, VPN not
+                        // up yet) is retried after the usual interval.
+                        current.isNotGitHub = GitHubCLI.isNotGitHubRepository(result.errorOutput)
+                    } else {
+                        current.error = "Couldn't read the repository from gh (gh repo view)."
+                    }
                 }
-                projectPullRequests[projectID] = loaded
                 return true
             }
             loaded.repository = repository
             loaded.isNotGitHub = false
             // Known from now on, for resolving sessions' "#123" links below.
-            projectPullRequests[projectID] = loaded
+            update { current in
+                current.repository = repository
+                current.isNotGitHub = false
+            }
         }
 
         let fields = GitHubCLI.overviewFields
         let open = await runGitHub(["pr", "list", "--state", "open", "--limit", "\(AppModel.openPullRequestLimit)", "--json", fields], key: "open")
         guard open.exitCode == 0, let openItems = GitHubCLI.parsePullRequests(open.output) else {
-            loaded.error = "Couldn't refresh: " + (Self.firstLine(open.errorOutput) ?? "gh pr list failed.")
-            projectPullRequests[projectID] = loaded
+            update { $0.error = "Couldn't refresh: " + (Self.firstLine(open.errorOutput) ?? "gh pr list failed.") }
             return true
         }
         var problems: [String] = []
@@ -277,6 +284,13 @@ extension AppModel {
         // The rest of the history, if it's loaded: detailed ones win. It may
         // have finished loading while this ran, so it's taken from the latest.
         if let latest = projectPullRequests[projectID] { loaded.history = latest.history }
+        // The refresh button retries the history after a failure: cleared
+        // only now it's succeeded, as the new `updatedAt` sets off the next
+        // try (`loadPullRequestHistory`).
+        if force, loaded.history.error != nil {
+            loaded.history.error = nil
+            loaded.history.loadedAt = nil
+        }
         for item in loaded.history.items where keys.insert(item.key).inserted { items.append(item) }
 
         loaded.items = items
@@ -300,54 +314,79 @@ extension AppModel {
         loadingPullRequestHistory.insert(projectID)
         defer { loadingPullRequestHistory.remove(projectID) }
         // A little over the total, for ones opened meanwhile.
-        let limit = min((known.totals?.all ?? AppModel.historyPullRequestLimit) + 50, AppModel.historyPullRequestLimit)
+        let limit = min((known.totals?.all ?? historyLimit) + 50, historyLimit)
         var command = GitHubCLI.command(["pr", "list", "--state", "all", "--limit", "\(limit)", "--json", GitHubCLI.historyFields],
                                         in: project.path, gh: gh)
         command.timeout = AppModel.historyTimeout
-        // Log (and keep) a count, not up to megabytes of JSON.
+        // Log (and keep) a count, not up to megabytes of JSON; only the
+        // code below parses it.
         let result = await run(command, logOnlyChanges: true, changeKey: "gh-history|\(project.path)",
-                               loggedOutput: { "\(GitHubCLI.parsePullRequestHistory($0)?.count ?? 0) pull requests" })
+                               loggedOutput: Self.historySummary)
         // Another load may have finished meanwhile: build on the latest.
         guard var loaded = projectPullRequests[projectID] else { return }
         loaded.history.loadedAt = now()
         guard result.exitCode == 0, let history = GitHubCLI.parsePullRequestHistory(result.output) else {
-            loaded.history.error = result.exitCode == 15 && result.errorOutput.isEmpty
-                ? "timed out" : (Self.firstLine(result.errorOutput) ?? "gh pr list failed")
+            loaded.history.error = Self.failureReason(result, command: "gh pr list")
             projectPullRequests[projectID] = loaded
             return
         }
+        // Rows that came from the old history give way to the new one; the
+        // lists' own (detailed) rows stay.
+        let old = loaded.history.items
+        loaded.items.removeAll { old.contains($0) }
         // Details loaded since (hover or click) stay while they're current.
-        let detailed = Dictionary(loaded.history.items.filter(\.hasDetails).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        let detailed = Dictionary(old.filter(\.hasDetails).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         loaded.history.items = history
             // Open ones come from the open list, with details; the history's
             // could be out of date by the next refresh.
             .filter { !$0.isOpen }
             .map { item in detailed[item.key].flatMap { $0.updatedAt == item.updatedAt ? $0 : nil } ?? item }
         loaded.history.totals = known.totals
-        loaded.history.isCapped = history.count >= limit && limit == AppModel.historyPullRequestLimit
+        loaded.history.isCapped = history.count >= limit && limit == historyLimit
         loaded.history.error = nil
         var keys = Set(loaded.items.map(\.key))
         for item in loaded.history.items where keys.insert(item.key).inserted { loaded.items.append(item) }
         projectPullRequests[projectID] = loaded
     }
 
+    /// What the Activity Log keeps of the history's output: how many pull
+    /// requests (counted, not parsed), or the start of output that isn't a
+    /// list of them.
+    static func historySummary(_ output: String) -> String {
+        let count = output.components(separatedBy: "\"number\":").count - 1
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return count > 0 || trimmed == "[]" ? "\(count) pull requests" : String(trimmed.prefix(500))
+    }
+
+    /// Why a gh call failed, in a few words: "timed out" when the runner
+    /// killed it (SIGTERM, nothing on stderr), else gh's first line.
+    static func failureReason(_ result: CommandResult, command: String) -> String {
+        if result.exitCode == 15 && result.errorOutput.isEmpty { return "timed out" }
+        if result.exitCode == 0 { return "couldn't read \(command)'s output" }
+        return firstLine(result.errorOutput) ?? "\(command) failed"
+    }
+
     /// Loads an older pull request's checks, review and line counts (the
     /// history has none), when its row is hovered or clicked. A failure is
-    /// remembered: hovering doesn't retry it, clicking (`force`) does.
+    /// remembered, with why: hovering doesn't retry it, clicking (`force`)
+    /// does.
     public func loadPullRequestDetails(_ pullRequest: PullRequestInfo, projectID: UUID, force: Bool = false) async {
-        guard !pullRequest.hasDetails, gitHubCLIProblem == nil, let gh = locateGitHubCLI(),
+        // The model's copy, not the caller's: a click may have loaded it
+        // while a hover waited.
+        let current = projectPullRequests[projectID]?.item(forURL: pullRequest.url) ?? pullRequest
+        guard !current.hasDetails, gitHubCLIProblem == nil, let gh = locateGitHubCLI(),
               let project = workspace.project(projectID),
-              force || !pullRequestDetailFailures.contains(pullRequest.key),
+              force || pullRequestDetailFailures[pullRequest.key] == nil,
               !loadingPullRequestDetails.contains(pullRequest.key) else { return }
         loadingPullRequestDetails.insert(pullRequest.key)
         defer { loadingPullRequestDetails.remove(pullRequest.key) }
         let result = await run(GitHubCLI.command(["pr", "view", pullRequest.url, "--json", GitHubCLI.overviewFields], in: project.path, gh: gh),
                                logOnlyChanges: true, changeKey: "gh-view-\(pullRequest.url)")
         guard result.exitCode == 0, let item = GitHubCLI.parsePullRequestInfo(result.output) else {
-            pullRequestDetailFailures.insert(pullRequest.key)
+            pullRequestDetailFailures[pullRequest.key] = Self.failureReason(result, command: "gh pr view")
             return
         }
-        if pullRequestDetailFailures.contains(item.key) { pullRequestDetailFailures.remove(item.key) }
+        if pullRequestDetailFailures[item.key] != nil { pullRequestDetailFailures[item.key] = nil }
         projectPullRequests[projectID]?.replace(item)
     }
 
