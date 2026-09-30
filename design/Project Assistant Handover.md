@@ -100,7 +100,7 @@ What happens in other modes:
   - For a retired skill: Restore.
 - **Assistant Settings** (⋯, per project):
   - **MODE:** radio cards.
-    - Automatic (Default): also works in the background (follow-ups when a session finishes, skill proposals and new GitHub issues). It only calls Claude when something new needs judgement.
+    - Automatic (Default): also works in the background (follow-ups when a session finishes, skill proposals and new GitHub issues). It only calls Claude when something new needs judgement. *(4a: follow-ups are offered in Automatic mode, and run when you accept.)*
     - Manual: only when you ask (Promote, Review This Session, Import Issues and Ask).
     - Off: notes and the plan by hand. No Claude calls.
   - **PRIVACY:** a "Don't send transcripts" toggle. Follow-ups then use only the final message and the files changed.
@@ -136,6 +136,7 @@ What happens in other modes:
     - *(4a: with notes but no plan changes, the button is Done, which closes it. Opened from Needs You, it shows the same rows under a "Follow-up" title, with Close in place of Later.)*
   - Later (or ✕) keeps it in Needs You as "<session> finished".
   - In **Automatic** mode it appears when a session finishes. If paused by usage, it waits and appears once usage drops (the Activity Log shows Waiting until then).
+  - *(Changed in 4a, Tim's call: in Automatic mode the card first **offers** the follow-up: "<session> looks done", "Follow up on what it did?", with **Follow Up** and **Not Now**. Claude is only asked on Follow Up, so there's no waiting for usage. It's offered when Claude Code says the session's task is done or ready for review, or when you stop the session or close its tab; never while it's waiting on you or after a turn that failed. A new prompt in the session withdraws the offer. An unanswered offer also waits in Needs You as "<session> looks done".)*
   - Older sessions get the same card. Follow-ups are built from the session's history and hook events inside Claudio.
   - In **Manual** mode it only appears from **Review This Session**.
 - **Session context menu** (⋯ in the session header): Rename…, Move to Folder, **Review This Session** (✦), Stop Session. It works in Automatic and Manual modes. When the assistant is off, it shows a toast instead.
