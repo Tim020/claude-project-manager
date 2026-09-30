@@ -176,6 +176,10 @@ public final class AppModel {
     /// skip the session you're looking at only while it is.
     @ObservationIgnored public var appIsActive = false
     @ObservationIgnored private var notificationBaseline: [UUID: NotificationBaseline]?
+    /// Sessions you stopped, until their agent is seen gone: they get no
+    /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
+    /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
+    @ObservationIgnored private var stopsRequested: Set<UUID> = []
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -1153,6 +1157,7 @@ public final class AppModel {
     /// if given, is sent as the first prompt after resuming.
     public func resume(_ sessionID: UUID, message: String? = nil) {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        stopsRequested.remove(sessionID)
         guard environment.canRunSessions || isAgentAlive(sessionID) else {
             setupRequested = true
             return
@@ -1435,11 +1440,18 @@ public final class AppModel {
         }
     }
 
-    private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch) {
-        guard let commands = agentCommands(reportErrors: true) else { return }
+    private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch,
+                                 onFailure: (@MainActor () -> Void)? = nil) {
+        guard let commands = agentCommands(reportErrors: true) else {
+            onFailure?()
+            return
+        }
         enqueue {
             let result = await self.run(make(commands))
-            if result.exitCode != 0 { self.report("Claude Code: \(result.failureMessage)") }
+            if result.exitCode != 0 {
+                self.report("Claude Code: \(result.failureMessage)")
+                onFailure?()
+            }
             await self.refreshAgents()
         }
     }
@@ -1532,7 +1544,8 @@ public final class AppModel {
     public func stop(_ sessionID: UUID) {
         detach(sessionID)
         if let agentID = state.workspace.session(sessionID)?.agentID {
-            runAgentCommand { $0.stop(agentID: agentID) }
+            if isAgentAlive(sessionID) { stopsRequested.insert(sessionID) }
+            runAgentCommand({ $0.stop(agentID: agentID) }, onFailure: { self.stopsRequested.remove(sessionID) })
         }
     }
 
@@ -1622,8 +1635,9 @@ public final class AppModel {
     }
 
     /// Compares sessions with the last check and posts notifications for real
-    /// changes: → Awaiting Input, Working → Completed, and (optionally) a
-    /// working agent that exited. The first check only records a baseline.
+    /// changes: → Awaiting Input, Working → Completed, and (optionally) an
+    /// agent that exited before its task was done, unless you stopped it. The
+    /// first check only records a baseline.
     public func checkNotifications() {
         let current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
             ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id),
@@ -1635,7 +1649,11 @@ public final class AppModel {
         for session in state.workspace.sessions {
             guard let before = previous[session.id], let after = current[session.id], before != after else { continue }
             let kind: SessionNotification.Kind
-            if after.status == .awaitingInput && before.status != .awaitingInput {
+            if stopsRequested.contains(session.id) {
+                // You stopped it: neither unexpected nor finished.
+                if !after.agentAlive { stopsRequested.remove(session.id) }
+                continue
+            } else if after.status == .awaitingInput && before.status != .awaitingInput {
                 guard settings.awaitingInput else { continue }
                 kind = .awaitingInput
             } else if before.agentAlive && !after.agentAlive && after.taskUnfinished {
@@ -1666,7 +1684,7 @@ public final class AppModel {
                                        body: summary ?? "Claude finished its turn.")
         case .stopped:
             return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) stopped unexpectedly", subtitle: project,
-                                       body: "The agent exited while it was working.")
+                                       body: "The agent exited before its task was done.")
         case .usageReset:
             // Not about a session: see `checkUsageNotifications`.
             preconditionFailure("a usage reset has no session")

@@ -354,7 +354,7 @@ private struct NotificationSettingsPage: View {
                               subtitle: "Claude completed its turn.",
                               isOn: settingBinding(model, \.notifications.finished))
             SettingsToggleRow(title: "An agent stops unexpectedly",
-                              subtitle: "A background agent exited while it was working.",
+                              subtitle: "A background agent exited before its task was done.",
                               isOn: settingBinding(model, \.notifications.stoppedUnexpectedly))
             SettingsToggleRow(title: "A usage limit resets",
                               subtitle: "Your session or weekly limit resets after you'd reached it.",

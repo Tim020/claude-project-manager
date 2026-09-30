@@ -13,7 +13,7 @@ final class NotificationTests: XCTestCase {
     var store = MemoryStore()
 
     @MainActor
-    private func makeModel() throws -> (AppModel, UUID, UUID) {
+    private func makeModel(runner: FakeRunner? = nil) throws -> (AppModel, UUID, UUID) {
         var state = PersistedState()
         let p = state.workspace.addProject(path: "/code/DigiScript")
         let a = Session(projectID: p, claudeSessionID: "a", hasConversation: true, name: "storage fix", workingDirectory: "/code/DigiScript", status: .completed)
@@ -23,7 +23,8 @@ final class NotificationTests: XCTestCase {
         store.state = state
         let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                              hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
-                             locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+                             runner: runner ?? FakeRunner(),
+                             locateClaude: { _ in runner == nil ? nil : "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
         notifier = FakeNotifier()
         model.notifier = notifier
         model.checkNotifications()   // first check only records the starting point
@@ -201,7 +202,9 @@ final class NotificationTests: XCTestCase {
             model.checkNotifications()
             model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "working", waitingFor: nil, startedAt: nil)])
             model.checkNotifications()
-            XCTAssertTrue(notifier.posted.isEmpty, "off by default")
+            // Working → Completed as well, but a crash isn't "finished": this
+            // rule comes first, so with it off nothing is posted at all.
+            XCTAssertTrue(notifier.posted.isEmpty, "off by default, and not reported as finished")
 
             var settings = model.settings
             settings.notifications.stoppedUnexpectedly = true
@@ -210,9 +213,63 @@ final class NotificationTests: XCTestCase {
             model.checkNotifications()
             model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "working", waitingFor: nil, startedAt: nil)])
             model.checkNotifications()
-            XCTAssertEqual(notifier.posted.map(\.kind), [.stopped])
+            XCTAssertEqual(notifier.posted.map(\.kind), [.stopped], "only stopped, not finished too")
             XCTAssertEqual(notifier.posted.first?.title, "storage fix stopped unexpectedly")
+            XCTAssertEqual(notifier.posted.first?.body, "The agent exited before its task was done.")
             _ = a
+        }
+    }
+
+    /// Stopping an agent yourself is neither "stopped unexpectedly" nor
+    /// "finished": from an idle agent whose task goes on (it shows Completed),
+    /// or from a busy one.
+    func testAStopYouAskedForIsntNotified() async throws {
+        for status in ["idle", "busy"] {
+            let runner = FakeRunner()
+            let (model, a) = try await MainActor.run { () -> (AppModel, UUID) in
+                let (model, a, _) = try makeModel(runner: runner)
+                var settings = model.settings
+                settings.notifications.stoppedUnexpectedly = true
+                model.updateSettings(settings)
+                model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: status, state: "working", waitingFor: nil, startedAt: nil)])
+                model.checkNotifications()
+                // After `claude stop` the task state stays "working".
+                runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","state":"working"}]"#
+                model.stop(a)
+                return (model, a)
+            }
+            await model.lastTask?.value
+            await MainActor.run {
+                XCTAssertTrue(runner.commands.contains(["stop", "a1"]))
+                XCTAssertFalse(model.isAgentAlive(a))
+                model.checkNotifications()
+                XCTAssertEqual(notifier.posted.map(\.kind), [], status)
+            }
+        }
+    }
+
+    /// If `claude stop` fails, the agent carries on, and a later crash is
+    /// still reported.
+    func testAFailedStopDoesntHideALaterCrash() async throws {
+        let runner = FakeRunner()
+        runner.stopExit = 1
+        let model = try await MainActor.run { () -> AppModel in
+            let (model, a, _) = try makeModel(runner: runner)
+            var settings = model.settings
+            settings.notifications.stoppedUnexpectedly = true
+            model.updateSettings(settings)
+            runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","pid":5,"status":"busy","state":"working"}]"#
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            model.stop(a)
+            return model
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            model.checkNotifications()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.kind), [.stopped])
         }
     }
 
