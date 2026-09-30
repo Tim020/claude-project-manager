@@ -33,11 +33,24 @@ public struct BackgroundAgent: Equatable, Sendable {
 
     public var isAlive: Bool { pid != nil }
 
+    /// `status` is whether the process is busy; `state` is Claude Code's view
+    /// of the task, which stays "working" while the agent thinks the task
+    /// isn't finished, even sitting idle after its turn has ended (seen with
+    /// 2.1.285: `state: "working"`, `status: "idle"` after a Stop hook). So the
+    /// process decides Working. An agent with no process is neither Working
+    /// nor waiting on you: a stopped agent keeps the `state` it had, so one
+    /// stopped at a question or a permission prompt still says "blocked"
+    /// (seen with 2.1.285).
     public var sessionStatus: SessionStatus {
+        guard isAlive else { return .completed }
         if state == "blocked" || status == "waiting" { return .awaitingInput }
-        if state == "working" { return .working }
-        if state == nil && status == "busy" { return .working }
-        return .completed
+        switch status {
+        case "busy": return .working
+        case "idle": return .completed
+        default:
+            // A CLI that doesn't report the process status.
+            return state == "working" ? .working : .completed
+        }
     }
 }
 

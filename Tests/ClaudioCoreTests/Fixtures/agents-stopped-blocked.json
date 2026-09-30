@@ -1,0 +1,29 @@
+[
+  {
+    "id": "b6984f4a",
+    "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+    "kind": "background",
+    "startedAt": 1790463059273,
+    "sessionId": "b6984f4a-59f3-4420-b06d-104137a73dcb",
+    "name": "daily usage bar colors",
+    "state": "blocked"
+  },
+  {
+    "id": "5ebdf809",
+    "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+    "kind": "background",
+    "startedAt": 1790583903128,
+    "sessionId": "5ebdf809-ce40-4c61-8f7e-806789a37a8a",
+    "name": "shell terminal component",
+    "state": "blocked"
+  },
+  {
+    "id": "c828048d",
+    "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+    "kind": "background",
+    "startedAt": 1790717816351,
+    "sessionId": "c828048d-645b-4030-bd1f-ca37f436ac37",
+    "name": "claude version management",
+    "state": "blocked"
+  }
+]

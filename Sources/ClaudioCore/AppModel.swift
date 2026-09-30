@@ -156,6 +156,9 @@ public final class AppModel {
     /// Agent state last applied per agent, so polling doesn't clobber newer
     /// hook updates with an unchanged state.
     @ObservationIgnored private var appliedAgentStates: [String: String] = [:]
+    /// The status the agent list last gave each agent, whether or not it was
+    /// applied: tells an Awaiting Input the hooks set from one the list set.
+    @ObservationIgnored private var listedAgentStatuses: [String: SessionStatus] = [:]
     /// The most recent background CLI operation (awaited by tests).
     @ObservationIgnored public private(set) var lastTask: Task<Void, Never>?
     /// Commands, terminals and errors, for the Activity Log window.
@@ -176,6 +179,10 @@ public final class AppModel {
     /// skip the session you're looking at only while it is.
     @ObservationIgnored public var appIsActive = false
     @ObservationIgnored private var notificationBaseline: [UUID: NotificationBaseline]?
+    /// Sessions you stopped, until their agent is seen gone: they get no
+    /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
+    /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
+    @ObservationIgnored private var stopsRequested: Set<UUID> = []
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -1153,6 +1160,7 @@ public final class AppModel {
     /// if given, is sent as the first prompt after resuming.
     public func resume(_ sessionID: UUID, message: String? = nil) {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        stopsRequested.remove(sessionID)
         guard environment.canRunSessions || isAgentAlive(sessionID) else {
             setupRequested = true
             return
@@ -1247,13 +1255,25 @@ public final class AppModel {
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
+                // Nothing recorded (the first poll since Claudio started, or
+                // the hooks reported something since) counts as the hooks
+                // having set it, so a question survives a relaunch.
+                let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
                     session.claudeSessionID = agent.sessionID
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
-                    if stateChanged {
+                    // An idle agent doesn't undo "waiting on you": the hooks saw
+                    // a question or a permission prompt that the agent list
+                    // may not (it only says the process is idle). The next
+                    // prompt, or the agent going busy, moves it on. Not when
+                    // the list itself said waiting (its prompt was answered),
+                    // or the process has gone (nothing is waiting any more).
+                    let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
+                        && agent.isAlive && !listSaidWaiting
+                    if stateChanged && !keepsWaiting {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
@@ -1272,6 +1292,7 @@ public final class AppModel {
                 try? workspace.addSession(session)
             }
             appliedAgentStates[agent.id] = stateKey
+            listedAgentStatuses[agent.id] = agent.sessionStatus
         }
         for session in workspace.sessions {
             if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
@@ -1437,11 +1458,18 @@ public final class AppModel {
         }
     }
 
-    private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch) {
-        guard let commands = agentCommands(reportErrors: true) else { return }
+    private func runAgentCommand(_ make: @escaping (AgentCommands) -> TerminalLaunch,
+                                 onFailure: (@MainActor () -> Void)? = nil) {
+        guard let commands = agentCommands(reportErrors: true) else {
+            onFailure?()
+            return
+        }
         enqueue {
             let result = await self.run(make(commands))
-            if result.exitCode != 0 { self.report("Claude Code: \(result.failureMessage)") }
+            if result.exitCode != 0 {
+                self.report("Claude Code: \(result.failureMessage)")
+                onFailure?()
+            }
             await self.refreshAgents()
         }
     }
@@ -1534,7 +1562,8 @@ public final class AppModel {
     public func stop(_ sessionID: UUID) {
         detach(sessionID)
         if let agentID = state.workspace.session(sessionID)?.agentID {
-            runAgentCommand { $0.stop(agentID: agentID) }
+            if isAgentAlive(sessionID) { stopsRequested.insert(sessionID) }
+            runAgentCommand({ $0.stop(agentID: agentID) }, onFailure: { self.stopsRequested.remove(sessionID) })
         }
     }
 
@@ -1561,6 +1590,13 @@ public final class AppModel {
         for event in events {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
+            // Work or a wait the hooks report is newer than the agent list's
+            // last reading, so an old "waiting" there mustn't end it: see
+            // `keepsWaiting` in `apply(_:)`.
+            if let session = state.workspace.session(target), let agentID = session.agentID,
+               session.status == .working || session.status == .awaitingInput {
+                listedAgentStatuses[agentID] = nil
+            }
             // A tool may have changed files.
             if event.name == .postToolUse || event.name == .stop { markChangesDirty(target) }
             changed = true
@@ -1619,14 +1655,18 @@ public final class AppModel {
     struct NotificationBaseline: Equatable {
         var status: SessionStatus
         var agentAlive: Bool
+        /// Claude Code's task state for its agent is still "working".
+        var taskUnfinished = false
     }
 
     /// Compares sessions with the last check and posts notifications for real
-    /// changes: → Awaiting Input, Working → Completed, and (optionally) a
-    /// working agent that exited. The first check only records a baseline.
+    /// changes: → Awaiting Input, Working → Completed, and (optionally) an
+    /// agent that exited before its task was done, unless you stopped it. The
+    /// first check only records a baseline.
     public func checkNotifications() {
         let current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
-            ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id)))
+            ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id),
+                                         taskUnfinished: $0.agentID.flatMap { agents[$0]?.state } == "working"))
         })
         defer { notificationBaseline = current }
         guard let previous = notificationBaseline else { return }
@@ -1634,15 +1674,21 @@ public final class AppModel {
         for session in state.workspace.sessions {
             guard let before = previous[session.id], let after = current[session.id], before != after else { continue }
             let kind: SessionNotification.Kind
-            if after.status == .awaitingInput && before.status != .awaitingInput {
+            if stopsRequested.contains(session.id) {
+                // You stopped it: neither unexpected nor finished.
+                if !after.agentAlive { stopsRequested.remove(session.id) }
+                continue
+            } else if after.status == .awaitingInput && before.status != .awaitingInput {
                 guard settings.awaitingInput else { continue }
                 kind = .awaitingInput
+            } else if before.agentAlive && !after.agentAlive && after.taskUnfinished {
+                // Its process went while its task wasn't done. (An agent with no
+                // process never shows as Working, so this reads the task state.)
+                guard settings.stoppedUnexpectedly else { continue }
+                kind = .stopped
             } else if after.status == .completed && before.status == .working {
                 guard settings.finished else { continue }
                 kind = .finished
-            } else if before.agentAlive && !after.agentAlive && after.status == .working {
-                guard settings.stoppedUnexpectedly else { continue }
-                kind = .stopped
             } else {
                 continue
             }
@@ -1663,7 +1709,7 @@ public final class AppModel {
                                        body: summary ?? "Claude finished its turn.")
         case .stopped:
             return SessionNotification(sessionID: session.id, kind: kind, title: "\(session.name) stopped unexpectedly", subtitle: project,
-                                       body: "The agent exited while it was working.")
+                                       body: "The agent exited before its task was done.")
         case .usageReset:
             // Not about a session: see `checkUsageNotifications`.
             preconditionFailure("a usage reset has no session")

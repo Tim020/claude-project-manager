@@ -15,6 +15,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var authExit: Int32 = 0
     var agentsExit: Int32 = 0
     var agentsError = ""
+    var stopExit: Int32 = 0
     /// Runs while a `--bg` command is in progress, before it prints its id.
     var duringLaunch: (@Sendable () async -> Void)?
 
@@ -28,6 +29,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         }
         if args == ["--version"] { return CommandResult(exitCode: versionExit, output: versionOutput, errorOutput: versionError) }
         if args == ["auth", "status", "--json"] { return CommandResult(exitCode: authExit, output: authOutput, errorOutput: "") }
+        if args.first == "stop" { return CommandResult(exitCode: stopExit, output: "", errorOutput: stopExit == 0 ? "" : "No such agent.") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") {
             await duringLaunch?()
