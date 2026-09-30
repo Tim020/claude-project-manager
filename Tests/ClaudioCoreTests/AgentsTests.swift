@@ -35,6 +35,9 @@ final class AgentListParserTests: XCTestCase {
         XCTAssertEqual(agent(state: nil, status: "busy").sessionStatus, .working)
         // Seen with 2.1.285 ("Notification Grouping"): its turn ended (a Stop
         // hook) but Claude Code's task state stays "working" while it's idle.
+        // Not yet in Fixtures/agents.json: the evidence is the agent's job
+        // state.json. Record `claude agents --json --all` output next time an
+        // agent shows it.
         XCTAssertEqual(agent(state: "working", status: "idle").sessionStatus, .completed)
         XCTAssertEqual(agent(state: "working", status: nil).sessionStatus, .working, "a CLI that doesn't report status")
         let stopped = BackgroundAgent(id: "x", sessionID: "x", cwd: "/", name: nil, pid: nil, status: nil, state: "working",
