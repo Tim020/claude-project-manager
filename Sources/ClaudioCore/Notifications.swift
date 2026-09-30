@@ -6,7 +6,7 @@ public struct NotificationSettings: Codable, Equatable, Sendable {
     public var awaitingInput = true
     /// A session finished its turn.
     public var finished = true
-    /// A background agent exited while it was working.
+    /// A background agent exited before its task was done.
     public var stoppedUnexpectedly = false
     /// A plan limit (session or weekly) that was reached has reset.
     public var usageReset = true
