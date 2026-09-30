@@ -149,7 +149,7 @@ claude -p --model <haiku|sonnet> --output-format json \
 **Cost, measured and estimated** (`total_cost_usd` is the API-equivalent price; subscription users pay in plan usage instead):
 - A stripped classification call (empty directory, no tools, about 1.1k input tokens) cost $0.0039 on Haiku (6.2 s) and $0.0054 on Sonnet (1.5 s).
 - The same kind of task with the default system prompt and tools cost $0.064 on Haiku, over 6 turns. So the flags above matter about 15-fold.
-- A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. It hasn't been measured.
+- A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. *(Measured in step 4a: about $0.01 and 2 s for short digests.)*
 
 **Code checks first; Claude only judges.** A background job reaches the job queue only after a code check has found work for it. Anything a script could answer is done in code and never becomes a Claude call:
 
@@ -405,7 +405,8 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
    - **Moved on to 4b:**
      - A failed follow-up shows its message with Try Again and Close in its own view. The Job Failed view and the Activity Log link come with 4b's Activity Log.
      - "Don't send transcripts" (the digest supports it: `json(withTranscripts:)`), the model choice, the daily limit's editing UI, and the paused line with its count of what's waiting.
-   - **Not measured yet:** a real follow-up call's cost and time. The tests use a reply written by hand from the schema; the first real one in Tim's testing should be recorded as a fixture.
+   - **Measured in Tim's testing (2026-09-30, Sonnet, 2.1.285):** $0.0097 in 2.0 s (a two-prompt test session), and $0.0104 in 2.1 s (Review This Session on a long session from before this build, which read only its latest turns). Well under the $0.03–0.06 estimate. The tests still use a reply written by hand from the schema.
+   - **Known limit:** files written by shell commands (`echo > file`, `sed -i`, `mv`) don't count as changed files in the digest: only Edit, MultiEdit, Write and NotebookEdit calls do. Found in Tim's testing, when a session wrote its file with Bash. Sessions normally edit through those tools, and reading shell redirections reliably is guesswork, so it's left as is.
    - **`claudio suggest`** (moved from step 3): a session's proposed plan change, as a Needs You card. Add it to `bin/claudio`, the inbox's commands and the note skill.
    - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out. *(4a: the per-project limit is for background calls only; see Done in 4a.)*
    - **Assistant Settings** (per project: the mode's UI, "Don't send transcripts", models), the paused status line, the daily job limit for users without a plan-usage reading, and **the Assistant's Activity Log view**, with the Job Failed view for background failures.
