@@ -167,6 +167,33 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// With no hooks (an agent started outside Claudio), Awaiting Input came
+    /// from the agent list, so the list going idle ends it: the prompt was
+    /// answered and the turn ended within one poll.
+    func testAWaitFromTheAgentListEndsWhenItGoesIdle() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "waiting", state: "blocked", waitingFor: "permission", startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .awaitingInput)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertNil(model.workspace.session(a)?.needsAction)
+        }
+    }
+
+    /// A question the hooks saw doesn't outlive the agent's process.
+    func testAQuestionEndsWhenTheAgentExits() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            for state in ["working", "failed"] {
+                model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+                model.applyStatus(a, .awaitingInput, summary: "Shall I open the PR?")
+                model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: state, waitingFor: nil, startedAt: nil)])
+                XCTAssertEqual(model.workspace.session(a)?.status, .completed, state)
+            }
+        }
+    }
+
     func testStoppedUnexpectedlyIsOptional() throws {
         try MainActor.assumeIsolated {
             let (model, a, _) = try makeModel()

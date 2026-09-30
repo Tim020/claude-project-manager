@@ -156,6 +156,9 @@ public final class AppModel {
     /// Agent state last applied per agent, so polling doesn't clobber newer
     /// hook updates with an unchanged state.
     @ObservationIgnored private var appliedAgentStates: [String: String] = [:]
+    /// The status the agent list last gave each agent, whether or not it was
+    /// applied: tells an Awaiting Input the hooks set from one the list set.
+    @ObservationIgnored private var listedAgentStatuses: [String: SessionStatus] = [:]
     /// The most recent background CLI operation (awaited by tests).
     @ObservationIgnored public private(set) var lastTask: Task<Void, Never>?
     /// Commands, terminals and errors, for the Activity Log window.
@@ -1244,6 +1247,9 @@ public final class AppModel {
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
+                // Nothing recorded (the first poll after launch) counts as the
+                // hooks having set it, so a question survives a relaunch.
+                let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
                     session.claudeSessionID = agent.sessionID
@@ -1253,8 +1259,11 @@ public final class AppModel {
                     // An idle agent doesn't undo "waiting on you": the hooks saw
                     // a question or a permission prompt that the agent list
                     // may not (it only says the process is idle). The next
-                    // prompt, or the agent going busy, moves it on.
+                    // prompt, or the agent going busy, moves it on. Not when
+                    // the list itself said waiting (its prompt was answered),
+                    // or the process has gone (nothing is waiting any more).
                     let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
+                        && agent.isAlive && !listSaidWaiting
                     if stateChanged && !keepsWaiting {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
@@ -1269,6 +1278,7 @@ public final class AppModel {
                 try? workspace.addSession(session)
             }
             appliedAgentStates[agent.id] = stateKey
+            listedAgentStatuses[agent.id] = agent.sessionStatus
         }
         for session in workspace.sessions {
             if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
