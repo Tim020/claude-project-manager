@@ -77,8 +77,9 @@ public enum TerminalKeys {
             default: break
             }
         }
-        guard press.option, !press.command, !press.control else { return .none }
-        return .optionAsMeta(!optionTypesCharacter(press))
+        guard press.option else { return .none }
+        // Set every time, so an earlier key's choice doesn't carry over.
+        return .optionAsMeta(press.command || press.control || !optionTypesCharacter(press))
     }
 
     /// Whether Option, for this key, picks a character to type rather than

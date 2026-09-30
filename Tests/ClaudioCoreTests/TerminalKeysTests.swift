@@ -64,7 +64,10 @@ final class TerminalKeysTests: XCTestCase {
     func testOtherKeysAreLeftAlone() {
         XCTAssertEqual(action("3", "3", option: false), .none)
         XCTAssertEqual(action("c", "c", option: false, command: true), .none, "⌘C copies")
-        XCTAssertEqual(action("\u{1}", "a", control: true), .none, "Ctrl+Option")
-        XCTAssertEqual(action("#", "3", command: true), .none, "⌘⌥ shortcuts")
+    }
+
+    func testOptionWithControlOrCommandIsAlwaysMeta() {
+        XCTAssertEqual(action("\u{1}", "a", control: true), meta, "Ctrl+Option")
+        XCTAssertEqual(action("#", "3", command: true), meta, "⌘⌥ shortcuts")
     }
 }
