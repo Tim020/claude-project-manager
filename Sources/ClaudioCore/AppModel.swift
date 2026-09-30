@@ -1277,7 +1277,12 @@ public final class AppModel {
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
-                    if stateChanged {
+                    // An idle agent doesn't undo "waiting on you": the hooks saw
+                    // a question or a permission prompt that the agent list
+                    // may not (it only says the process is idle). The next
+                    // prompt, or the agent going busy, moves it on.
+                    let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
+                    if stateChanged && !keepsWaiting {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
@@ -1653,6 +1658,8 @@ public final class AppModel {
     struct NotificationBaseline: Equatable {
         var status: SessionStatus
         var agentAlive: Bool
+        /// Claude Code's task state for its agent is still "working".
+        var taskUnfinished = false
     }
 
     /// Compares sessions with the last check and posts notifications for real
@@ -1660,7 +1667,8 @@ public final class AppModel {
     /// working agent that exited. The first check only records a baseline.
     public func checkNotifications() {
         let current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
-            ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id)))
+            ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id),
+                                         taskUnfinished: $0.agentID.flatMap { agents[$0]?.state } == "working"))
         })
         defer { notificationBaseline = current }
         guard let previous = notificationBaseline else { return }
@@ -1671,12 +1679,14 @@ public final class AppModel {
             if after.status == .awaitingInput && before.status != .awaitingInput {
                 guard settings.awaitingInput else { continue }
                 kind = .awaitingInput
+            } else if before.agentAlive && !after.agentAlive && after.taskUnfinished {
+                // Its process went while its task wasn't done. (An agent with no
+                // process never shows as Working, so this reads the task state.)
+                guard settings.stoppedUnexpectedly else { continue }
+                kind = .stopped
             } else if after.status == .completed && before.status == .working {
                 guard settings.finished else { continue }
                 kind = .finished
-            } else if before.agentAlive && !after.agentAlive && after.status == .working {
-                guard settings.stoppedUnexpectedly else { continue }
-                kind = .stopped
             } else {
                 continue
             }

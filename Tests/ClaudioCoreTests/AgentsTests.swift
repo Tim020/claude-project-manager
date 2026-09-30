@@ -33,6 +33,13 @@ final class AgentListParserTests: XCTestCase {
         XCTAssertEqual(agent(state: "review_ready", status: "idle").sessionStatus, .completed)
         XCTAssertEqual(agent(state: "failed", status: nil).sessionStatus, .completed)
         XCTAssertEqual(agent(state: nil, status: "busy").sessionStatus, .working)
+        // Seen with 2.1.285 ("Notification Grouping"): its turn ended (a Stop
+        // hook) but Claude Code's task state stays "working" while it's idle.
+        XCTAssertEqual(agent(state: "working", status: "idle").sessionStatus, .completed)
+        XCTAssertEqual(agent(state: "working", status: nil).sessionStatus, .working, "a CLI that doesn't report status")
+        let stopped = BackgroundAgent(id: "x", sessionID: "x", cwd: "/", name: nil, pid: nil, status: nil, state: "working",
+                                      waitingFor: nil, startedAt: nil)
+        XCTAssertEqual(stopped.sessionStatus, .completed, "no process, so not working")
     }
 
     func testInvalidOutputThrows() {
