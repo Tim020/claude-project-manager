@@ -45,6 +45,40 @@ final class AgentListParserTests: XCTestCase {
         XCTAssertEqual(stopped.sessionStatus, .completed, "no process, so not working")
         XCTAssertEqual(agent(state: "working", status: "waiting").sessionStatus, .awaitingInput, "a permission prompt mid-task")
         XCTAssertEqual(agent(state: "blocked", status: "idle").sessionStatus, .awaitingInput, "blocked wins over idle")
+        func stoppedAgent(state: String?, status: String?) -> BackgroundAgent {
+            BackgroundAgent(id: "x", sessionID: "x", cwd: "/", name: nil, pid: nil, status: status, state: state, waitingFor: nil, startedAt: nil)
+        }
+        XCTAssertEqual(stoppedAgent(state: "blocked", status: nil).sessionStatus, .completed, "no process, so nothing waits on you")
+        XCTAssertEqual(stoppedAgent(state: "stopped", status: nil).sessionStatus, .completed)
+    }
+
+    /// `claude stop`, recorded with 2.1.285 in a signed-out container: before,
+    /// the live agent is blocked on /login; after, it has no pid and its
+    /// `state` is "stopped" (not the state it had).
+    func testParsesAnAgentBeforeAndAfterStop() throws {
+        let before = try AgentListParser.parse(Data(Fixtures.string("agents-before-stop.json").utf8))
+        XCTAssertEqual(before.first?.state, "blocked")
+        XCTAssertEqual(before.first?.status, "idle")
+        XCTAssertEqual(before.first?.sessionStatus, .awaitingInput)
+        let after = try XCTUnwrap(AgentListParser.parse(Data(Fixtures.string("agents-after-stop.json").utf8)).first)
+        XCTAssertEqual(after.id, before.first?.id)
+        XCTAssertFalse(after.isAlive)
+        XCTAssertNil(after.status)
+        XCTAssertEqual(after.state, "stopped")
+        XCTAssertEqual(after.sessionStatus, .completed)
+    }
+
+    /// Agents whose process went while they were blocked, from a real listing
+    /// (2.1.285): they keep `state: "blocked"` with no pid, but nothing is
+    /// waiting on you any more.
+    func testAStoppedBlockedAgentIsntWaiting() throws {
+        let agents = try AgentListParser.parse(Data(Fixtures.string("agents-stopped-blocked.json").utf8))
+        XCTAssertEqual(agents.count, 3)
+        for agent in agents {
+            XCTAssertEqual(agent.state, "blocked", agent.id)
+            XCTAssertFalse(agent.isAlive, agent.id)
+            XCTAssertEqual(agent.sessionStatus, .completed, agent.id)
+        }
     }
 
     func testInvalidOutputThrows() {

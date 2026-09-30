@@ -1255,8 +1255,9 @@ public final class AppModel {
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
-                // Nothing recorded (the first poll after launch) counts as the
-                // hooks having set it, so a question survives a relaunch.
+                // Nothing recorded (the first poll since Claudio started, or
+                // the hooks reported something since) counts as the hooks
+                // having set it, so a question survives a relaunch.
                 let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
@@ -1589,6 +1590,13 @@ public final class AppModel {
         for event in events {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
+            // Work or a wait the hooks report is newer than the agent list's
+            // last reading, so an old "waiting" there mustn't end it: see
+            // `keepsWaiting` in `apply(_:)`.
+            if let session = state.workspace.session(target), let agentID = session.agentID,
+               session.status == .working || session.status == .awaitingInput {
+                listedAgentStatuses[agentID] = nil
+            }
             // A tool may have changed files.
             if event.name == .postToolUse || event.name == .stop { markChangesDirty(target) }
             changed = true
