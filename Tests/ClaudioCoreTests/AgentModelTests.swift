@@ -16,6 +16,8 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var agentsExit: Int32 = 0
     var agentsError = ""
     var stopExit: Int32 = 0
+    /// Runs while a `--bg` command is in progress, before it prints its id.
+    var duringLaunch: (@Sendable () async -> Void)?
 
     var commands: [[String]] { lock.withLock { _commands } }
 
@@ -29,7 +31,10 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         if args == ["auth", "status", "--json"] { return CommandResult(exitCode: authExit, output: authOutput, errorOutput: "") }
         if args.first == "stop" { return CommandResult(exitCode: stopExit, output: "", errorOutput: stopExit == 0 ? "" : "No such agent.") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
-        if args.contains("--bg") { return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.") }
+        if args.contains("--bg") {
+            await duringLaunch?()
+            return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.")
+        }
         return CommandResult(exitCode: 0, output: "", errorOutput: "")
     }
 }
@@ -152,6 +157,27 @@ final class AgentModelTests: XCTestCase {
         guard let index = arguments.firstIndex(of: "--settings"), index + 1 < arguments.count,
               let settings = try? JSONDecoder().decode(JSONValue.self, from: Data(arguments[index + 1].utf8)) else { return nil }
         return settings["worktree"]?["bgIsolation"]?.stringValue
+    }
+
+    /// A poll listed the agent before `claude --bg` printed its id, and it
+    /// was imported into Unfiled beside the session that started it.
+    func testAgentListedBeforeItsDispatchReturnsIsNotImportedTwice() async throws {
+        runner.agentsJSON = "[" + [("abcd1234", "\(repo)/.claude/worktrees/fix-it"), ("0ddba11", repo)].map { id, cwd in
+            #"{"id":"\#(id)","sessionId":"\#(id)-0000","kind":"background","cwd":"\#(cwd)","name":"- [ ] Fix it","pid":5,"status":"busy","state":"working"}"#
+        }.joined(separator: ",") + "]"
+        let (model, id) = try await MainActor.run { () -> (AppModel, UUID) in
+            let model = try makeModel()
+            let p = model.addProject(path: repo)
+            runner.duringLaunch = { await model.refreshAgents() }
+            return (model, try XCTUnwrap(model.createSession(request(p))))
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.sessions.filter { $0.agentID == "abcd1234" }.map(\.id), [id])
+            XCTAssertEqual(model.workspace.session(id)?.name, "storage fix")
+            XCTAssertEqual(model.workspace.sessions.filter { $0.agentID == "0ddba11" }.count, 1,
+                           "an agent started elsewhere is imported once the launch is done")
+        }
     }
 
     func testDispatchFailureReportsError() async throws {

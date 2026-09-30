@@ -11,6 +11,7 @@ final class FakeNotifier: NotificationPosting {
 final class NotificationTests: XCTestCase {
     var notifier: FakeNotifier!
     var store = MemoryStore()
+    var hooks: URL!
 
     @MainActor
     private func makeModel(runner: FakeRunner? = nil) throws -> (AppModel, UUID, UUID) {
@@ -21,8 +22,9 @@ final class NotificationTests: XCTestCase {
         try state.workspace.addSession(a)
         try state.workspace.addSession(b)
         store.state = state
+        hooks = try makeTemporaryDirectory().appendingPathComponent("h.log")
         let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
-                             hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                             hookEventsURL: hooks,
                              runner: runner ?? FakeRunner(),
                              locateClaude: { _ in runner == nil ? nil : "/usr/local/bin/claude" }, shell: "/bin/sh", home: "/")
         notifier = FakeNotifier()
@@ -233,8 +235,10 @@ final class NotificationTests: XCTestCase {
                 model.updateSettings(settings)
                 model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: status, state: "working", waitingFor: nil, startedAt: nil)])
                 model.checkNotifications()
-                // After `claude stop` the task state stays "working".
-                runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","state":"working"}]"#
+                // After `claude stop`: no pid, `state: "stopped"` (recorded with
+                // 2.1.285, Fixtures/agents-after-stop.json). From busy, that's
+                // Working → Completed, which isn't "finished" either.
+                runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","state":"stopped"}]"#
                 model.stop(a)
                 return (model, a)
             }
@@ -246,6 +250,113 @@ final class NotificationTests: XCTestCase {
                 XCTAssertEqual(notifier.posted.map(\.kind), [], status)
             }
         }
+    }
+
+    /// A stopped agent that was waiting on you no longer is, although the list
+    /// can still say "blocked" (as agents whose process went do).
+    func testAStoppedAgentEndsAWait() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "waiting", state: "blocked", waitingFor: "permission", startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .awaitingInput)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "blocked", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertNil(model.workspace.session(a)?.needsAction)
+        }
+    }
+
+    /// With no status from the list yet (as on the first poll after Claudio
+    /// starts), a question the hooks set survives an idle agent.
+    func testAQuestionSurvivesTheFirstPoll() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.applyStatus(a, .awaitingInput, summary: "Shall I open the PR?")
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .awaitingInput)
+        }
+    }
+
+    /// The list said waiting (a permission prompt), then, before it was polled
+    /// again, you approved and the turn ended on a question (a Stop hook). The
+    /// question is newer than the list's "waiting", so an idle agent keeps it.
+    func testAQuestionAfterTheListsWaitIsKept() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "waiting", state: "blocked", waitingFor: "permission", startedAt: nil)])
+            try appendHook(a, "Stop", extra: #","last_assistant_message":"Shall I open the PR?""#)
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(a)?.needsAction, "Shall I open the PR?")
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .awaitingInput)
+            XCTAssertEqual(model.workspace.session(a)?.needsAction, "Shall I open the PR?")
+        }
+    }
+
+    /// A mid-turn stop: the SessionEnd hook marks it Completed before the list
+    /// shows the agent gone. That isn't "finished", nor is the agent going.
+    /// Once it's seen gone, notifications come back.
+    func testAStopIsQuietUntilTheAgentIsGone() async throws {
+        let runner = FakeRunner()
+        let (model, a) = try await MainActor.run { () -> (AppModel, UUID) in
+            let (model, a, _) = try makeModel(runner: runner)
+            var settings = model.settings
+            settings.notifications.stoppedUnexpectedly = true
+            model.updateSettings(settings)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            // The list hasn't caught up with the stop yet.
+            runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","pid":5,"status":"busy","state":"working"}]"#
+            model.stop(a)
+            return (model, a)
+        }
+        await model.lastTask?.value
+        try await MainActor.run {
+            try appendHook(a, "SessionEnd")
+            model.pollHookEvents()
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertTrue(model.isAgentAlive(a))
+            model.checkNotifications()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "stopped", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.kind), [])
+
+            // Resumed later: its turns notify again.
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 6, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 6, status: "idle", state: "done", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.kind), [.finished])
+        }
+    }
+
+    /// Resuming a session whose stop hasn't gone through yet (the agent is
+    /// still listed alive) ends the quiet: its turn finishing is notified.
+    func testResumingEndsTheQuietAfterAStop() async throws {
+        let runner = FakeRunner()
+        let (model, a) = try await MainActor.run { () -> (AppModel, UUID) in
+            let (model, a, _) = try makeModel(runner: runner)
+            runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","pid":5,"status":"busy","state":"working"}]"#
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            model.stop(a)
+            return (model, a)
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            model.resume(a)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "done", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.kind), [.finished])
+        }
+    }
+
+    private func appendHook(_ session: UUID, _ name: String, extra: String = "") throws {
+        let line = "\(session.uuidString)\t" + #"{"hook_event_name":"\#(name)","session_id":"a"\#(extra)}"# + "\n"
+        if !FileManager.default.fileExists(atPath: hooks.path) { _ = FileManager.default.createFile(atPath: hooks.path, contents: nil) }
+        let handle = try FileHandle(forWritingTo: hooks)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(line.utf8))
+        try handle.close()
     }
 
     /// If `claude stop` fails, the agent carries on, and a later crash is

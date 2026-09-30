@@ -379,6 +379,7 @@ struct FolderMenu: View {
         if case .folder(let folderID) = group {
             Button("Rename Folder…") { model.beginRenaming(folderID: folderID) }
             Button("New Session in Folder…") { presentNewSession(group) }
+            Button("Show Pull Requests") { model.showOverview(.folder(group)) }
             let others = model.workspace.projects.filter { $0.id != projectID }
             Menu("Move to Project") {
                 ForEach(others) { project in
@@ -392,6 +393,7 @@ struct FolderMenu: View {
         } else {
             Button("New Session…") { presentNewSession(group) }
             Button("New Folder") { model.createFolder(in: projectID) }
+            Button("Show Pull Requests") { model.showOverview(.folder(group)) }
             Divider()
             Button("Archive Completed") { model.archiveCompleted(in: group) }
         }
