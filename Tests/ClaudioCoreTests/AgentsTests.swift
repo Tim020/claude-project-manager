@@ -40,6 +40,8 @@ final class AgentListParserTests: XCTestCase {
         let stopped = BackgroundAgent(id: "x", sessionID: "x", cwd: "/", name: nil, pid: nil, status: nil, state: "working",
                                       waitingFor: nil, startedAt: nil)
         XCTAssertEqual(stopped.sessionStatus, .completed, "no process, so not working")
+        XCTAssertEqual(agent(state: "working", status: "waiting").sessionStatus, .awaitingInput, "a permission prompt mid-task")
+        XCTAssertEqual(agent(state: "blocked", status: "idle").sessionStatus, .awaitingInput, "blocked wins over idle")
     }
 
     func testInvalidOutputThrows() {
