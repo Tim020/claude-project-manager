@@ -311,6 +311,24 @@ final class FollowUpModelTests: XCTestCase {
         XCTAssertEqual(card?.state, .offered)
     }
 
+    /// Stop Session on a background agent whose task Claude Code still calls
+    /// "working": once it has no process it isn't Working (PR #31), so it's offered.
+    func testStoppingAnAgentMidTaskMakesItReady() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "working")
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card)
+        await MainActor.run {
+            f.model.stop(f.session)
+            f.model.apply([BackgroundAgent(id: "c0ffee00", sessionID: FollowUpModelTests.conversation, cwd: "/code/app",
+                                           name: nil, pid: nil, status: nil, state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(f.model.workspace.session(f.session)?.status, .completed, "no process, so not working")
+        }
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+    }
+
     func testANewPromptWithdrawsTheOffer() async throws {
         let f = try await makeFixture(lines: substantial, mark: true)
         await f.model.checkFollowUps()
