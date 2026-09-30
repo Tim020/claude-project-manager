@@ -271,5 +271,6 @@ extension Session {
         self.lastTurnFailed = try c.decodeIfPresent(Bool.self, forKey: .lastTurnFailed) ?? false
         // Tolerant: a mark that can't be read is set again from the history.
         self.followUpMark = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpMark)) ?? nil
+        self.followUpDeclined = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpDeclined)) ?? nil
     }
 }

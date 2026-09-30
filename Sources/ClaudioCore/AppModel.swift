@@ -1631,6 +1631,13 @@ public final class AppModel {
         save()
     }
 
+    /// Records Not Now on a session's offer (see AppModel+FollowUps).
+    func setFollowUpDeclined(_ sessionID: UUID, _ mark: FollowUpMark?) {
+        guard let session = workspace.session(sessionID), session.followUpDeclined != mark else { return }
+        state.workspace.updateSession(sessionID) { $0.followUpDeclined = mark }
+        save()
+    }
+
     /// For tests: changes a session directly.
     func applyTestSessionChange(_ sessionID: UUID, _ body: (inout Session) -> Void) {
         state.workspace.updateSession(sessionID, body)

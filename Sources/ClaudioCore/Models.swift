@@ -131,10 +131,13 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var lastTurnFailed = false
     /// Where its last follow-up got to in its history (see `FollowUpMark`).
     public var followUpMark: FollowUpMark?
+    /// Where its history had got to when you chose Not Now on an offer: it's
+    /// offered again only once the history has grown past it.
+    public var followUpDeclined: FollowUpMark?
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
-        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark
+        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
     }
 
     public init(

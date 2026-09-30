@@ -293,7 +293,6 @@ final class FollowUpModelTests: XCTestCase {
         var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
         XCTAssertNil(card, "Claude Code says the task goes on")
         await setTask("review_ready", f)
-        await MainActor.run { f.model.followUpChecked = [:] }
         await f.model.checkFollowUps()
         card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
         XCTAssertEqual(card?.state, .offered, "ready for review")
@@ -338,6 +337,15 @@ final class FollowUpModelTests: XCTestCase {
         await f.model.checkFollowUps()
         var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
         XCTAssertNil(card, "not offered again for the same history")
+        // A relaunch: offers and what was checked are gone, but Not Now is kept.
+        await MainActor.run {
+            f.model.needsYou = [:]
+            f.model.followUpChecked = [:]
+            f.model.loadNeedsYou()
+        }
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "Not Now survives a relaunch")
         try append([History.prompt("And the width too"), History.reply("Done.")], to: f.history)
         await f.model.checkFollowUps()
         card = await MainActor.run { f.model.followUpCard(forSession: f.session) }

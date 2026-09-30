@@ -132,6 +132,12 @@ extension AppModel {
             return
         }
         followUpChecked[sessionID] = checked
+        // Not Now, and it hasn't done anything since (kept across launches).
+        if let declined = session.followUpDeclined, declined.conversationID == file.conversationID,
+           file.size <= declined.offset {
+            followUpDue.remove(sessionID)
+            return
+        }
         guard let project = workspace.project(session.projectID) else { return }
         let url = file.url, projectPath = project.path
         let slice = await Task.detached(priority: .utility) { () -> (digest: SessionDigest, end: UInt64)? in
@@ -173,8 +179,11 @@ extension AppModel {
     }
 
     /// Not Now: the offer goes, and comes back only after the session does
-    /// more and looks ready again.
+    /// more and looks ready again. Where it had got to is kept with the
+    /// session, so a relaunch doesn't offer it again.
     public func declineFollowUpOffer(_ id: UUID, projectID: UUID) {
+        guard let offer = followUp(id, inProject: projectID) else { return }
+        if let (_, mark) = pendingDigests[id] { setFollowUpDeclined(offer.sessionID, mark) }
         closeFollowUp(id, projectID: projectID)
     }
 
