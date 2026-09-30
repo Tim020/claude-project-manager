@@ -1,16 +1,19 @@
 import Foundation
 
 // Step 4a of the Project Assistant (design 9a): follow-ups and Needs You.
-// Code decides when a follow-up is worth a call: the session has finished
-// (Completed, quiet for 2 minutes, or stopped), something new happened
-// since its last follow-up, and the digest shows substance. Only then is
-// Claude asked, and its answer is saved notes plus plan changes you choose.
+// Code decides when a session looks ready for a follow-up, from Claude
+// Code's own signals rather than a timer: its turn ended normally, it isn't
+// waiting on you, and Claude Code says its task is done or ready for review
+// (or you stopped it, or closed its tab). Then, if something worth a look
+// happened since the last follow-up, it's offered, and Claude is only asked
+// if you say Follow Up. A new prompt in the session withdraws the offer.
 
 extension AppModel {
-    /// How long a Completed session stays quiet before it counts as finished.
-    public static let followUpQuietInterval: TimeInterval = 120
-    /// How often finished sessions are looked for.
+    /// How often sessions are checked for being ready (cheap: no file is
+    /// read unless one is, and its history has grown).
     public static let followUpCheckInterval: TimeInterval = 15
+    /// Claude Code's task states that mean its task has finished.
+    public static let readyTaskStates: Set<String> = ["done", "review_ready"]
 
     // MARK: - Reading Needs You
 
@@ -37,30 +40,49 @@ extension AppModel {
         return data.followUps.filter { $0.state != .working }.count + data.suggestions.count
     }
 
-    // MARK: - Finding finished sessions
+    // MARK: - Finding sessions ready for a follow-up
 
-    /// Looks for sessions that have finished and have something worth a
-    /// follow-up (every 15 s). No Claude call is made unless code finds one.
+    /// Looks for sessions that look ready and have something worth a
+    /// follow-up, and offers one (every 15 s). An offer costs nothing: Claude
+    /// is only asked when you accept it. Automatic mode only.
     public func checkFollowUps() async {
         for session in workspace.sessions {
-            guard let projectID = Optional(session.projectID),
-                  backgroundGate(forProject: projectID) == .run,
+            guard isAssistantOn(inProject: session.projectID), assistantMode(ofProject: session.projectID) == .automatic,
                   isFollowUpCandidate(session) else { continue }
             await considerFollowUp(session.id)
         }
     }
 
-    /// The cheap checks, before any file is read.
+    /// The cheap checks, before any file is read. A session looks ready when
+    /// its last turn ended normally (a turn cut short by a usage limit or an
+    /// API error doesn't), it isn't waiting on you, and Claude Code says its
+    /// task is done or ready for review, or you stopped it or closed its tab.
     func isFollowUpCandidate(_ session: Session) -> Bool {
         guard !session.isArchived, session.hasConversation, session.claudeSessionID != nil,
               session.status == .completed, !session.lastTurnFailed,
-              !isFollowUpRunning(session.id) else { return false }
-        return followUpDue.contains(session.id) || now().timeIntervalSince(session.lastActivity) >= AppModel.followUpQuietInterval
+              !isFollowUpPending(session.id) else { return false }
+        return followUpDue.contains(session.id) || taskIsFinished(session)
+    }
+
+    /// Claude Code's own view of the session's task, from `claude agents`:
+    /// done, or ready for review. Sessions without an agent (direct tabs)
+    /// only look ready when stopped or their tab is closed.
+    func taskIsFinished(_ session: Session) -> Bool {
+        guard let state = session.agentID.flatMap({ agents[$0]?.state }) else { return false }
+        return AppModel.readyTaskStates.contains(state)
     }
 
     private func isFollowUpRunning(_ sessionID: UUID) -> Bool {
         guard let projectID = workspace.session(sessionID)?.projectID else { return false }
         return needsYouData(inProject: projectID).followUps.contains { $0.sessionID == sessionID && $0.state == .working }
+    }
+
+    /// An offer, or a follow-up running, for the session.
+    private func isFollowUpPending(_ sessionID: UUID) -> Bool {
+        guard let projectID = workspace.session(sessionID)?.projectID else { return false }
+        return needsYouData(inProject: projectID).followUps.contains {
+            $0.sessionID == sessionID && ($0.state == .working || $0.state == .offered)
+        }
     }
 
     /// The session's history file, and its size, for its current conversation.
@@ -91,10 +113,9 @@ extension AppModel {
         return (url, conversationID, bytes)
     }
 
-    /// Reads what's new in a candidate's history and, if it has substance,
-    /// starts its follow-up. A session seen for the first time gets a mark at
-    /// the end of its history, with no call, so old sessions never add up to
-    /// a burst of follow-ups.
+    /// Reads what's new in a ready session's history and, if it has
+    /// substance, offers a follow-up. A session from before this build, seen
+    /// for the first time, gets a mark at the end of its history instead.
     func considerFollowUp(_ sessionID: UUID) async {
         guard let session = workspace.session(sessionID), let file = historyFile(of: session) else { return }
         guard let mark = session.followUpMark else {
@@ -105,6 +126,7 @@ extension AppModel {
         // After /clear, the new conversation is read from the top.
         let start = mark.conversationID == file.conversationID ? mark.offset : 0
         let checked = "\(file.conversationID):\(file.size)"
+        // Unchanged since it was last looked at (or since Not Now): nothing new.
         guard file.size > start, followUpChecked[sessionID] != checked else {
             followUpDue.remove(sessionID)
             return
@@ -117,15 +139,53 @@ extension AppModel {
             return (SessionDigest.build(lines: read.lines, projectPath: projectPath), read.end)
         }.value
         followUpDue.remove(sessionID)
-        // Nothing worth a call yet: the mark stays, so prompts add up
+        // Nothing worth a look yet: the mark stays, so prompts add up
         // ("3 or more since the last follow-up").
         guard let slice, !slice.digest.prompts.isEmpty, slice.digest.hasSubstance,
-              let current = workspace.session(sessionID), isFollowUpCandidate(current),
-              backgroundGate(forProject: current.projectID) == .run
+              let current = workspace.session(sessionID), current.status == .completed, !current.lastTurnFailed,
+              !isFollowUpPending(sessionID)
         else { return }
-        countBackgroundJob()
-        startFollowUp(sessionID, digest: slice.digest,
-                      mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end), askedFor: false)
+        offerFollowUp(sessionID, digest: slice.digest,
+                      mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end))
+    }
+
+    /// "Shell Height looks done. Follow up?": no call until you accept.
+    func offerFollowUp(_ sessionID: UUID, digest: SessionDigest, mark: FollowUpMark) {
+        guard let session = workspace.session(sessionID) else { return }
+        let offer = FollowUp(sessionID: sessionID, sessionName: session.name, state: .offered, createdAt: now(), askedFor: false)
+        updateNeedsYou(session.projectID) { data in
+            data.followUps.removeAll { $0.sessionID == sessionID && $0.state == .offered }
+            data.followUps.append(offer)
+        }
+        pendingDigests[offer.id] = (digest, mark)
+    }
+
+    /// Follow Up on an offer: the call runs now, as something you started
+    /// (not background work: no usage gate, no daily limit).
+    public func acceptFollowUpOffer(_ id: UUID, projectID: UUID) {
+        guard let offer = followUp(id, inProject: projectID), offer.state == .offered else { return }
+        guard let (digest, mark) = pendingDigests[id] else {
+            closeFollowUp(id, projectID: projectID)
+            reviewSession(offer.sessionID)
+            return
+        }
+        startFollowUp(offer.sessionID, digest: digest, mark: mark, askedFor: true, replacing: id)
+    }
+
+    /// Not Now: the offer goes, and comes back only after the session does
+    /// more and looks ready again.
+    public func declineFollowUpOffer(_ id: UUID, projectID: UUID) {
+        closeFollowUp(id, projectID: projectID)
+    }
+
+    /// A new prompt in the session: it's carrying on, so an offer made for
+    /// where it had got to no longer applies.
+    func withdrawFollowUpOffer(forSession sessionID: UUID) {
+        guard let projectID = workspace.session(sessionID)?.projectID else { return }
+        let offers = needsYouData(inProject: projectID).followUps.filter { $0.sessionID == sessionID && $0.state == .offered }
+        guard !offers.isEmpty else { return }
+        for offer in offers { pendingDigests[offer.id] = nil }
+        updateNeedsYou(projectID) { data in data.followUps.removeAll { $0.sessionID == sessionID && $0.state == .offered } }
     }
 
     // MARK: - Review This Session
@@ -179,7 +239,9 @@ extension AppModel {
                                 askedFor: askedFor)
         if let followUpID { followUp.id = followUpID }
         updateNeedsYou(projectID) { data in
-            data.followUps.removeAll { $0.id == followUp.id || ($0.sessionID == sessionID && $0.state == .working) }
+            data.followUps.removeAll {
+                $0.id == followUp.id || ($0.sessionID == sessionID && ($0.state == .working || $0.state == .offered))
+            }
             data.followUps.append(followUp)
         }
         let item = items(inProject: projectID).first { $0.sessionID == sessionID && $0.status != .done }
@@ -204,7 +266,7 @@ extension AppModel {
         case .failure(let failure):
             // The mark stays, so nothing it would have read is skipped.
             updateFollowUp(id, projectID: projectID) { $0.state = .failed(failure.message) }
-            retryDigests[id] = (digest, request.mark)
+            pendingDigests[id] = (digest, request.mark)
         case .success(let reply):
             let (texts, changes) = FollowUpJob.result(from: reply.output, refs: request.refs,
                                                       items: items(inProject: projectID))
@@ -215,7 +277,7 @@ extension AppModel {
                 kept.append(FollowUpNote(text: text, noteID: note?.id))
             }
             setFollowUpMark(sessionID, request.mark)
-            retryDigests[id] = nil
+            pendingDigests[id] = nil
             updateFollowUp(id, projectID: projectID) { followUp in
                 followUp.state = .ready
                 followUp.notes = kept
@@ -240,7 +302,7 @@ extension AppModel {
     /// Try Again on a failed follow-up: the same digest, asked again.
     public func retryFollowUp(_ id: UUID, projectID: UUID) {
         guard let followUp = followUp(id, inProject: projectID), case .failed = followUp.state else { return }
-        guard let (digest, mark) = retryDigests[id] else {
+        guard let (digest, mark) = pendingDigests[id] else {
             // After a relaunch the digest is gone: read the session afresh.
             closeFollowUp(id, projectID: projectID)
             reviewSession(followUp.sessionID)
@@ -308,7 +370,7 @@ extension AppModel {
 
     /// Close (or nothing to keep): it's done with. Saved notes stay.
     public func closeFollowUp(_ id: UUID, projectID: UUID) {
-        retryDigests[id] = nil
+        pendingDigests[id] = nil
         updateNeedsYou(projectID) { $0.followUps.removeAll { $0.id == id } }
     }
 

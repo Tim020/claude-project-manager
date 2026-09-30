@@ -171,15 +171,18 @@ final class FollowUpModelTests: XCTestCase {
         let history: URL
     }
 
-    /// A finished session (quiet for 10 minutes) with a history file, and a
-    /// model signed in with an API key, so background work runs.
+    static let conversation = "c0ffee00-1111-2222-3333-444455556666"
+
+    /// A Completed session with a history file, a model signed in with an
+    /// API key, and (unless `task` is nil) its background agent, whose task
+    /// state Claude Code reports as `task`.
     private func makeFixture(assistant: MemoryAssistantStore = MemoryAssistantStore(),
                              lines: [String] = [History.prompt("Fix the shell height"), History.reply("Looking.")],
-                             mark: Bool = false) async throws -> Fixture {
+                             mark: Bool = false, task: String? = "done") async throws -> Fixture {
         let runner = FollowUpRunner()
         runner.base.authOutput = #"{"loggedIn": true, "authMethod": "api_key"}"#
         let claudeHome = try makeTemporaryDirectory()
-        let conversation = "c0ffee00-1111-2222-3333-444455556666"
+        let conversation = FollowUpModelTests.conversation
         let directory = claudeHome.appendingPathComponent("projects/-code-app")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let history = directory.appendingPathComponent("\(conversation).jsonl")
@@ -200,7 +203,17 @@ final class FollowUpModelTests: XCTestCase {
                      now: { FollowUpModelTests.now }, home: "/")
         }
         await model.checkEnvironment(force: true)
-        return Fixture(model: model, runner: runner, assistant: assistant, project: project, session: session.id, history: history)
+        let f = Fixture(model: model, runner: runner, assistant: assistant, project: project, session: session.id, history: history)
+        if let task { await setTask(task, f) }
+        return f
+    }
+
+    /// What `claude agents --json` says about the session's agent.
+    private func setTask(_ state: String, _ f: Fixture) async {
+        await MainActor.run {
+            f.model.apply([BackgroundAgent(id: "c0ffee00", sessionID: FollowUpModelTests.conversation, cwd: "/code/app",
+                                           name: nil, pid: 5, status: "idle", state: state, waitingFor: nil, startedAt: nil)])
+        }
     }
 
     private func append(_ lines: [String], to url: URL) throws {
@@ -216,17 +229,30 @@ final class FollowUpModelTests: XCTestCase {
         History.reply("Stored per project."),
     ]
 
-    func testOldSessionsGetAMarkAndNoCall() async throws {
-        let f = try await makeFixture(lines: ["a", "b", "c"].map(History.prompt))
+    /// Checks for ready sessions, expects an offer, and accepts it.
+    private func offerAndAccept(_ f: Fixture, file: StaticString = #filePath, line: UInt = #line) async throws {
         await f.model.checkFollowUps()
+        let offer = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(offer?.state, .offered, file: file, line: line)
+        XCTAssertTrue(f.runner.calls.isEmpty, "an offer costs nothing", file: file, line: line)
+        guard let offer else { return }
+        await MainActor.run { f.model.acceptFollowUpOffer(offer.id, projectID: f.project) }
         await f.model.waitForAssistantJobs()
-        let mark = await MainActor.run { f.model.workspace.session(f.session)?.followUpMark }
-        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: f.history.path)[.size] as? NSNumber)
-        XCTAssertEqual(mark, FollowUpMark(conversationID: "c0ffee00-1111-2222-3333-444455556666", offset: size.uint64Value))
-        XCTAssertTrue(f.runner.calls.isEmpty, "upgrading never starts a burst of follow-ups")
     }
 
-    func testAFinishedSessionIsFollowedUp() async throws {
+    func testOldSessionsGetAMarkAndNothingElse() async throws {
+        let f = try await makeFixture(lines: ["a", "b", "c"].map(History.prompt))
+        await f.model.checkFollowUps()
+        let (mark, card) = await MainActor.run {
+            (f.model.workspace.session(f.session)?.followUpMark, f.model.followUpCard(forSession: f.session))
+        }
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: f.history.path)[.size] as? NSNumber)
+        XCTAssertEqual(mark, FollowUpMark(conversationID: FollowUpModelTests.conversation, offset: size.uint64Value))
+        XCTAssertNil(card, "upgrading offers nothing for what old sessions already did")
+        XCTAssertTrue(f.runner.calls.isEmpty)
+    }
+
+    func testAReadySessionIsOfferedAFollowUpAndItRunsWhenAccepted() async throws {
         let f = try await makeFixture()
         await f.model.checkFollowUps()          // the baseline
         try append(substantial, to: f.history)
@@ -236,33 +262,92 @@ final class FollowUpModelTests: XCTestCase {
             return try XCTUnwrap(f.model.promoteNote(note.id, projectID: f.project, title: "Remember Shell panel height"))
         }
         await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
+        await MainActor.run {
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 1, "an offer waits for you")
+            XCTAssertNil(f.assistant.needsYou[f.project], "offers aren't saved")
+        }
+        try await offerAndAccept(f)
         XCTAssertEqual(f.runner.calls.count, 1)
         XCTAssertTrue(f.runner.calls[0].containsSequence(["--model", "sonnet"]))
         try await MainActor.run {
             let followUp = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
             XCTAssertEqual(followUp.state, .ready)
-            XCTAssertFalse(followUp.askedFor)
+            XCTAssertTrue(followUp.askedFor, "accepting an offer is something you started")
             XCTAssertEqual(followUp.notes.count, 2)
             let saved = f.model.notes(inProject: f.project).filter { $0.author == .assistant }
             XCTAssertEqual(saved.count, 2, "notes are saved straight away")
             XCTAssertEqual(saved.first?.sessionID, f.session)
             XCTAssertEqual(followUp.planChanges.map(\.kind), [.add, .done])
             XCTAssertEqual(followUp.planChanges[1].itemID, item.id)
-            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 1)
             XCTAssertEqual(f.model.item(item.id, inProject: f.project)?.status, .planned, "the plan waits for you")
             XCTAssertEqual(f.assistant.needsYou[f.project]?.followUps.count, 1, "saved")
         }
-        let calls = f.runner.calls.count
         await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
-        XCTAssertEqual(f.runner.calls.count, calls, "nothing new since, so no call")
+        XCTAssertEqual(f.runner.calls.count, 1, "nothing new since")
+    }
+
+    /// Claude Code's own view decides: "working" means it expects to carry on.
+    func testOnlyAFinishedTaskIsOffered() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "working")
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "Claude Code says the task goes on")
+        await setTask("review_ready", f)
+        await MainActor.run { f.model.followUpChecked = [:] }
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered, "ready for review")
+    }
+
+    /// Stopping a session (or closing its tab) is a sign too, for direct
+    /// tabs with no task state as well.
+    func testStoppingASessionMakesItReady() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: nil)
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "no agent, no task state: not yet")
+        await MainActor.run { f.model.stop(f.session) }
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+    }
+
+    func testANewPromptWithdrawsTheOffer() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        await f.model.checkFollowUps()
+        let hookLog = f.history.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("h.log")
+        let line = f.session.uuidString + "\t" + History.json(["hook_event_name": "UserPromptSubmit", "session_id": FollowUpModelTests.conversation,
+                                                               "prompt": "One more thing"]) + "\n"
+        try line.write(to: hookLog, atomically: true, encoding: .utf8)
+        await MainActor.run {
+            XCTAssertEqual(f.model.followUpCard(forSession: f.session)?.state, .offered)
+            f.model.pollHookEvents()
+            XCTAssertNil(f.model.followUpCard(forSession: f.session), "it's carrying on, so the offer goes")
+            XCTAssertEqual(f.model.workspace.session(f.session)?.status, .working)
+        }
+    }
+
+    func testNotNowWaitsForMoreActivity() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        await f.model.checkFollowUps()
+        await MainActor.run {
+            let offer = f.model.followUpCard(forSession: f.session)!
+            f.model.declineFollowUpOffer(offer.id, projectID: f.project)
+        }
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "not offered again for the same history")
+        try append([History.prompt("And the width too"), History.reply("Done.")], to: f.history)
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered, "offered again once it's done more")
+        XCTAssertTrue(f.runner.calls.isEmpty)
     }
 
     func testTheCardsActions() async throws {
         let f = try await makeFixture(lines: substantial, mark: true)
-        await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
+        try await offerAndAccept(f)
         try await MainActor.run {
             let followUp = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
             let row = followUp.notes[0]
@@ -285,15 +370,17 @@ final class FollowUpModelTests: XCTestCase {
         }
     }
 
-    func testNothingIsAskedWithoutSubstanceOrInManualMode() async throws {
+    func testNothingIsOfferedWithoutSubstanceOrInManualMode() async throws {
         let f = try await makeFixture(lines: [History.prompt("What does this do?"), History.reply("It runs shells.")], mark: true)
         await f.model.checkFollowUps()
-        XCTAssertTrue(f.runner.calls.isEmpty, "a quick question isn't worth a call")
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "a quick question isn't worth a follow-up")
 
         try append(substantial, to: f.history)
         await MainActor.run { f.model.setAssistantMode(.manual, projectID: f.project) }
         await f.model.checkFollowUps()
-        XCTAssertTrue(f.runner.calls.isEmpty, "Manual: only when you ask")
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "Manual: only when you ask")
 
         await MainActor.run { f.model.reviewSession(f.session) }
         try await waitUntil { await MainActor.run { f.model.followUpCard(forSession: f.session) != nil } }
@@ -303,11 +390,14 @@ final class FollowUpModelTests: XCTestCase {
         XCTAssertEqual(askedFor, true)
     }
 
-    func testAFailedTurnOrADailyLimitHoldsItBack() async throws {
+    /// A turn cut short by a usage limit or an API error isn't a finish.
+    /// Offers cost nothing, so usage and the daily limit don't hold them back.
+    func testAFailedTurnHoldsTheOfferBackButLimitsDont() async throws {
         let f = try await makeFixture(lines: substantial, mark: true)
         await MainActor.run { f.model.applyTestFailedTurn(f.session, true) }
         await f.model.checkFollowUps()
-        XCTAssertTrue(f.runner.calls.isEmpty, "not after a turn that ended in an API error")
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "not after a turn that ended in an API error")
 
         await MainActor.run {
             f.model.applyTestFailedTurn(f.session, false)
@@ -316,14 +406,17 @@ final class FollowUpModelTests: XCTestCase {
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Daily limit of 20 reached"))
         }
         await f.model.checkFollowUps()
-        XCTAssertTrue(f.runner.calls.isEmpty, "the daily limit caps background calls")
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+        await MainActor.run { f.model.acceptFollowUpOffer(card!.id, projectID: f.project) }
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1, "you started it, so the daily limit doesn't apply")
     }
 
     func testAFailedFollowUpCanBeTriedAgain() async throws {
         let f = try await makeFixture(lines: substantial, mark: true)
         f.runner.reply = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-api-error.json"), errorOutput: "")
-        await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
+        try await offerAndAccept(f)
         let (id, mark) = try await MainActor.run { () -> (UUID, FollowUpMark?) in
             let followUp = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
             guard case .failed = followUp.state else { throw XCTSkip("expected a failure") }
@@ -342,8 +435,7 @@ final class FollowUpModelTests: XCTestCase {
     func testNeedsYouSurvivesARelaunchButWorkingOnesDont() async throws {
         let assistant = MemoryAssistantStore()
         let f = try await makeFixture(assistant: assistant, lines: substantial, mark: true)
-        await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
+        try await offerAndAccept(f)
         try await MainActor.run {
             let working = FollowUp(sessionID: UUID(), sessionName: "x", state: .working, createdAt: Date(), askedFor: false)
             f.model.updateNeedsYou(f.project) { $0.followUps.append(working) }
@@ -365,7 +457,7 @@ final class FollowUpModelTests: XCTestCase {
         let f = try await makeFixture(mark: true)
         let text = "Add a word count to the capture box"
         await MainActor.run {
-            f.assistant.inbox = ["c0ffee00-1111-2222-3333-444455556666\t/code/app\tsuggest\t\(Data(text.utf8).base64EncodedString())"]
+            f.assistant.inbox = ["\(FollowUpModelTests.conversation)\t/code/app\tsuggest\t\(Data(text.utf8).base64EncodedString())"]
             f.model.pollAssistantInbox()
             let suggestion = f.model.needsYouData(inProject: f.project).suggestions.first
             XCTAssertEqual(suggestion?.text, text)
@@ -378,9 +470,9 @@ final class FollowUpModelTests: XCTestCase {
         }
     }
 
-    /// The one that matters most: a session made after this build is
-    /// followed up the first time it finishes, not given a baseline.
-    func testANewSessionsFirstFinishIsFollowedUp() async throws {
+    /// A session made after this build is offered a follow-up the first time
+    /// it's ready, not given a baseline.
+    func testANewSessionsFirstFinishIsOffered() async throws {
         let f = try await makeFixture(mark: true)
         let id = try await MainActor.run { () -> UUID in
             let request = NewSessionRequest(projectID: f.project, folderID: nil, name: "New", role: .code, prompt: "",
@@ -391,19 +483,15 @@ final class FollowUpModelTests: XCTestCase {
             f.model.applyTestSessionChange(id) {
                 $0.hasConversation = true
                 $0.status = .completed
-                $0.lastActivity = FollowUpModelTests.now.addingTimeInterval(-600)
             }
             return id
         }
         let conversation = try await MainActor.run { try XCTUnwrap(f.model.workspace.session(id)?.claudeSessionID) }
         let history = f.history.deletingLastPathComponent().appendingPathComponent("\(conversation).jsonl")
         try (substantial.joined(separator: "\n") + "\n").write(to: history, atomically: true, encoding: .utf8)
-        let before = f.runner.calls.count
         await f.model.checkFollowUps()
-        await f.model.waitForAssistantJobs()
-        XCTAssertEqual(f.runner.calls.count, before + 1, "no baseline: everything it did is new")
         let state = await MainActor.run { f.model.followUpCard(forSession: id)?.state }
-        XCTAssertEqual(state, .ready)
+        XCTAssertEqual(state, .offered, "no baseline: everything it did is new")
     }
 
     func testAMissingHistoryFileIsntLookedForEveryTick() async throws {
@@ -411,7 +499,7 @@ final class FollowUpModelTests: XCTestCase {
         try FileManager.default.removeItem(at: f.history)
         await f.model.checkFollowUps()
         let missing = await MainActor.run { f.model.followUpHistoryMissing[f.session] }
-        XCTAssertEqual(missing, "c0ffee00-1111-2222-3333-444455556666", "remembered until the next launch")
+        XCTAssertEqual(missing, FollowUpModelTests.conversation, "remembered until the next launch")
         XCTAssertTrue(f.runner.calls.isEmpty)
     }
 

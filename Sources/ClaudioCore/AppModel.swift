@@ -147,7 +147,7 @@ public final class AppModel {
     /// Sessions whose name still has to be written as their Claude Code title.
     @ObservationIgnored private var pendingTitlePushes = Set<UUID>()
     /// Latest `claude agents` listing, by agent id.
-    private var agents: [String: BackgroundAgent] = [:]
+    private(set) var agents: [String: BackgroundAgent] = [:]
     /// Interactive `claude` processes running in terminals, by session id.
     private var terminalSessions: [String: InteractiveSession] = [:]
     /// A session the user asked to resume while it's open in a terminal;
@@ -259,8 +259,9 @@ public final class AppModel {
     @ObservationIgnored var followUpHistoryMissing: [UUID: String] = [:]
     /// Projects with a background call running: one at a time each.
     @ObservationIgnored var assistantBackgroundProjects = Set<UUID>()
-    /// Failed follow-ups' digests, so Try Again asks the same question.
-    @ObservationIgnored var retryDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
+    /// Offered and failed follow-ups' digests, so Follow Up and Try Again ask
+    /// about what was found.
+    @ObservationIgnored var pendingDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
     /// Assistant calls running now, by a token, so tests can wait for them.
     @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
@@ -1573,6 +1574,8 @@ public final class AppModel {
         for event in events {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
+            // It's carrying on, so an offered follow-up no longer applies.
+            if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
             // A tool may have changed files.
             if [.postToolUse, .postToolUseFailure, .stop, .stopFailure].contains(event.name) { markChangesDirty(target) }
             changed = true

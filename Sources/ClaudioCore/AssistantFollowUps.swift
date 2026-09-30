@@ -51,6 +51,9 @@ public struct ProposedPlanChange: Codable, Equatable, Identifiable, Sendable {
 /// One session's follow-up, from the moment it's asked for until you close it.
 public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public enum State: Codable, Equatable, Sendable {
+        /// The session looks ready: "<session> looks done. Follow up?". No
+        /// call until you accept (not saved: it's offered again if it still applies).
+        case offered
         /// The call is running or waiting for its turn (not saved).
         case working
         case ready
@@ -134,9 +137,9 @@ public struct NeedsYouData: Codable, Equatable, Sendable {
         suggestions = ((try? c.decodeIfPresent([SessionSuggestion].self, forKey: .suggestions)) ?? nil) ?? []
     }
 
-    /// What's saved: everything but follow-ups still working.
+    /// What's saved: everything but offers and follow-ups still working.
     public var saved: NeedsYouData {
-        NeedsYouData(followUps: followUps.filter { $0.state != .working }, suggestions: suggestions)
+        NeedsYouData(followUps: followUps.filter { $0.state != .working && $0.state != .offered }, suggestions: suggestions)
     }
 
     public var isEmpty: Bool { followUps.isEmpty && suggestions.isEmpty }

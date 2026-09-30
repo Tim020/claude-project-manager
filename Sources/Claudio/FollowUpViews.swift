@@ -44,6 +44,21 @@ private struct NeedsYouFollowUpRow: View {
 
     var body: some View {
         switch followUp.state {
+        case .offered:
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "sparkles").font(.system(size: 13)).foregroundStyle(DS.blue).padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(followUp.sessionName) looks done").font(DS.font(13)).foregroundStyle(DS.text).lineLimit(2)
+                        Text(FollowUpOfferCopy.question).font(DS.font(11.5)).foregroundStyle(DS.dim)
+                    }
+                    Spacer(minLength: 0)
+                }
+                FollowUpOfferButtons(followUp: followUp, projectID: projectID)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 5).fill(DS.input))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(DS.border, lineWidth: 1))
         case .working:
             // In progress: not clickable, and not counted.
             HStack(alignment: .top, spacing: 9) {
@@ -167,6 +182,12 @@ struct FollowUpBody: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             switch followUp.state {
+            case .offered:
+                Text(FollowUpOfferCopy.question + " " + FollowUpOfferCopy.detail)
+                    .font(DS.font(12.5))
+                    .foregroundStyle(DS.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                FollowUpOfferButtons(followUp: followUp, projectID: projectID)
             case .working:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small).tint(DS.blue)
@@ -227,6 +248,7 @@ struct FollowUpBody: View {
 
     private var title: String {
         switch followUp.state {
+        case .offered: return "\(followUp.sessionName) looks done"
         case .working: return "Reviewing \(followUp.sessionName)…"
         case .failed: return "Couldn't follow up \(followUp.sessionName)"
         case .ready: return "Follow-up: \(followUp.sessionName)"
@@ -277,6 +299,31 @@ struct FollowUpBody: View {
                     .font(DS.font(12))
                     .help("Close without changing the plan. Saved notes stay.")
             }
+        }
+    }
+}
+
+/// The offer's words.
+enum FollowUpOfferCopy {
+    static let question = "Follow up on what it did?"
+    static let detail = "One Claude call reads a summary of the session and suggests notes and plan changes."
+}
+
+/// Follow Up and Not Now.
+private struct FollowUpOfferButtons: View {
+    @Environment(AppModel.self) private var model
+    let followUp: FollowUp
+    let projectID: UUID
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button("Follow Up") { model.acceptFollowUpOffer(followUp.id, projectID: projectID) }
+                .buttonStyle(PrimaryButtonStyle(fontSize: 12, horizontalPadding: 12, verticalPadding: 4))
+                .help("Ask Claude now. Things you start run whatever the usage.")
+            LinkLabelButton(title: "Not Now") { model.declineFollowUpOffer(followUp.id, projectID: projectID) }
+                .font(DS.font(12))
+                .help("It's offered again once the session has done more and looks ready.")
+            Spacer(minLength: 0)
         }
     }
 }
