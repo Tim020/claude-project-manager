@@ -471,7 +471,7 @@ final class FollowUpModelTests: XCTestCase {
 
         await MainActor.run {
             f.model.applyTestFailedTurn(f.session, false)
-            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AppModel.dailyJobLimit)
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
             f.model.dailyJobs = nil
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Daily limit of 20 reached"))
         }
@@ -752,7 +752,7 @@ final class FollowUpModelTests: XCTestCase {
     func testTheDailyLimitIsCounted() async throws {
         let f = try await makeFixture(mark: true)
         try await MainActor.run {
-            for index in 0..<AppModel.dailyJobLimit {
+            for index in 0..<AssistantAppSettings.defaultDailyJobLimit {
                 let note = try XCTUnwrap(f.model.addNote("Note \(index)", author: .user, projectID: f.project, sessionID: nil))
                 f.model.checkCapturedNote(note, projectID: f.project)
             }
@@ -761,9 +761,9 @@ final class FollowUpModelTests: XCTestCase {
             f.model.checkCapturedNote(extra, projectID: f.project)
         }
         await f.model.waitForAssistantJobs()
-        XCTAssertEqual(f.runner.calls.count, AppModel.dailyJobLimit, "the 21st isn't made")
+        XCTAssertEqual(f.runner.calls.count, AssistantAppSettings.defaultDailyJobLimit, "the 21st isn't made")
         await MainActor.run {
-            f.model.dailyJobs = DailyJobCount(day: "2026-09-28", count: AppModel.dailyJobLimit)
+            f.model.dailyJobs = DailyJobCount(day: "2026-09-28", count: AssistantAppSettings.defaultDailyJobLimit)
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .run, "yesterday's count doesn't apply")
         }
     }

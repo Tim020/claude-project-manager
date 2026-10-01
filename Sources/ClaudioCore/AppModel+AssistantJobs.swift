@@ -293,6 +293,8 @@ extension AppModel {
         do {
             try assistantStore.appendAudit(AuditEntry(at: now(), actor: .assistant, action: .jobRan, job: job, cause: "assistant"),
                                            projectID: projectID)
+            // An Activity Log that's been opened shows it.
+            if assistantLogRows[projectID] != nil { refreshAssistantLog(projectID: projectID) }
         } catch {
             log.append(.error, "Couldn't record an assistant call", detail: AppModel.describe(error))
         }

@@ -379,13 +379,14 @@ private struct NotificationSettingsPage: View {
 // MARK: - Assistant
 
 /// Settings › Assistant (design 9a): app-wide, because plan usage is the
-/// account's. Each project's mode comes with Assistant Settings (build step 4).
+/// account's. Each project's mode, privacy and models are in its own
+/// Assistant Settings (the Assistant panel's ⋯ menu).
 private struct AssistantSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         SettingsGroup(title: "Assistant",
-                      footer: "Things you start yourself, such as Check Against Plan… on a note, always run.") {
+                      footer: "Things you start yourself always run: Check Against Plan…, Follow Up and Review This Session. Background work that's held back waits, and runs once it can.") {
             SettingsToggleRow(title: "Use the assistant",
                               subtitle: "Off turns it off in every project. Notes and plans stay, and a note's Add as Idea adds it to the plan without asking Claude.",
                               isOn: settingBinding(model, \.assistant.isEnabled))
@@ -399,8 +400,17 @@ private struct AssistantSettingsPage: View {
             }
             SettingsToggleRow(title: "Allow background work while using credits",
                               subtitle: "Off by default, so background work doesn't spend usage credits.",
-                              showsSeparator: false,
                               isOn: settingBinding(model, \.assistant.allowWhileUsingCredits))
+            SettingsRow(title: "Background calls a day",
+                        subtitle: "For an API key, Bedrock or Vertex, which have no plan usage to pause at. Held-back work waits until the next day.",
+                        showsSeparator: false) {
+                Stepper(value: settingBinding(model, \.assistant.dailyJobLimit),
+                        in: AssistantAppSettings.dailyJobLimitRange, step: 5) {
+                    Text("\(model.settings.assistant.dailyJobLimit)")
+                        .monospacedDigit()
+                        .frame(minWidth: 40, alignment: .trailing)
+                }
+            }
         }
     }
 
