@@ -2,6 +2,10 @@ import Foundation
 
 public enum HookEventName: Hashable, Sendable {
     case sessionStart, userPromptSubmit, preToolUse, postToolUse, notification, stop, sessionEnd
+    /// A tool ran and failed (a Bash command exiting non-zero, a missing file).
+    case postToolUseFailure
+    /// A turn ended with an API error. It comes instead of `Stop`.
+    case stopFailure
     case other(String)
 
     public init(rawValue: String) {
@@ -13,6 +17,8 @@ public enum HookEventName: Hashable, Sendable {
         case "Notification": self = .notification
         case "Stop": self = .stop
         case "SessionEnd": self = .sessionEnd
+        case "PostToolUseFailure": self = .postToolUseFailure
+        case "StopFailure": self = .stopFailure
         default: self = .other(rawValue)
         }
     }
@@ -26,6 +32,8 @@ public enum HookEventName: Hashable, Sendable {
         case .notification: return "Notification"
         case .stop: return "Stop"
         case .sessionEnd: return "SessionEnd"
+        case .postToolUseFailure: return "PostToolUseFailure"
+        case .stopFailure: return "StopFailure"
         case .other(let name): return name
         }
     }
@@ -45,6 +53,11 @@ public struct HookEvent: Equatable, Sendable {
     public var toolInput: [String: JSONValue]?
     public var source: String?
     public var reason: String?
+    /// PostToolUseFailure: the tool's error. StopFailure: the kind of API
+    /// error ("authentication_failed"). A plain string in both.
+    public var error: String?
+    /// PostToolUseFailure: the user stopped the tool (Esc), so it didn't fail.
+    public var isInterrupt = false
 
     public init(appSessionID: UUID, name: HookEventName) {
         self.appSessionID = appSessionID
@@ -72,6 +85,8 @@ public enum HookEventParser {
         event.toolInput = json["tool_input"]?.objectValue
         event.source = json["source"]?.stringValue
         event.reason = json["reason"]?.stringValue
+        event.error = json["error"]?.stringValue
+        event.isInterrupt = json["is_interrupt"]?.boolValue ?? false
         return event
     }
 }
@@ -123,8 +138,11 @@ public enum HookReducer {
         switch event.name {
         case .sessionStart:
             break
-        case .userPromptSubmit, .preToolUse, .postToolUse:
-            if event.name == .userPromptSubmit { session.hasConversation = true }
+        case .userPromptSubmit, .preToolUse, .postToolUse, .postToolUseFailure:
+            if event.name == .userPromptSubmit {
+                session.hasConversation = true
+                session.lastTurnFailed = false
+            }
             session.status = .working
             session.needsAction = nil
             session.lastActivity = now
@@ -152,6 +170,15 @@ public enum HookReducer {
                 session.status = .completed
                 session.needsAction = nil
             }
+            session.lastActivity = now
+            session.lastTurnFailed = false
+        case .stopFailure:
+            // The turn ended (it comes instead of Stop), with an API error.
+            session.status = .completed
+            session.needsAction = nil
+            session.lastTurnFailed = true
+            let text = event.lastAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !text.isEmpty { session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength) }
             session.lastActivity = now
         case .sessionEnd:
             if session.status == .working { session.status = .completed }

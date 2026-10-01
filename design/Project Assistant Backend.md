@@ -149,7 +149,7 @@ claude -p --model <haiku|sonnet> --output-format json \
 **Cost, measured and estimated** (`total_cost_usd` is the API-equivalent price; subscription users pay in plan usage instead):
 - A stripped classification call (empty directory, no tools, about 1.1k input tokens) cost $0.0039 on Haiku (6.2 s) and $0.0054 on Sonnet (1.5 s).
 - The same kind of task with the default system prompt and tools cost $0.064 on Haiku, over 6 turns. So the flags above matter about 15-fold.
-- A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. It hasn't been measured.
+- A follow-up job with an 8k-token digest is **estimated** at $0.03–0.06 on Sonnet. *(Measured in step 4a: about $0.01 and 2 s for short digests.)*
 
 **Code checks first; Claude only judges.** A background job reaches the job queue only after a code check has found work for it. Anything a script could answer is done in code and never becomes a Claude call:
 
@@ -187,19 +187,19 @@ Signals Claudio already receives, plus three new hook events:
 | Turn ended, final message | `Stop` → `last_assistant_message` (already parsed) | the follow-ups trigger, and the digest |
 | User prompts | `UserPromptSubmit`, and history files | corrections ("no, …", "don't …", "next time …") |
 | Tool calls | `PostToolUse` (already parsed) | PR activity, commands, the digest |
-| **Tool failures** | **new: `PostToolUseFailure`** (`tool_name`, `tool_input`, `error.message`) | "learned the hard way" evidence |
-| **Denied actions** | **new: `PermissionDenied`** | possibly a correction signal. **Assumed:** it fires when the user refuses a permission prompt. It may fire only for auto-mode classifier denials, so check before relying on it. |
-| **Turn failed** | **new: `StopFailure`** (`error.type`: rate_limit, overloaded, …) | don't draw lessons from a turn that ended in an API error |
+| **Tool failures** | **new: `PostToolUseFailure`** (`tool_name`, `tool_input`, `error` as a string, `is_interrupt`, `duration_ms`; recorded in step 4). It fires when a tool runs and fails, including a Bash command that exits non-zero, not when a command is denied. | "learned the hard way" evidence. `is_interrupt: true` is the user pressing Esc, so it doesn't count. |
+| ~~Denied actions~~ | ~~`PermissionDenied`~~ | *Dropped in step 4:* it didn't fire when default mode denied a command (2.1.284), so it's probably auto-mode only. Corrections come from prompts instead. |
+| **Turn failed** | **new: `StopFailure`** (`error` as a string, such as `authentication_failed`, and `last_assistant_message`; recorded in step 4). It fires *instead of* `Stop`: with both set up, only `StopFailure` fired (2.1.285 and 2.1.169). | it ends the turn, so the session isn't left Working. Don't draw lessons from a turn that ended in an API error. |
 | Skill used | `PreToolUse` with `tool_name == "Skill"` | the "used by n sessions" count, and retirement |
 | Files changed | `SessionChanges` / `ChangesDirectory` | skill `paths`, and skill selection |
 | PRs | `Session.pullRequests`, via `gh` | follow-ups ("PR #14 merged"), and marking items Done |
 
-Add the three events to `HookSettings.events`. Record real payloads as fixtures before writing the parsers. The field names above come from the hooks docs and aren't recorded yet. The Skill tool's input key is **assumed** to be `skill`.
+Add the two events to `HookSettings.events`. *(Step 4: real payloads are recorded in `Fixtures/hook-failures.log`. 2.1.169 accepts both keys in `--settings` and fires `StopFailure`. The Skill tool's input key is `skill`, recorded from a `PreToolUse` event.)*
 
 **When each job runs:**
 
 - **Promote (right after capture):** in Automatic mode this is background work, so the usage gate applies. Promote… on a note is started by you, so it always runs. In Off mode, Promote… makes an Idea from the note in code, with no call. One Haiku call per saved note. Input: the note, plus the plan's items that aren't done, each as a ref ("i1"), title and status. The refs are resolved with the map made for that call, never renumbered when the reply comes back. Output: `{kind: bug|task|idea|fact, promote: Bool, title, reason, duplicateOf: ref|null}`. Measured at 5–8 s.
-- **Follow-ups (when a session finishes):**
+- **Follow-ups (when a session finishes):** *(Superseded in step 4a: follow-ups are offered on Claude Code's own signals, with no timer, and run only when you accept. See Build order › 4 › Done in 4a, and Decisions. The substance check and the digest below still apply.)*
   - `Stop` fires at the end of *every turn*, so it isn't "finished". A session counts as finished when it's Completed (not Awaiting Input), has been quiet for 2 minutes, and has new turns since its last follow-up (a watermark per session: the count of Stop events). Stopping the agent or closing its tab brings the job forward.
   - **Substance check (code):** only call Claude if, since the last follow-up, the session changed files, had a tool failure, acted on a PR, made a commit, got a prompt matching a correction pattern ("no,", "don't", "instead", "next time", "remember"), or had 3 or more prompts. Otherwise there's nothing to follow up, and no call is made. A quick question and answer never costs a follow-up.
   - Input: a **digest**, built by Swift from the history file (first prompt, user corrections, failures, commands, the final message, files changed, PR state). It's capped at about 8k tokens, not the raw transcript. Also the current plan (ids, titles, statuses), the item this session belongs to, and the auto-memory index.
@@ -376,9 +376,47 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - Logging `SKILL.md` files that can't be read or have no closing `---` (from review round 1, PR #26), with step 5's deterministic skill checks. Today such a skill is skipped or read without its frontmatter, silently.
      - Chip scoring's usage term (skill use from `PreToolUse` Skill events).
      - Its touched files should come from the linked sessions' history (`EditLogCache` over their history files), not from `sessionChanges`, which only has sessions whose Files Changed has loaded. So for now the file term depends on what's been opened.
-4. **Follow-ups.** The three new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+4. **Follow-ups.** The ~~three~~ two new hook events, `SessionDigest`, the "finished" trigger, and the follow-up card.
+   - **Decided at the start of step 4 (Tim, 2026-09-29):**
+     - **Two PRs.** 4a: the hook events, the digest, the finished trigger, the follow-up card, Needs You, Review This Session, `claudio suggest`, and the queue's per-project limit and coalescing. 4b: Assistant Settings, the paused line, the Activity Log and Job Failed views, and tolerant audit reading.
+     - **Follow-ups for every session** in an Automatic project, behind the substance check. Not only sessions from plan items. *(Later in 4a: offered, not run; see below.)*
+     - **The daily job limit is 20** background calls. **Moved into 4a** (it was 4b's): it had to ship with the first background Sonnet calls. Once follow-ups became offers, it only caps the captured-note check. Its editing UI stays in 4b.
+     - **Real probes** on Tim's account are fine for recording CLI behaviour (Haiku, a few cents).
+   - **Baseline for existing sessions:** a session with no follow-up watermark gets one at the current end of its history, with no call. So upgrading, or importing old sessions, never starts a burst of follow-ups. The watermark is kept with the conversation it belongs to (`/clear` starts a new one).
+   - **Lessons wait for step 5:** 4a's follow-up schema has no `lessons` field. Step 5 adds it with the candidates it feeds.
+   - **Done in 4a:**
+     - **Hook events:** `PostToolUseFailure` and `StopFailure` are in `HookSettings.events`. `StopFailure` ends the turn (Completed) and sets `Session.lastTurnFailed`, which holds back its follow-up until a turn ends normally.
+     - **`SessionDigest`**, built in code from the history file since the session's `FollowUpMark` (conversation id and byte offset; `HistorySlice` reads only the new whole lines). It holds prompts, corrections, commands, failures, changed files, commits, `gh pr` commands and the final message, each capped. The whole call input is capped at 60,000 characters. Changed files come from the history's own Edit and Write calls, so it doesn't depend on Files Changed having loaded.
+     - **Offers, not calls (Tim's call during 4a, replacing the 2-minute timer):** a timer can't tell a finished session from one left overnight, one waiting for a usage limit to reset, or one paused mid-task. So Claudio *offers* a follow-up when code decides a session looks ready, and Claude is only asked when you accept (**Follow Up**; **Not Now** dismisses it). Accepting counts as something you started: no usage gate, no daily limit. Follow-ups make no background calls at all.
+     - **When a session looks ready,** checked every 15 s (its own `Polling.every`), from Claude Code's own signals only:
+       - its last turn ended normally. A `StopFailure` (a usage limit, an API error) doesn't count, so the session carries on when the limit resets;
+       - it isn't waiting on you (a question or a permission prompt: Awaiting Input);
+       - Claude Code's task state for its agent (`claude agents --json`) is `done` or `review_ready`, **or** you stopped it or closed its tab. `working` means Claude Code expects to carry on, so nothing is offered. Direct tabs have no task state, so only stopping or closing counts for them;
+       - the project is Automatic (Manual: only Review This Session), and the digest since the last follow-up has substance.
+     - **A new prompt withdraws the offer** (the `UserPromptSubmit` hook): the session is carrying on, and it's offered again at its next ready point, covering everything since the last follow-up. **Not Now** isn't offered again for the same history, across launches too (`Session.followUpDeclined` keeps where the history had got to); once the session does more and looks ready again, it is. Offers aren't saved: after a relaunch, a session that still looks ready is offered again.
+     - **Evidence that the signal is there:** of 40 background agents' job files on Tim's machine (2026-09-30), 34 were `done`, 3 `blocked` (waiting on him, so no offer), 1 `working` and 1 `failed`; none was `review_ready`. So Claude Code does move finished tasks to `done`.
+     - **What code reads:** a session's history file only when its size has changed since the last check. A session from before this build, seen for the first time, gets a mark at its history's end (the file's size: nothing is read), so upgrading offers nothing for old work. A session made in Claudio after it starts with a mark that matches no conversation, so its first ready point covers its whole history. A conversation whose history file isn't found (Claude Code deletes old ones) isn't looked for again until the next launch. When a conversation has files in both the repository's folder and a worktree's, the newest is read.
+     - **The follow-up call:** Sonnet, `--max-budget-usd 0.30`, 120 s. Input: the digest, the plan by refs, the session's item, its notes and the project's `MEMORY.md` (first 4,000 characters). Output: notes (at most 5, saved at once as assistant notes, undoable) and plan changes (at most 5: add, done, move; refs checked when the reply arrives and again when applied). The mark only moves on success.
+     - **The card** under the session's terminal (offered, working, ready, failed), and **Needs You** in the panel (an unanswered offer waits there as "<session> looks done"). Finished and failed follow-ups and session suggestions are kept in `needs-you.json` (throwaway, like `suggestions.json`, with entries that can't be read kept as they were). Offers and follow-ups still working aren't saved: their session's mark didn't move, so it may be offered again. There's a drill-in view for a follow-up, and the rail's blue badge counts what's waiting.
+     - **Review This Session** in the session's ⋯ menu. It runs straight away in Automatic or Manual mode, and reads the whole conversation when nothing is new. With the assistant off, it shows a toast.
+     - **`claudio suggest`**: a Needs You card with Add to Plan, Add as Idea and Dismiss.
+     - **The queue:** two calls at once, and one *background* call per project (the captured-note check: follow-ups only run when you accept), so things you start never wait behind one. A newer job with the same key (`followup:<session>`) replaces one still waiting.
+     - **The daily limit** of 20 background calls a day, for sign-ins without a plan-usage reading, counted in `daily-jobs.json`. With follow-ups offered rather than run, only the captured-note check is background work now. Things you start, accepted offers included, don't count.
+   - **Fixed in review round 1 (PR #28):**
+     - **Not Now** holds until a new *prompt*: lines a history gains without one (a rename's title, Claude Code's bookkeeping, a stop) don't bring the offer back.
+     - **A failed follow-up** on a session's card is replaced by a new offer or follow-up for the same work, so there's never one of each. A failure you deferred to Needs You stays.
+     - **Add n to Plan** counts only changes that saved, and leaves any that didn't on the card. Unticking a note only shows it unticked once it's really gone. A follow-up note that can't be saved is logged with its text.
+     - **Review This Session** can't start twice from two quick clicks. Try Again after a relaunch keeps the failed card until the new follow-up takes its place.
+     - **Reading history:** a read that fails is logged and tried again, instead of looking like "nothing new". At most the newest 8 MB is read at once.
+     - **`needs-you.json`** is read one entry at a time, and an entry that can't be read is kept as it was. A plan change that doesn't make sense (a new item with an item id, "done" to Idea, a move to Done or In Session) can't be made or read.
+     - A `StopFailure` is logged with its error. A daily count that can't be read is logged once and starts at 0. A `claudio suggest` card shows in Needs You with the assistant off too, since the session was told you'd see it.
+   - **Moved on to 4b:**
+     - A failed follow-up shows its message with Try Again and Close in its own view. The Job Failed view and the Activity Log link come with 4b's Activity Log.
+     - "Don't send transcripts" (the digest supports it: `json(withTranscripts:)`), the model choice, the daily limit's editing UI, and the paused line with its count of what's waiting.
+   - **Measured in Tim's testing (2026-09-30, Sonnet, 2.1.285):** $0.0097 in 2.0 s (a two-prompt test session), and $0.0104 in 2.1 s (Review This Session on a long session from before this build, which read only its latest turns). Well under the $0.03–0.06 estimate. The tests still use a reply written by hand from the schema.
+   - **Known limit:** files written by shell commands (`echo > file`, `sed -i`, `mv`) don't count as changed files in the digest: only Edit, MultiEdit, Write and NotebookEdit calls do. Found in Tim's testing, when a session wrote its file with Bash. Sessions normally edit through those tools, and reading shell redirections reliably is guesswork, so it's left as is.
    - **`claudio suggest`** (moved from step 3): a session's proposed plan change, as a Needs You card. Add it to `bin/claudio`, the inbox's commands and the note skill.
-   - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out.
+   - **The job queue's per-project limit and coalescing** (from step 2's review, PR #24): one job at a time per project, and a newer follow-up for the same session replacing a queued one. Step 2 has only the overall limit of two, first in, first out. *(4a: the per-project limit is for background calls only; see Done in 4a.)*
    - **Assistant Settings** (per project: the mode's UI, "Don't send transcripts", models), the paused status line, the daily job limit for users without a plan-usage reading, and **the Assistant's Activity Log view**, with the Job Failed view for background failures.
    - **Carried over from step 1's review (PR #21), moved here from step 2:** tolerant reading of `audit.jsonl`. `AuditEntry` still uses the synthesized, strict `Codable`. The Activity Log view, the log's first reader, must skip or tolerate lines it can't decode (from a newer version, or cut short), and check each entry against the data before showing it as done (see Audit and Undo).
 5. **Skills.** Lesson candidates, the drafting job, checks, approval, history, drift, retirement, and Save to Repository.
@@ -400,6 +438,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | `--plugin-dir` and `--add-dir` work from a path with a space in it (`…/a b/Claudio/…`, as under `Application Support`) | Real Haiku calls (2.1.284, step 3): `claudio:note` loaded, `bin/claudio` ran from the Bash tool (with an allow rule; see the next row), and an `--add-dir` skill loaded. |
 | A session in Ask mode can't run `claudio` without an allow rule; `permissions.allow: ["Bash(claudio:*)"]` in `--settings` lets it | Real Haiku calls (2.1.284, `--permission-mode default`): without the rule the Bash call was denied (`permission_denials`); with it in the `--settings` JSON, `claudio ping` ran. |
 | `--add-dir` skills need project settings loaded | The same probe: with `--setting-sources ''` the add-dir skill was "Unknown skill", while the plugin's skill loaded; with `project` it loaded. Sessions load every source by default, so they get it. Only the assistant's own `-p` calls use `''`. |
+| `PostToolUseFailure` and `StopFailure` payloads; `StopFailure` replaces `Stop`; the Skill tool's input key is `skill`; `PermissionDenied` doesn't fire for a default-mode denial | Step 4 probes: Haiku `-p` runs with a recording hook (2.1.284/285), and a signed-out container with a rejected key for `StopFailure` (no cost). 2.1.169 accepts both keys and fires `StopFailure`. Recorded in `Fixtures/hook-failures.log`. |
 | 2.1.169 has every flag used here | `claude --help` in a 2.1.169 container. |
 | `--setting-sources user` can bring in the user's tools; `''` doesn't | Six real Promote-check calls (Haiku, 2.1.284): with `user`, 1 in 3 consulted an Opus advisor ($0.099, 43 s); with `''`, $0.004 and 5–7 s. |
 | `--max-budget-usd` stops a call after the turn that crosses it: `"subtype": "error_max_budget_usd"`, `terminal_reason: "budget_exhausted"`, no `result` | Real Haiku calls (2.1.284): a normal check at $0.05 succeeded; one at $0.0001 was stopped after spending $0.0046. Recorded in `Fixtures/assistant-over-budget.json`. |
@@ -408,7 +447,6 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 
 **Assumed, and to check at the build step that needs it:**
 - live reload of `--add-dir` skills (step 5)
-- hook payload field names for the three new events, when `PermissionDenied` fires, and the Skill tool's input key (step 4)
 - whether the skill loader follows symlinks (only for skill sets per session)
 
 ## Decisions
@@ -420,6 +458,10 @@ Decided (2026-09-28):
 - **Skill chips:** a chip means "named in the opening prompt", and the sheet's hint says so. There are no skill sets per session.
 - **Default mode:** Automatic. Background work is checked in code first, and Claude is called only for judgement (see Runtime).
 - **Plan in git:** no. There's no `PLAN.md` export.
+
+Decided in step 4a (2026-09-30):
+- **No baseline when Automatic is turned back on** (Tim's call, PR #28 review round 1). Sessions made while a project was Manual or Off, or while the assistant switch was off, keep their unread start. So turning Automatic on can bring a one-off batch of offers for sessions finished meanwhile. Offers cost nothing, and Review This Session covers anything skipped.
+- **Follow-ups are offered, not run.** Code decides a session looks ready from Claude Code's own signals (turn ended normally, not waiting on you, task state `done` or `review_ready`, or stopped); the card asks, and Claude is called only when you accept. No timers, so sessions left overnight or waiting for a usage limit cost nothing. A new prompt withdraws the offer.
 
 Decided in step 3 (2026-09-29):
 - **Session flags whatever the mode:** every new session gets `--plugin-dir` and `--add-dir`, even in a project set to Off or with the app switch off. Off means no Claude calls, and notes and plans stay. Flags can't be added to a session later without making a copy.

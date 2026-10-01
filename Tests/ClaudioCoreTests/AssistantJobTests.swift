@@ -357,20 +357,22 @@ final class AssistantJobTests: XCTestCase {
         }
     }
 
+    /// Two at once overall. Things you start aren't held to one per
+    /// project (that's for background work: see FollowUpModelTests).
     func testAtMostTwoCallsRunAtOnce() async throws {
         let f = try await MainActor.run { try makeFixture() }
         f.runner.reply = try reply("assistant-promote-new.json")
         try await MainActor.run {
-            for text in ["A", "B", "C"] {
+            for text in ["A", "B", "C", "D"] {
                 let note = try XCTUnwrap(f.model.addNote(text, author: .user, projectID: f.project, sessionID: nil))
                 f.model.requestPromote(note.id, projectID: f.project)
             }
-            XCTAssertEqual(f.model.assistantJobsRunning, 2)
-            XCTAssertEqual(f.model.assistantJobQueue.count, 1, "the third waits for a slot")
+            XCTAssertEqual(f.model.assistantJobsRunning, 2, "A and B, though they're in one project")
+            XCTAssertEqual(f.model.assistantJobQueue.count, 2, "C and D wait for a slot")
         }
         await f.model.waitForAssistantJobs()
         await MainActor.run {
-            XCTAssertEqual(f.runner.calls.count, 3)
+            XCTAssertEqual(f.runner.calls.count, 4)
             XCTAssertEqual(f.model.assistantJobsRunning, 0)
             XCTAssertTrue(f.model.assistantJobTasks.isEmpty, "finished calls aren't held")
         }

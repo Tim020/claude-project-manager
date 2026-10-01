@@ -342,6 +342,13 @@ public protocol AssistantStoring: AnyObject {
     /// The inbox lines sessions wrote since the last call (see `InboxReader`).
     /// Throws, taking nothing, when where it got to can't be saved.
     func takeInbox() throws -> [String]
+    // Step 4: Needs You (throwaway, like suggestions) and the daily limit.
+    func loadNeedsYou(projectID: UUID) -> NeedsYouData
+    func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws
+    func loadDailyJobs() -> DailyJobCount?
+    func saveDailyJobs(_ count: DailyJobCount) throws
+    /// Whether a count file exists (to tell "none yet" from "unreadable").
+    func hasDailyJobsFile() -> Bool
 }
 
 extension AssistantStoring {
@@ -356,6 +363,11 @@ extension AssistantStoring {
     public func writeIndex(_ text: String) throws {}
     public func writePlanSnapshot(_ text: String, projectID: UUID) throws {}
     public func takeInbox() throws -> [String] { [] }
+    public func loadNeedsYou(projectID: UUID) -> NeedsYouData { NeedsYouData() }
+    public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws {}
+    public func loadDailyJobs() -> DailyJobCount? { nil }
+    public func saveDailyJobs(_ count: DailyJobCount) throws {}
+    public func hasDailyJobsFile() -> Bool { false }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -371,11 +383,18 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var inbox: [String] = []
     /// Makes `takeInbox` throw, as a file store does when it can't save its place.
     public var inboxError: Error?
+    public var needsYou: [UUID: NeedsYouData] = [:]
+    public var dailyJobs: DailyJobCount?
+    /// Makes `save` throw, as a full disk would (for tests).
+    public var saveError: Error?
 
     public init() {}
 
     public func load(projectID: UUID) throws -> AssistantData { data[projectID] ?? AssistantData() }
-    public func save(_ data: AssistantData, projectID: UUID) throws { self.data[projectID] = data }
+    public func save(_ data: AssistantData, projectID: UUID) throws {
+        if let saveError { throw saveError }
+        self.data[projectID] = data
+    }
     public func appendAudit(_ entry: AuditEntry, projectID: UUID) throws { audit[projectID, default: []].append(entry) }
     public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { suggestions[projectID] ?? [:] }
     public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {
@@ -389,6 +408,11 @@ public final class MemoryAssistantStore: AssistantStoring {
         defer { inbox = [] }
         return inbox
     }
+    public func loadNeedsYou(projectID: UUID) -> NeedsYouData { needsYou[projectID] ?? NeedsYouData() }
+    public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws { needsYou[projectID] = data }
+    public func loadDailyJobs() -> DailyJobCount? { dailyJobs }
+    public func saveDailyJobs(_ count: DailyJobCount) throws { dailyJobs = count }
+    public func hasDailyJobsFile() -> Bool { dailyJobs != nil }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -488,6 +512,38 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func takeInbox() throws -> [String] {
         try inboxReader.take()
+    }
+
+    /// `needs-you.json`; one that can't be read is empty.
+    public func loadNeedsYou(projectID: UUID) -> NeedsYouData {
+        let url = directory(projectID: projectID).appendingPathComponent("needs-you.json")
+        guard let data = try? Data(contentsOf: url) else { return NeedsYouData() }
+        return (try? JSONFileStore.decoder.decode(NeedsYouData.self, from: data)) ?? NeedsYouData()
+    }
+
+    public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws {
+        let url = directory(projectID: projectID).appendingPathComponent("needs-you.json")
+        if data.isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            return
+        }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONFileStore.encoder.encode(data).write(to: url, options: .atomic)
+    }
+
+    /// `daily-jobs.json`, beside the projects' folders.
+    public func loadDailyJobs() -> DailyJobCount? {
+        (try? Data(contentsOf: root.appendingPathComponent("daily-jobs.json")))
+            .flatMap { try? JSONDecoder().decode(DailyJobCount.self, from: $0) }
+    }
+
+    public func hasDailyJobsFile() -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("daily-jobs.json").path)
+    }
+
+    public func saveDailyJobs(_ count: DailyJobCount) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(count).write(to: root.appendingPathComponent("daily-jobs.json"), options: .atomic)
     }
 
     private func writeIfChanged(_ text: String, to url: URL) throws {

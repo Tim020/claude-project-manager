@@ -107,8 +107,12 @@ struct LeftRail: View {
                        isActive: showing == .sessions) { model.toggleTool(.sessions) }
             RailButton(systemName: "arrow.triangle.pull", help: help("Pull Requests", showing == .pullRequests, "⌘2"),
                        isActive: showing == .pullRequests) { model.toggleTool(.pullRequests) }
+            // Blue badge: what's waiting in Needs You (jobs still running don't count).
             RailButton(systemName: "note.text", help: help("Assistant", showing == .assistant, "⌘3"),
-                       isActive: showing == .assistant) { model.toggleTool(.assistant) }
+                       isActive: showing == .assistant,
+                       badge: model.assistantProjectID.map { model.needsYouCount(inProject: $0) } ?? 0) {
+                model.toggleTool(.assistant)
+            }
             Spacer(minLength: 0)
             // The Shell's tool window runs under the panes, as in PyCharm.
             let open = model.shellPanel.isOpen

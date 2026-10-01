@@ -147,7 +147,7 @@ public final class AppModel {
     /// Sessions whose name still has to be written as their Claude Code title.
     @ObservationIgnored private var pendingTitlePushes = Set<UUID>()
     /// Latest `claude agents` listing, by agent id.
-    private var agents: [String: BackgroundAgent] = [:]
+    private(set) var agents: [String: BackgroundAgent] = [:]
     /// Interactive `claude` processes running in terminals, by session id.
     private var terminalSessions: [String: InteractiveSession] = [:]
     /// A session the user asked to resume while it's open in a terminal;
@@ -248,7 +248,33 @@ public final class AppModel {
     /// Assistant calls running now, and those waiting for a turn (see
     /// AppModel+AssistantJobs).
     @ObservationIgnored var assistantJobsRunning = 0
-    @ObservationIgnored var assistantJobQueue: [@MainActor () async -> Void] = []
+    @ObservationIgnored var assistantJobQueue: [QueuedAssistantJob] = []
+    /// Each project's Needs You (see AppModel+FollowUps).
+    public internal(set) var needsYou: [UUID: NeedsYouData] = [:]
+    /// What's in each project's `needs-you.json`, so it's only rewritten when it changes.
+    @ObservationIgnored var savedNeedsYou: [UUID: NeedsYouData] = [:]
+    /// Each session's history file as last checked for a follow-up
+    /// (conversation and size), so unchanged files aren't read again.
+    @ObservationIgnored var followUpChecked: [UUID: String] = [:]
+    /// Sessions you stopped, or whose tab you closed: a sign they're ready
+    /// for a follow-up, whatever Claude Code says about the task.
+    @ObservationIgnored var followUpDue = Set<UUID>()
+    /// Background calls today, for the daily limit.
+    @ObservationIgnored var dailyJobs: DailyJobCount?
+    /// Where each session's history file was found, by conversation, so
+    /// the check every 15 s only reads its size (finding it lists folders).
+    @ObservationIgnored var followUpHistoryFiles: [UUID: (conversationID: String, url: URL)] = [:]
+    /// Conversations whose history file wasn't found (Claude Code deletes old
+    /// ones), so they aren't looked for every 15 s. Looked for again at launch.
+    @ObservationIgnored var followUpHistoryMissing: [UUID: String] = [:]
+    /// Projects with a background call running: one at a time each.
+    @ObservationIgnored var assistantBackgroundProjects = Set<UUID>()
+    /// Sessions whose Review This Session is reading their history, so a
+    /// second click doesn't start a second call.
+    @ObservationIgnored var reviewsStarting = Set<UUID>()
+    /// Offered and failed follow-ups' digests, so Follow Up and Try Again ask
+    /// about what was found.
+    @ObservationIgnored var pendingDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
     /// Assistant calls running now, by a token, so tests can wait for them.
     @ObservationIgnored var assistantJobTasks: [UUID: Task<Void, Never>] = [:]
     /// A confirmation shown at the foot of the window; the view clears it.
@@ -1137,6 +1163,10 @@ public final class AppModel {
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
         session.namedSkills = request.namedSkills
+        // Everything a new session does is new to the assistant: a mark that
+        // matches no conversation reads its history from the top. (Sessions
+        // without a mark are ones from before, and get a baseline instead.)
+        session.followUpMark = FollowUpMark(conversationID: "", offset: 0)
         // Give Claude Code the same name once the session has a history file.
         if session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }
@@ -1542,6 +1572,8 @@ public final class AppModel {
 
     /// Called by the UI when a session's terminal process exits.
     public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
+        // Closing its tab is a sign it may be ready for a follow-up.
+        followUpDue.insert(sessionID)
         running.remove(sessionID)
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
@@ -1560,6 +1592,7 @@ public final class AppModel {
 
     /// Stops the session: its background agent (`claude stop`) or its process.
     public func stop(_ sessionID: UUID) {
+        followUpDue.insert(sessionID)
         detach(sessionID)
         if let agentID = state.workspace.session(sessionID)?.agentID {
             if isAgentAlive(sessionID) { stopsRequested.insert(sessionID) }
@@ -1590,6 +1623,12 @@ public final class AppModel {
         for event in events {
             guard let target = hookTarget(for: event) else { continue }
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
+            // It's carrying on, so an offered follow-up no longer applies.
+            if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
+            // Otherwise the only trace is the follow-up it holds back.
+            if event.name == .stopFailure {
+                log.append(.error, "\(state.workspace.session(target)?.name ?? "A session"): its turn failed (\(event.error ?? "an API error"))")
+            }
             // Work or a wait the hooks report is newer than the agent list's
             // last reading, so an old "waiting" there mustn't end it: see
             // `keepsWaiting` in `apply(_:)`.
@@ -1598,7 +1637,7 @@ public final class AppModel {
                 listedAgentStatuses[agentID] = nil
             }
             // A tool may have changed files.
-            if event.name == .postToolUse || event.name == .stop { markChangesDirty(target) }
+            if [.postToolUse, .postToolUseFailure, .stop, .stopFailure].contains(event.name) { markChangesDirty(target) }
             changed = true
         }
         if changed { save() }
@@ -1643,6 +1682,25 @@ public final class AppModel {
     /// For tests: adds a session directly.
     func applyTestSession(_ session: Session) {
         try? state.workspace.addSession(session)
+    }
+
+    /// Moves a session's follow-up mark (see AppModel+FollowUps).
+    func setFollowUpMark(_ sessionID: UUID, _ mark: FollowUpMark) {
+        guard let session = workspace.session(sessionID), session.followUpMark != mark else { return }
+        state.workspace.updateSession(sessionID) { $0.followUpMark = mark }
+        save()
+    }
+
+    /// Records Not Now on a session's offer (see AppModel+FollowUps).
+    func setFollowUpDeclined(_ sessionID: UUID, _ mark: FollowUpMark?) {
+        guard let session = workspace.session(sessionID), session.followUpDeclined != mark else { return }
+        state.workspace.updateSession(sessionID) { $0.followUpDeclined = mark }
+        save()
+    }
+
+    /// For tests: changes a session directly.
+    func applyTestSessionChange(_ sessionID: UUID, _ body: (inout Session) -> Void) {
+        state.workspace.updateSession(sessionID, body)
     }
 
     /// For tests: gives a session a conversation, as its first prompt would.

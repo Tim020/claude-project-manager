@@ -130,6 +130,8 @@ public enum ShellQuote {
 public enum HookSettings {
     public static let events: [HookEventName] = [
         .sessionStart, .userPromptSubmit, .preToolUse, .postToolUse, .notification, .stop, .sessionEnd,
+        // Accepted by 2.1.169 too (checked in a container).
+        .postToolUseFailure, .stopFailure,
     ]
 
     public static func command(appSessionID: UUID, eventsPath: String) -> String {

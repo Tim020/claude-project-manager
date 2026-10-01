@@ -571,6 +571,9 @@ struct SessionMenu: View {
                 Button("New Folder") { model.createFolder(in: project.id, containing: session.id) }
             }
         }
+        // Design 9a: a follow-up now, in Automatic or Manual mode (Off shows a toast).
+        Button { model.reviewSession(session.id) } label: { Label("Review This Session", systemImage: "sparkles") }
+            .disabled(!session.hasConversation)
         Divider()
         if model.isRunning(session.id) || model.isAgentAlive(session.id) {
             Button("Stop Session") { model.stop(session.id) }
