@@ -116,6 +116,57 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertTrue(reported.isUsingCredits)
     }
 
+    func testCreditsInUseOnlyWhileDrawingOnThem() {
+        let enabled = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
+        let resets = now.addingTimeInterval(3600)
+        let full = UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 100, resetsAt: resets), sevenDay: UsageWindow(usedPercentage: 40, resetsAt: nil),
+                                 subscriptionType: nil, updatedAt: now, credits: enabled)
+        XCTAssertEqual(full.creditsInUse, enabled)
+        XCTAssertEqual(full.creditsInUse?.amountLabel(locale: Locale(identifier: "en_GB")), "£12.50 of £50.00")
+        XCTAssertNil(full.current(at: resets.addingTimeInterval(60)).creditsInUse, "back on the plan after the reset")
+
+        var spent = full
+        spent.credits = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 5000, utilization: 100, currency: "GBP")
+        XCTAssertNil(spent.creditsInUse, "out of credits: the plan windows show")
+        var roomLeft = full
+        roomLeft.fiveHour = UsageWindow(usedPercentage: 80, resetsAt: nil)
+        XCTAssertNil(roomLeft.creditsInUse)
+    }
+
+    func testBlockedLabelOnceOutOfCredits() {
+        let spent = UsageCredits(isEnabled: false, monthlyLimit: 5000, usedCredits: 5000, utilization: 100, currency: "GBP")
+        let session = now.addingTimeInterval(2 * 3600 + 14 * 60)
+        let week = now.addingTimeInterval(3 * 86400 + 4 * 3600)
+        var usage = UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 100, resetsAt: session), sevenDay: UsageWindow(usedPercentage: 60, resetsAt: week),
+                                  subscriptionType: nil, updatedAt: now, credits: spent)
+        XCTAssertEqual(usage.blockedLabel(now: now), "back in 2h 14m")
+        XCTAssertNil(usage.current(at: session.addingTimeInterval(60)).blockedLabel(now: session.addingTimeInterval(60)), "the session reset unblocks it")
+
+        usage.sevenDay?.usedPercentage = 100
+        XCTAssertEqual(usage.blockedLabel(now: now), "back in 3d 4h", "both full: the later reset")
+
+        usage.sevenDay = UsageWindow(usedPercentage: 100, resetsAt: nil, resetText: "Sep 28 at 5:59am (Europe/London)")
+        XCTAssertNil(usage.blockedLabel(now: now), "a window with no timestamp can't be compared")
+        usage.fiveHour = nil
+        XCTAssertEqual(usage.blockedLabel(now: now), "until Sep 28 at 5:59am")
+
+        var credits = usage
+        credits.credits = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
+        XCTAssertNil(credits.blockedLabel(now: now), "still on credits")
+    }
+
+    func testBlockedLabelWithoutCredits() {
+        let resets = now.addingTimeInterval(45 * 60)
+        var usage = UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 100, resetsAt: resets), sevenDay: UsageWindow(usedPercentage: 40, resetsAt: nil),
+                                  subscriptionType: nil, updatedAt: now)
+        XCTAssertEqual(usage.blockedLabel(now: now), "back in 45m", "no credits at all: blocked the same way")
+        XCTAssertFalse(usage.isOutOfCredits)
+        usage.credits = UsageCredits(isEnabled: false, monthlyLimit: nil, usedCredits: nil, utilization: nil, currency: nil)
+        XCTAssertEqual(usage.blockedLabel(now: now), "back in 45m", "credits never turned on")
+        usage.fiveHour?.usedPercentage = 99
+        XCTAssertNil(usage.blockedLabel(now: now), "room left")
+    }
+
     func testSpentCreditsStayShownWhenTurnedOff() throws {
         // Hitting the monthly spend limit turns `is_enabled` off (2.1.283:
         // `"is_enabled":false,…,"used_credits":5031,"utilization":100` against

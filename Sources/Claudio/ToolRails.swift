@@ -256,26 +256,39 @@ struct StatusBar: View {
         }
     }
 
-    /// "Session 80% · Week 11%", with the credits badge when a limit is hit.
+    /// "Session 80% · Week 11%". While Claude Code draws on usage credits, the
+    /// windows stay put, so it shows the credit spend ("£12.50 of £50.00") instead,
+    /// and while a plan limit blocks it (no credits left, or none turned on),
+    /// when it can run again ("back in 2h 14m").
     private var usageButton: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let usage = model.usage?.current(at: context.date)
             let isStale = usage?.isStale(at: context.date, refreshInterval: AppModel.usageRefreshInterval) ?? false
             Button { showingUsage.toggle() } label: {
                 HStack(spacing: 6) {
-                    if let usage, usage.isUsingCredits {
+                    if let credits = usage?.creditsInUse {
                         UsageSection.creditsBadge("USING CREDITS", DS.orange)
-                    } else if let usage, usage.isOutOfCredits {
-                        UsageSection.creditsBadge("OUT OF CREDITS", DS.red)
-                    }
-                    if let usage, usage.fiveHour != nil || usage.sevenDay != nil {
-                        if let window = usage.fiveHour { figure("Session", window) }
-                        if usage.fiveHour != nil && usage.sevenDay != nil {
-                            Text("·").foregroundStyle(DS.dim)
-                        }
-                        if let window = usage.sevenDay { figure("Week", window) }
+                        Text(credits.amountLabel())
+                            .font(DS.font(12, .bold))
+                            .foregroundStyle(DS.orange)
+                    } else if let usage, let blocked = usage.blockedLabel(now: context.date) {
+                        UsageSection.creditsBadge(usage.isOutOfCredits ? "OUT OF CREDITS" : "LIMIT REACHED", DS.red)
+                        Text(blocked)
+                            .font(DS.font(12, .bold))
+                            .foregroundStyle(DS.red)
                     } else {
-                        Text("Plan usage").foregroundStyle(DS.dim)
+                        if let usage, usage.isOutOfCredits {
+                            UsageSection.creditsBadge("OUT OF CREDITS", DS.red)
+                        }
+                        if let usage, usage.fiveHour != nil || usage.sevenDay != nil {
+                            if let window = usage.fiveHour { figure("Session", window) }
+                            if usage.fiveHour != nil && usage.sevenDay != nil {
+                                Text("·").foregroundStyle(DS.dim)
+                            }
+                            if let window = usage.sevenDay { figure("Week", window) }
+                        } else {
+                            Text("Plan usage").foregroundStyle(DS.dim)
+                        }
                     }
                     Image(systemName: "chevron.up")
                         .font(.system(size: 9, weight: .semibold))
