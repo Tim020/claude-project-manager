@@ -36,9 +36,10 @@ final class UsageTests: XCTestCase {
 
         XCTAssertEqual(parse("3:10pm (Europe/London)"), utcDate("2026-09-25T14:10:00Z"), "today, in the named zone")
         XCTAssertEqual(parse("5pm"), utcDate("2026-09-25T17:00:00Z"), "no zone: the local one")
-        XCTAssertEqual(parse("12pm"), utcDate("2026-09-26T12:00:00Z"), "gone today: tomorrow's")
         XCTAssertEqual(parse("12:40pm"), utcDate("2026-09-25T12:40:00Z"), "this minute: due now, not tomorrow")
-        XCTAssertEqual(parse("12am"), utcDate("2026-09-26T00:00:00Z"), "midnight")
+        XCTAssertEqual(parse("12:38pm"), utcDate("2026-09-25T12:38:00Z"), "just gone (a cached reading): the reset that's happened")
+        XCTAssertEqual(parse("12am"), utcDate("2026-09-26T00:00:00Z"), "long gone: tomorrow's midnight")
+        XCTAssertEqual(parse("Sep 25 at 12:39pm"), utcDate("2026-09-25T12:39:00Z"), "just gone, with a date: not next year")
         XCTAssertEqual(parse("Sep 29, 9am (Europe/London)"), utcDate("2026-09-29T08:00:00Z"))
         XCTAssertEqual(parse("Sep 27 at 4:49am (Europe/London)"), utcDate("2026-09-27T03:49:00Z"))
         XCTAssertEqual(parse("Sept 29 at 9am"), utcDate("2026-09-29T09:00:00Z"), "a longer month name")

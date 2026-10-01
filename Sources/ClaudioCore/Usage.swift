@@ -78,9 +78,13 @@ public struct UsageWindow: Equatable, Sendable {
             parts.day = day
         }
         guard let date = calendar.date(from: parts) else { return nil }
-        // The text is to the minute, so a time within the last minute is a
-        // reset that's due now, not tomorrow's (or, with a date, next year's).
-        guard date.addingTimeInterval(60) <= now else { return date }
+        // A time not long gone is a reset that's just happened, read from a
+        // cached reading (up to 60 s old, and the text drops the seconds):
+        // kept, so `current(at:)` shows the window reset rather than full
+        // until tomorrow. A session window resets within 5 hours, the week
+        // within 7 days, so only a time well past is tomorrow's (next year's).
+        let grace: TimeInterval = hasDate ? 180 * 86400 : 12 * 3600
+        guard date.addingTimeInterval(grace) <= now else { return date }
         return calendar.date(byAdding: hasDate ? .year : .day, value: 1, to: date)
     }
 

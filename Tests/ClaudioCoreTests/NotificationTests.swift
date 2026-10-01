@@ -458,6 +458,26 @@ final class UsageResetNotificationTests: XCTestCase {
         XCTAssertEqual(tracker.check(reading, now: resets.addingTimeInterval(30)), [])
     }
 
+    /// `/usage`'s text gives the reset to the minute ("resets 4:49am"), and a
+    /// reading can come from Claude Code's 60 s cache. One read just after the
+    /// reset is the reset that's happened, not tomorrow's, so it doesn't count
+    /// as at the limit again and the reset is notified once.
+    func testAStaleTextReadingAfterTheResetDoesntReArmIt() throws {
+        let utc = TimeZone(identifier: "UTC")!
+        func reading(_ text: String, at now: Date) -> UsageSnapshot? {
+            UsageSnapshot.parseUsageCommand(text, updatedAt: now, timeZone: utc)
+        }
+        // 2026-09-25 12:40 UTC; the session resets at 12:49.
+        let now = Date(timeIntervalSince1970: 1_790_340_000)
+        let full = "Current session: 100% used · resets 12:49pm"
+        var tracker = UsageResetTracker()
+        XCTAssertEqual(tracker.check(reading(full, at: now), now: now), [])
+        let afterReset = now.addingTimeInterval(9 * 60 + 70)
+        XCTAssertEqual(tracker.check(reading(full, at: afterReset), now: afterReset), [.session], "the cached reading has passed its reset")
+        let fresh = afterReset.addingTimeInterval(60)
+        XCTAssertEqual(tracker.check(reading("Current session: 1% used · resets 5:50pm", at: fresh), now: fresh), [], "once")
+    }
+
     func testALimitReachedAtLaunchNotifiesWhenItResets() {
         var tracker = UsageResetTracker()
         XCTAssertEqual(tracker.check(snapshot(session: 100, week: nil), now: start), [])
