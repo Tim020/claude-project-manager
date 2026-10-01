@@ -2,10 +2,11 @@
 import ClaudioCore
 import SwiftUI
 
-// Design 9a: follow-ups and Needs You. A finished session gets a card under
-// its terminal (working, then ready with its notes and plan changes); Later
-// sends it to Needs You as "<session> finished". Needs You also lists failed
-// follow-ups and plan changes sessions suggested.
+// Design 9a: follow-ups and Needs You. A session that looks done gets a card
+// under its terminal: offered (Follow Up or Not Now), then working, then
+// ready with its notes and plan changes, or failed with Try Again. Later
+// sends it to Needs You. Needs You also lists offers, failed follow-ups and
+// plan changes sessions suggested.
 
 /// NEEDS YOU · n: one card per thing waiting for you.
 struct NeedsYouSection: View {
@@ -20,14 +21,16 @@ struct NeedsYouSection: View {
                 .kerning(0.66)
                 .foregroundStyle(DS.muted)
                 .padding(.horizontal, 4)
-            if data.isEmpty {
+            if data.followUps.isEmpty && data.suggestions.isEmpty {
                 Text("Nothing needs you.")
                     .font(DS.font(12.5))
                     .foregroundStyle(DS.dim)
                     .padding(.horizontal, 4)
             }
-            ForEach(data.followUps.reversed()) { followUp in
-                NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
+            if model.isAssistantOn(inProject: projectID) {
+                ForEach(data.followUps.reversed()) { followUp in
+                    NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
+                }
             }
             ForEach(data.suggestions.reversed()) { suggestion in
                 SessionSuggestionCard(suggestion: suggestion, projectID: projectID)

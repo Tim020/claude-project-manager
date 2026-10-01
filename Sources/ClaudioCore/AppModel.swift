@@ -256,8 +256,8 @@ public final class AppModel {
     /// Each session's history file as last checked for a follow-up
     /// (conversation and size), so unchanged files aren't read again.
     @ObservationIgnored var followUpChecked: [UUID: String] = [:]
-    /// Sessions whose follow-up needn't wait for them to be quiet (stopped,
-    /// or their tab closed).
+    /// Sessions you stopped, or whose tab you closed: a sign they're ready
+    /// for a follow-up, whatever Claude Code says about the task.
     @ObservationIgnored var followUpDue = Set<UUID>()
     /// Background calls today, for the daily limit.
     @ObservationIgnored var dailyJobs: DailyJobCount?
@@ -269,6 +269,9 @@ public final class AppModel {
     @ObservationIgnored var followUpHistoryMissing: [UUID: String] = [:]
     /// Projects with a background call running: one at a time each.
     @ObservationIgnored var assistantBackgroundProjects = Set<UUID>()
+    /// Sessions whose Review This Session is reading their history, so a
+    /// second click doesn't start a second call.
+    @ObservationIgnored var reviewsStarting = Set<UUID>()
     /// Offered and failed follow-ups' digests, so Follow Up and Try Again ask
     /// about what was found.
     @ObservationIgnored var pendingDigests: [UUID: (SessionDigest, FollowUpMark)] = [:]
@@ -1569,7 +1572,7 @@ public final class AppModel {
 
     /// Called by the UI when a session's terminal process exits.
     public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
-        // Its follow-up needn't wait for it to go quiet.
+        // Closing its tab is a sign it may be ready for a follow-up.
         followUpDue.insert(sessionID)
         running.remove(sessionID)
         pendingLaunches[sessionID] = nil
@@ -1622,6 +1625,10 @@ public final class AppModel {
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
             // It's carrying on, so an offered follow-up no longer applies.
             if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
+            // Otherwise the only trace is the follow-up it holds back.
+            if event.name == .stopFailure {
+                log.append(.error, "\(state.workspace.session(target)?.name ?? "A session"): its turn failed (\(event.error ?? "an API error"))")
+            }
             // Work or a wait the hooks report is newer than the agent list's
             // last reading, so an old "waiting" there mustn't end it: see
             // `keepsWaiting` in `apply(_:)`.

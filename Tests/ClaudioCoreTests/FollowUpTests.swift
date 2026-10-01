@@ -115,14 +115,51 @@ final class FollowUpDigestTests: XCTestCase {
     func testHistorySlicesTakeWholeLinesAfterTheMark() throws {
         let url = try makeTemporaryDirectory().appendingPathComponent("s.jsonl")
         try "one\ntwo\nthr".write(to: url, atomically: true, encoding: .utf8)
-        let first = try XCTUnwrap(HistorySlice.read(url, from: 0))
+        let first = try HistorySlice.read(url, from: 0).get()
         XCTAssertEqual(first.lines, ["one", "two"])
         XCTAssertEqual(first.end, 8)
         try "one\ntwo\nthree\nfour\n".write(to: url, atomically: true, encoding: .utf8)
-        XCTAssertEqual(HistorySlice.read(url, from: first.end)?.lines, ["three", "four"])
-        XCTAssertEqual(HistorySlice.read(url, from: 5)?.lines, ["three", "four"], "a mark mid-line skips to the next line")
-        XCTAssertEqual(HistorySlice.read(url, from: 19)?.lines, [])
-        XCTAssertNil(HistorySlice.read(url.appendingPathExtension("gone"), from: 0))
+        XCTAssertEqual(try HistorySlice.read(url, from: first.end).get().lines, ["three", "four"])
+        XCTAssertEqual(try HistorySlice.read(url, from: 5).get().lines, ["three", "four"], "a mark mid-line skips to the next line")
+        XCTAssertEqual(try HistorySlice.read(url, from: 19).get().lines, [])
+        XCTAssertThrowsError(try HistorySlice.read(url.appendingPathExtension("gone"), from: 0).get(),
+                             "a file that can't be read is an error, not \"nothing new\"")
+
+        // More than the cap is new: only the newest whole lines are read.
+        let capped = try HistorySlice.read(url, from: 0, maxBytes: 9).get()
+        XCTAssertEqual(capped.lines, ["four"], "from the first line that starts inside the last 9 bytes")
+        XCTAssertTrue(capped.truncated)
+        XCTAssertEqual(capped.end, 19)
+        XCTAssertFalse(try HistorySlice.read(url, from: 0).get().truncated)
+    }
+
+    func testNeedsYouKeepsWhatItCantRead() throws {
+        let json = #"""
+            {"followUps":[
+               {"sessionID":"6F9619FF-8B86-D011-B42D-00C04FC964FF","state":{"ready":{}},"askedFor":true},
+               {"sessionID":"6F9619FF-8B86-D011-B42D-00C04FC964FF","state":{"someNewState":{}}}],
+             "suggestions":[{"text":"Add a word count"},{"nottext":1}]}
+            """#
+        let data = try JSONFileStore.decoder.decode(NeedsYouData.self, from: Data(json.utf8))
+        XCTAssertEqual(data.followUps.map(\.state), [.ready], "missing defaulted fields are fine")
+        XCTAssertEqual(data.suggestions.map(\.text), ["Add a word count"])
+        XCTAssertEqual(data.unreadableCount, 2, "one bad entry doesn't cost the rest")
+        let again = try JSONFileStore.decoder.decode(NeedsYouData.self, from: JSONFileStore.encoder.encode(data.saved))
+        XCTAssertEqual(again.unreadableCount, 2, "and they're written back as they were")
+        XCTAssertFalse(data.isEmpty)
+    }
+
+    func testAPlanChangeThatMakesNoSenseIsntRead() throws {
+        let item = UUID().uuidString
+        for json in [#"{"kind":"add","itemID":"\#(item)","title":"t","status":"planned"}"#,
+                     #"{"kind":"done","itemID":"\#(item)","title":"t","status":"idea"}"#,
+                     #"{"kind":"move","itemID":"\#(item)","title":"t","status":"done"}"#,
+                     #"{"kind":"move","title":"t","status":"idea"}"#] {
+            XCTAssertThrowsError(try JSONFileStore.decoder.decode(ProposedPlanChange.self, from: Data(json.utf8)), json)
+        }
+        XCTAssertNoThrow(try JSONFileStore.decoder.decode(ProposedPlanChange.self,
+                                                          from: Data(#"{"kind":"add","title":"t","status":"idea"}"#.utf8)))
+        XCTAssertEqual(ProposedPlanChange.add(title: "t", status: .done, reason: "").status, .planned)
     }
 
     func testARepliesPlanChangesAreChecked() throws {
@@ -283,7 +320,13 @@ final class FollowUpModelTests: XCTestCase {
             XCTAssertEqual(f.assistant.needsYou[f.project]?.followUps.count, 1, "saved")
         }
         await f.model.checkFollowUps()
-        XCTAssertEqual(f.runner.calls.count, 1, "nothing new since")
+        let (card, mark) = await MainActor.run {
+            (f.model.followUpCard(forSession: f.session), f.model.workspace.session(f.session)?.followUpMark)
+        }
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: f.history.path)[.size] as? NSNumber)
+        XCTAssertEqual(card?.state, .ready, "no new offer: nothing new since")
+        XCTAssertEqual(mark?.offset, size.uint64Value, "the mark moved to the history's end")
+        XCTAssertEqual(f.runner.calls.count, 1)
     }
 
     /// Claude Code's own view decides: "working" means it expects to carry on.
@@ -446,7 +489,11 @@ final class FollowUpModelTests: XCTestCase {
         try await offerAndAccept(f)
         let (id, mark) = try await MainActor.run { () -> (UUID, FollowUpMark?) in
             let followUp = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
-            guard case .failed = followUp.state else { throw XCTSkip("expected a failure") }
+            guard case .failed(let message) = followUp.state else {
+                XCTFail("expected a failure, got \(followUp.state)")
+                throw CancellationError()
+            }
+            XCTAssertFalse(message.isEmpty)
             XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 1, "a failure waits for you")
             return (followUp.id, f.model.workspace.session(f.session)?.followUpMark)
         }
@@ -528,6 +575,207 @@ final class FollowUpModelTests: XCTestCase {
         let missing = await MainActor.run { f.model.followUpHistoryMissing[f.session] }
         XCTAssertEqual(missing, FollowUpModelTests.conversation, "remembered until the next launch")
         XCTAssertTrue(f.runner.calls.isEmpty)
+    }
+
+    // MARK: Review round 1 (PR #28)
+
+    /// Not Now holds until a new prompt: a rename's title line, or Claude
+    /// Code's bookkeeping, grows the history without one.
+    func testNotNowIgnoresHistoryLinesThatArentPrompts() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        await f.model.checkFollowUps()
+        await MainActor.run {
+            let offer = f.model.followUpCard(forSession: f.session)!
+            f.model.declineFollowUpOffer(offer.id, projectID: f.project)
+        }
+        try append([History.json(["type": "custom-title", "customTitle": "Renamed", "sessionId": FollowUpModelTests.conversation])],
+                   to: f.history)
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "only a title line since Not Now")
+        try append([History.prompt("One more thing"), History.reply("Done.")], to: f.history)
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered, "a new prompt since")
+    }
+
+    /// A failed follow-up isn't left beside a new offer for the same work.
+    func testANewOfferReplacesAFailedCard() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        f.runner.reply = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-api-error.json"), errorOutput: "")
+        try await offerAndAccept(f)
+        await MainActor.run { f.model.followUpChecked = [:] }        // a relaunch
+        await f.model.checkFollowUps()
+        let states = await MainActor.run { f.model.needsYouData(inProject: f.project).followUps.map(\.state) }
+        XCTAssertEqual(states, [.offered], "one card: the offer took the failure's place")
+        let count = await MainActor.run { f.model.needsYouCount(inProject: f.project) }
+        XCTAssertEqual(count, 1)
+    }
+
+    /// A deferred failure stays: you put it in Needs You to deal with.
+    func testADeferredFailureStays() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        f.runner.reply = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-api-error.json"), errorOutput: "")
+        try await offerAndAccept(f)
+        await MainActor.run {
+            let failed = f.model.followUpCard(forSession: f.session)!
+            f.model.deferFollowUp(failed.id, projectID: f.project)
+            f.model.followUpChecked = [:]
+        }
+        await f.model.checkFollowUps()
+        let count = await MainActor.run { f.model.needsYouData(inProject: f.project).followUps.count }
+        XCTAssertEqual(count, 2)
+    }
+
+    func testTwoQuickReviewsMakeOneCall() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        await MainActor.run {
+            f.model.reviewSession(f.session)
+            f.model.reviewSession(f.session)
+        }
+        try await waitUntil { await MainActor.run { f.model.followUpCard(forSession: f.session) != nil } }
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1, "the second click came while the first was reading the history")
+        let running = await MainActor.run { (f.model.assistantJobsRunning, f.model.assistantBackgroundProjects, f.model.reviewsStarting) }
+        XCTAssertEqual(running.0, 0, "its slot is released")
+        XCTAssertTrue(running.1.isEmpty)
+        XCTAssertTrue(running.2.isEmpty)
+    }
+
+    func testAddToPlanKeepsWhatCouldntBeSaved() async throws {
+        let assistant = MemoryAssistantStore()
+        let f = try await makeFixture(assistant: assistant, lines: substantial, mark: true)
+        try await offerAndAccept(f)
+        await MainActor.run {
+            let followUp = f.model.followUpCard(forSession: f.session)!
+            assistant.saveError = CocoaError(.fileWriteOutOfSpace)
+            f.model.addFollowUpPlanChanges(followUp.id, projectID: f.project)
+            XCTAssertEqual(f.model.followUpCard(forSession: f.session)?.planChanges.count, 1, "left on the card to try again")
+            XCTAssertEqual(f.model.toast?.text, "Added 0 of 1. The rest couldn't be saved.")
+            assistant.saveError = nil
+            f.model.addFollowUpPlanChanges(followUp.id, projectID: f.project)
+            XCTAssertNil(f.model.followUpCard(forSession: f.session))
+            XCTAssertEqual(f.model.items(inProject: f.project).count, 1)
+        }
+    }
+
+    func testAddToPlanChecksItemsAgain() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        let item = try await MainActor.run { () -> PlanItem in
+            let note = try XCTUnwrap(f.model.addNote("Panel height", author: .user, projectID: f.project, sessionID: nil))
+            return try XCTUnwrap(f.model.promoteNote(note.id, projectID: f.project, title: "Remember Shell panel height"))
+        }
+        try await offerAndAccept(f)
+        await MainActor.run {
+            let followUp = f.model.followUpCard(forSession: f.session)!
+            XCTAssertEqual(followUp.planChanges.map(\.kind), [.add, .done])
+            f.model.setStatus(.idea, ofItem: item.id, projectID: f.project)
+            f.model.deleteItem(item.id, projectID: f.project)        // gone before Add to Plan
+            f.model.addFollowUpPlanChanges(followUp.id, projectID: f.project)
+            XCTAssertEqual(f.model.items(inProject: f.project).map(\.title), ["Remember the Shell's scroll position"],
+                           "the item that went is skipped, the new one is added")
+            XCTAssertEqual(f.model.toast?.text, "Added 1 change to the plan")
+        }
+    }
+
+    func testUntickingANoteThatCantBeRemovedKeepsItTicked() async throws {
+        let assistant = MemoryAssistantStore()
+        let f = try await makeFixture(assistant: assistant, lines: substantial, mark: true)
+        try await offerAndAccept(f)
+        await MainActor.run {
+            let followUp = f.model.followUpCard(forSession: f.session)!
+            assistant.saveError = CocoaError(.fileWriteOutOfSpace)
+            f.model.toggleFollowUpNote(followUp.notes[0].id, in: followUp.id, projectID: f.project)
+            XCTAssertTrue(f.model.followUpCard(forSession: f.session)!.notes[0].isKept, "still saved, so still ticked")
+            assistant.saveError = nil
+            f.model.toggleFollowUpNote(followUp.notes[0].id, in: followUp.id, projectID: f.project)
+            XCTAssertEqual(f.model.notes(inProject: f.project).filter { $0.author == .assistant }.count, 1, "no duplicate")
+        }
+    }
+
+    /// After /clear: a new conversation, a new file, read from its start.
+    func testANewConversationIsReadFromItsStart() async throws {
+        let f = try await makeFixture(lines: [History.prompt("old")], mark: true)
+        let cleared = "d00dfeed-1111-2222-3333-444455556666"
+        let history = f.history.deletingLastPathComponent().appendingPathComponent("\(cleared).jsonl")
+        try (substantial.joined(separator: "\n") + "\n").write(to: history, atomically: true, encoding: .utf8)
+        await MainActor.run {
+            f.model.applyTestSessionChange(f.session) { $0.claudeSessionID = cleared }
+            f.model.followUpDue.insert(f.session)
+        }
+        await f.model.checkFollowUps()
+        let card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+    }
+
+    /// The marks, Not Now and a failed turn go through `state.json`.
+    func testFollowUpStateSurvivesSaving() throws {
+        var session = Session(projectID: UUID(), name: "s", workingDirectory: "/code")
+        session.followUpMark = FollowUpMark(conversationID: "c", offset: 120)
+        session.followUpDeclined = FollowUpMark(conversationID: "c", offset: 400)
+        session.lastTurnFailed = true
+        let again = try JSONFileStore.decoder.decode(Session.self, from: JSONFileStore.encoder.encode(session))
+        XCTAssertEqual(again.followUpMark, session.followUpMark)
+        XCTAssertEqual(again.followUpDeclined, session.followUpDeclined)
+        XCTAssertTrue(again.lastTurnFailed)
+    }
+
+    func testAFailedTurnThroughTheHooksThenAGoodOne() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true)
+        let hookLog = f.history.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("h.log")
+        func hook(_ object: [String: Any]) -> String { f.session.uuidString + "\t" + History.json(object) + "\n" }
+        try hook(["hook_event_name": "StopFailure", "session_id": FollowUpModelTests.conversation, "error": "rate_limit"])
+            .write(to: hookLog, atomically: true, encoding: .utf8)
+        await MainActor.run {
+            f.model.pollHookEvents()
+            XCTAssertTrue(f.model.workspace.session(f.session)?.lastTurnFailed ?? false)
+            XCTAssertNotNil(f.model.log.entries.last { $0.title == "Shell Height: its turn failed (rate_limit)" }, "logged")
+        }
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card)
+        let handle = try FileHandle(forWritingTo: hookLog)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(hook(["hook_event_name": "Stop", "session_id": FollowUpModelTests.conversation,
+                                                "last_assistant_message": "Done."]).utf8))
+        try handle.close()
+        await MainActor.run { f.model.pollHookEvents() }
+        await setTask("done", f)
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered, "a turn that ended normally clears it")
+    }
+
+    /// The daily limit counts background calls (captured-note checks) and
+    /// starts again the next day.
+    func testTheDailyLimitIsCounted() async throws {
+        let f = try await makeFixture(mark: true)
+        try await MainActor.run {
+            for index in 0..<AppModel.dailyJobLimit {
+                let note = try XCTUnwrap(f.model.addNote("Note \(index)", author: .user, projectID: f.project, sessionID: nil))
+                f.model.checkCapturedNote(note, projectID: f.project)
+            }
+            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Daily limit of 20 reached"))
+            let extra = try XCTUnwrap(f.model.addNote("One too many", author: .user, projectID: f.project, sessionID: nil))
+            f.model.checkCapturedNote(extra, projectID: f.project)
+        }
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, AppModel.dailyJobLimit, "the 21st isn't made")
+        await MainActor.run {
+            f.model.dailyJobs = DailyJobCount(day: "2026-09-28", count: AppModel.dailyJobLimit)
+            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .run, "yesterday's count doesn't apply")
+        }
+    }
+
+    func testASessionsSuggestionShowsWithTheAssistantOff() async throws {
+        let f = try await makeFixture(mark: true)
+        await MainActor.run {
+            f.assistant.inbox = ["\(FollowUpModelTests.conversation)\t/code/app\tsuggest\t\(Data("x".utf8).base64EncodedString())"]
+            f.model.pollAssistantInbox()
+            f.model.setAssistantMode(.off, projectID: f.project)
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 1, "the session was told you'd see it")
+        }
     }
 
     /// Background calls: one at a time per project. Things you start never

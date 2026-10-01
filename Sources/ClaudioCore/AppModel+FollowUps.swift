@@ -33,10 +33,11 @@ extension AppModel {
     }
 
     /// The rail badge and the section's count: what's waiting for you.
-    /// Jobs still running don't count.
+    /// Jobs still running don't count. With the assistant off, only plan
+    /// changes sessions suggested (`claudio suggest` told them you'd see them).
     public func needsYouCount(inProject projectID: UUID) -> Int {
-        guard isAssistantOn(inProject: projectID) else { return 0 }
         let data = needsYouData(inProject: projectID)
+        guard isAssistantOn(inProject: projectID) else { return data.suggestions.count }
         return data.followUps.filter { $0.state != .working }.count + data.suggestions.count
     }
 
@@ -131,23 +132,42 @@ extension AppModel {
             followUpDue.remove(sessionID)
             return
         }
-        followUpChecked[sessionID] = checked
-        // Not Now, and it hasn't done anything since (kept across launches).
-        if let declined = session.followUpDeclined, declined.conversationID == file.conversationID,
-           file.size <= declined.offset {
+        // Not Now (kept across launches): offered again only after a new
+        // prompt. Other lines the history gains (a rename's title, Claude
+        // Code's own bookkeeping, a stop) don't count.
+        let declined = session.followUpDeclined.flatMap { $0.conversationID == file.conversationID ? $0.offset : nil }
+        if let declined, file.size <= declined {
+            followUpChecked[sessionID] = checked
             followUpDue.remove(sessionID)
             return
         }
         guard let project = workspace.project(session.projectID) else { return }
         let url = file.url, projectPath = project.path
-        let slice = await Task.detached(priority: .utility) { () -> (digest: SessionDigest, end: UInt64)? in
-            guard let read = HistorySlice.read(url, from: start) else { return nil }
-            return (SessionDigest.build(lines: read.lines, projectPath: projectPath), read.end)
+        let read = await Task.detached(priority: .utility) { () -> Result<(digest: SessionDigest, end: UInt64, promptedSinceDecline: Bool), Error> in
+            HistorySlice.read(url, from: start).map { read in
+                let digest = SessionDigest.build(lines: read.lines, projectPath: projectPath)
+                var prompted = true
+                if let declined, case .success(let since) = HistorySlice.read(url, from: declined) {
+                    prompted = !SessionDigest.build(lines: since.lines, projectPath: projectPath).prompts.isEmpty
+                }
+                return (digest, read.end, prompted)
+            }
         }.value
         followUpDue.remove(sessionID)
+        let slice: (digest: SessionDigest, end: UInt64, promptedSinceDecline: Bool)
+        switch read {
+        case .success(let value):
+            slice = value
+            followUpChecked[sessionID] = checked
+        case .failure(let error):
+            // Not marked as checked, so it's tried again on the next tick.
+            log.append(.error, "Couldn't read the history of \(session.name) for a follow-up",
+                       detail: "\(file.url.path)\n\(AppModel.describe(error))")
+            return
+        }
         // Nothing worth a look yet: the mark stays, so prompts add up
         // ("3 or more since the last follow-up").
-        guard let slice, !slice.digest.prompts.isEmpty, slice.digest.hasSubstance,
+        guard slice.promptedSinceDecline, !slice.digest.prompts.isEmpty, slice.digest.hasSubstance,
               let current = workspace.session(sessionID), current.status == .completed, !current.lastTurnFailed,
               !isFollowUpPending(sessionID)
         else { return }
@@ -159,6 +179,7 @@ extension AppModel {
     func offerFollowUp(_ sessionID: UUID, digest: SessionDigest, mark: FollowUpMark) {
         guard let session = workspace.session(sessionID) else { return }
         let offer = FollowUp(sessionID: sessionID, sessionName: session.name, state: .offered, createdAt: now(), askedFor: false)
+        dropStaleFailures(forSession: sessionID, projectID: session.projectID)
         updateNeedsYou(session.projectID) { data in
             data.followUps.removeAll { $0.sessionID == sessionID && $0.state == .offered }
             data.followUps.append(offer)
@@ -166,13 +187,25 @@ extension AppModel {
         pendingDigests[offer.id] = (digest, mark)
     }
 
+    /// A session's failed follow-up that's still on its card: a new offer or
+    /// follow-up covers the same work, so it goes. One deferred to Needs You
+    /// stays until you deal with it.
+    private func dropStaleFailures(forSession sessionID: UUID, projectID: UUID, except keep: UUID? = nil) {
+        let stale = needsYouData(inProject: projectID).followUps.filter {
+            guard $0.sessionID == sessionID, !$0.isDeferred, $0.id != keep, case .failed = $0.state else { return false }
+            return true
+        }.map(\.id)
+        guard !stale.isEmpty else { return }
+        for id in stale { pendingDigests[id] = nil }
+        updateNeedsYou(projectID) { data in data.followUps.removeAll { stale.contains($0.id) } }
+    }
+
     /// Follow Up on an offer: the call runs now, as something you started
     /// (not background work: no usage gate, no daily limit).
     public func acceptFollowUpOffer(_ id: UUID, projectID: UUID) {
         guard let offer = followUp(id, inProject: projectID), offer.state == .offered else { return }
         guard let (digest, mark) = pendingDigests[id] else {
-            closeFollowUp(id, projectID: projectID)
-            reviewSession(offer.sessionID)
+            reviewSession(offer.sessionID, replacing: id)
             return
         }
         startFollowUp(offer.sessionID, digest: digest, mark: mark, askedFor: true, replacing: id)
@@ -202,13 +235,16 @@ extension AppModel {
     /// Review This Session (the session's ⋯ menu): a follow-up now, whatever
     /// the usage. It reads what's new since the last follow-up, or the whole
     /// conversation when nothing is. With the assistant off, it says so.
-    public func reviewSession(_ sessionID: UUID) {
+    /// `replacing`: the card it takes over (an offer, or a failure after a
+    /// relaunch), which stays if nothing can be reviewed.
+    public func reviewSession(_ sessionID: UUID, replacing followUpID: UUID? = nil) {
         guard let session = workspace.session(sessionID) else { return }
         guard isAssistantOn(inProject: session.projectID) else {
             showToast("The assistant is off for this project")
             return
         }
-        guard !isFollowUpRunning(sessionID) else { return }
+        // A second click while the first is still reading the history.
+        guard !isFollowUpRunning(sessionID), !reviewsStarting.contains(sessionID) else { return }
         guard let file = historyFile(of: session), let project = workspace.project(session.projectID) else {
             showToast("This session has nothing to review yet")
             return
@@ -216,23 +252,32 @@ extension AppModel {
         let mark = session.followUpMark
         let start = mark?.conversationID == file.conversationID ? mark?.offset ?? 0 : 0
         let url = file.url, projectPath = project.path
+        reviewsStarting.insert(sessionID)
         Task { @MainActor [weak self] in
-            let slice = await Task.detached(priority: .userInitiated) { () -> (digest: SessionDigest, end: UInt64)? in
-                guard var read = HistorySlice.read(url, from: start) else { return nil }
-                var digest = SessionDigest.build(lines: read.lines, projectPath: projectPath)
-                if digest.prompts.isEmpty, start > 0, let whole = HistorySlice.read(url, from: 0) {
-                    read = whole
-                    digest = SessionDigest.build(lines: whole.lines, projectPath: projectPath)
+            let read = await Task.detached(priority: .userInitiated) { () -> Result<(digest: SessionDigest, end: UInt64), Error> in
+                HistorySlice.read(url, from: start).flatMap { read in
+                    let digest = SessionDigest.build(lines: read.lines, projectPath: projectPath)
+                    guard digest.prompts.isEmpty, start > 0 else { return .success((digest, read.end)) }
+                    // Nothing new since the last follow-up: review the whole conversation.
+                    return HistorySlice.read(url, from: 0).map { whole in
+                        (SessionDigest.build(lines: whole.lines, projectPath: projectPath), whole.end)
+                    }
                 }
-                return (digest, read.end)
             }.value
             guard let self else { return }
-            guard let slice, !slice.digest.prompts.isEmpty else {
+            self.reviewsStarting.remove(sessionID)
+            switch read {
+            case .failure(let error):
+                self.log.append(.error, "Couldn't read the history of \(session.name) to review it",
+                                detail: "\(url.path)\n\(AppModel.describe(error))")
+                self.showToast("Couldn't read this session's history. See the Activity Log.")
+            case .success(let slice) where slice.digest.prompts.isEmpty:
                 self.showToast("This session has nothing to review yet")
-                return
+            case .success(let slice):
+                self.startFollowUp(sessionID, digest: slice.digest,
+                                   mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end), askedFor: true,
+                                   replacing: followUpID)
             }
-            self.startFollowUp(sessionID, digest: slice.digest,
-                               mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end), askedFor: true)
         }
     }
 
@@ -247,6 +292,7 @@ extension AppModel {
         var followUp = FollowUp(sessionID: sessionID, sessionName: session.name, state: .working, createdAt: now(),
                                 askedFor: askedFor)
         if let followUpID { followUp.id = followUpID }
+        dropStaleFailures(forSession: sessionID, projectID: projectID, except: followUpID)
         updateNeedsYou(projectID) { data in
             data.followUps.removeAll {
                 $0.id == followUp.id || ($0.sessionID == sessionID && ($0.state == .working || $0.state == .offered))
@@ -280,10 +326,18 @@ extension AppModel {
             let (texts, changes) = FollowUpJob.result(from: reply.output, refs: request.refs,
                                                       items: items(inProject: projectID))
             var kept: [FollowUpNote] = []
+            var unsaved: [String] = []
             for text in texts {
-                let note = addNote(text, author: .assistant, projectID: projectID, sessionID: sessionID,
-                                   cause: "followup:\(id.uuidString.lowercased())", reportFailures: false)
-                kept.append(FollowUpNote(text: text, noteID: note?.id))
+                if let note = addNote(text, author: .assistant, projectID: projectID, sessionID: sessionID,
+                                      cause: "followup:\(id.uuidString.lowercased())", reportFailures: false) {
+                    kept.append(FollowUpNote(text: text, noteID: note.id))
+                } else {
+                    // Not shown as an unticked row (that means you removed it): logged with its text.
+                    unsaved.append(text)
+                }
+            }
+            if !unsaved.isEmpty {
+                log.append(.error, "Couldn't save \(unsaved.count) of a follow-up's notes", detail: unsaved.joined(separator: "\n\n"))
             }
             setFollowUpMark(sessionID, request.mark)
             pendingDigests[id] = nil
@@ -313,8 +367,8 @@ extension AppModel {
         guard let followUp = followUp(id, inProject: projectID), case .failed = followUp.state else { return }
         guard let (digest, mark) = pendingDigests[id] else {
             // After a relaunch the digest is gone: read the session afresh.
-            closeFollowUp(id, projectID: projectID)
-            reviewSession(followUp.sessionID)
+            // The failed card stays until the new follow-up takes its place.
+            reviewSession(followUp.sessionID, replacing: id)
             return
         }
         startFollowUp(followUp.sessionID, digest: digest, mark: mark, askedFor: followUp.askedFor, replacing: id)
@@ -329,6 +383,8 @@ extension AppModel {
             if assistantData[projectID]?.notes.contains(where: { $0.id == existing }) == true {
                 undoNote(existing, projectID: projectID)
             }
+            // Only unticked once it's really gone (a failed save leaves it).
+            guard assistantData[projectID]?.notes.contains(where: { $0.id == existing }) != true else { return }
             noteID = nil
         } else {
             noteID = addNote(row.text, author: .assistant, projectID: projectID, sessionID: followUp.sessionID,
@@ -350,22 +406,28 @@ extension AppModel {
 
     /// Add n to Plan: applies the ticked plan changes and closes the card.
     /// Each is checked again: an item that has gone, or is done, is skipped.
+    /// A change that can't be saved stays on the card, to try again.
     public func addFollowUpPlanChanges(_ followUpID: UUID, projectID: UUID) {
         guard let followUp = followUp(followUpID, inProject: projectID) else { return }
         var added = 0
-        for proposal in followUp.planChanges where proposal.isSelected {
+        var failed = Set<UUID>()
+        for proposal in followUp.planChanges where proposal.isSelected && proposal.isValid {
             switch proposal.kind {
             case .add:
                 let item = PlanItem(title: proposal.title, status: proposal.status, createdAt: now())
                 let entry = AuditEntry(at: now(), actor: .user, action: .itemAdded, afterItem: item,
                                        cause: "followup:\(followUpID.uuidString.lowercased())")
-                if change(projectID: projectID, recording: entry, { $0.items.append(item) }) { added += 1 }
+                if change(projectID: projectID, recording: entry, { $0.items.append(item) }) { added += 1 } else { failed.insert(proposal.id) }
             case .done, .move:
                 guard let itemID = proposal.itemID, let item = item(itemID, inProject: projectID),
                       item.status != .done, item.status != proposal.status else { continue }
-                setStatus(proposal.status, ofItem: itemID, projectID: projectID)
-                added += 1
+                if setStatus(proposal.status, ofItem: itemID, projectID: projectID) { added += 1 } else { failed.insert(proposal.id) }
             }
+        }
+        guard failed.isEmpty else {
+            updateFollowUp(followUpID, projectID: projectID) { $0.planChanges.removeAll { $0.isSelected && !failed.contains($0.id) } }
+            showToast("Added \(added) of \(added + failed.count). The rest couldn't be saved.")
+            return
         }
         closeFollowUp(followUpID, projectID: projectID)
         if added > 0 { showToast(added == 1 ? "Added 1 change to the plan" : "Added \(added) changes to the plan") }
@@ -439,6 +501,10 @@ extension AppModel {
         for project in workspace.projects where !isAssistantDataUnreadable(project.id) {
             var data = assistantStore.loadNeedsYou(projectID: project.id)
             savedNeedsYou[project.id] = data
+            if data.unreadableCount > 0 {
+                log.append(.error, "\(data.unreadableCount) of Needs You's entries for \(project.name) couldn't be read",
+                           detail: "They're kept as they were.")
+            }
             let notes = Set(assistantData[project.id]?.notes.map(\.id) ?? [])
             for index in data.followUps.indices {
                 for row in data.followUps[index].notes.indices

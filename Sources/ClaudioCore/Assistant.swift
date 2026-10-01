@@ -347,6 +347,8 @@ public protocol AssistantStoring: AnyObject {
     func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws
     func loadDailyJobs() -> DailyJobCount?
     func saveDailyJobs(_ count: DailyJobCount) throws
+    /// Whether a count file exists (to tell "none yet" from "unreadable").
+    func hasDailyJobsFile() -> Bool
 }
 
 extension AssistantStoring {
@@ -365,6 +367,7 @@ extension AssistantStoring {
     public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws {}
     public func loadDailyJobs() -> DailyJobCount? { nil }
     public func saveDailyJobs(_ count: DailyJobCount) throws {}
+    public func hasDailyJobsFile() -> Bool { false }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -382,11 +385,16 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var inboxError: Error?
     public var needsYou: [UUID: NeedsYouData] = [:]
     public var dailyJobs: DailyJobCount?
+    /// Makes `save` throw, as a full disk would (for tests).
+    public var saveError: Error?
 
     public init() {}
 
     public func load(projectID: UUID) throws -> AssistantData { data[projectID] ?? AssistantData() }
-    public func save(_ data: AssistantData, projectID: UUID) throws { self.data[projectID] = data }
+    public func save(_ data: AssistantData, projectID: UUID) throws {
+        if let saveError { throw saveError }
+        self.data[projectID] = data
+    }
     public func appendAudit(_ entry: AuditEntry, projectID: UUID) throws { audit[projectID, default: []].append(entry) }
     public func loadSuggestions(projectID: UUID) -> [UUID: NoteSuggestion] { suggestions[projectID] ?? [:] }
     public func saveSuggestions(_ suggestions: [UUID: NoteSuggestion], projectID: UUID) throws {
@@ -404,6 +412,7 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws { needsYou[projectID] = data }
     public func loadDailyJobs() -> DailyJobCount? { dailyJobs }
     public func saveDailyJobs(_ count: DailyJobCount) throws { dailyJobs = count }
+    public func hasDailyJobsFile() -> Bool { dailyJobs != nil }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -526,6 +535,10 @@ public final class AssistantFileStore: AssistantStoring {
     public func loadDailyJobs() -> DailyJobCount? {
         (try? Data(contentsOf: root.appendingPathComponent("daily-jobs.json")))
             .flatMap { try? JSONDecoder().decode(DailyJobCount.self, from: $0) }
+    }
+
+    public func hasDailyJobsFile() -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent("daily-jobs.json").path)
     }
 
     public func saveDailyJobs(_ count: DailyJobCount) throws {

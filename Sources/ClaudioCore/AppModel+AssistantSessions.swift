@@ -282,10 +282,15 @@ extension AppModel {
 
     private func addSessionSuggestion(_ entry: InboxEntry) {
         let session = inboxSession(entry.sessionID)
-        guard let projectID = session?.projectID ?? projectID(containing: entry.directory),
-              !isAssistantDataUnreadable(projectID) else {
+        // Session text isn't logged when it can't be placed, only where it came from.
+        guard let projectID = session?.projectID ?? projectID(containing: entry.directory) else {
             log.append(.error, "A session suggested a plan change outside Claudio's projects, so it wasn't kept",
-                       detail: entry.text)
+                       detail: entry.directory)
+            return
+        }
+        guard !isAssistantDataUnreadable(projectID) else {
+            log.append(.error, "A session suggested a plan change in a project whose notes can't be read, so it wasn't kept",
+                       detail: entry.directory)
             return
         }
         addSessionSuggestion(entry.text, session: session, projectID: projectID)

@@ -1,11 +1,11 @@
 import Foundation
 
-// Step 4 of the Project Assistant: follow-ups. When a session finishes (or
-// you choose Review This Session), one Sonnet call reads a digest of what it
-// did and suggests notes (saved straight away, undoable) and plan changes
-// (applied only when you choose Add to Plan). Needs You lists what's waiting
-// for you: finished sessions' follow-ups, failed ones, and plan changes
-// sessions suggested with `claudio suggest`.
+// Step 4 of the Project Assistant: follow-ups. When a session looks done
+// it's offered one; on Follow Up (or Review This Session), one Sonnet call
+// reads a digest of what it did and suggests notes (saved straight away,
+// undoable) and plan changes (applied only when you choose Add to Plan).
+// Needs You lists what's waiting for you: offers, finished and failed
+// follow-ups, and plan changes sessions suggested with `claudio suggest`.
 
 /// A plan change a follow-up suggests. Nothing changes until you add it.
 public struct ProposedPlanChange: Codable, Equatable, Identifiable, Sendable {
@@ -36,6 +36,45 @@ public struct ProposedPlanChange: Codable, Equatable, Identifiable, Sendable {
         self.title = title
         self.status = status
         self.reason = reason
+    }
+
+    /// A new item: Planned or an Idea.
+    public static func add(title: String, status: PlanStatus, reason: String) -> ProposedPlanChange {
+        ProposedPlanChange(kind: .add, title: title, status: status == .idea ? .idea : .planned, reason: reason)
+    }
+
+    /// An existing item to another status: Done is `.done`, others `.move`.
+    public static func setStatus(of item: PlanItem, to status: PlanStatus, reason: String) -> ProposedPlanChange {
+        ProposedPlanChange(kind: status == .done ? .done : .move, itemID: item.id, title: item.title, status: status,
+                           reason: reason)
+    }
+
+    /// Whether it makes sense: a new item is Planned or an Idea and has no
+    /// item; a status change has an item, "done" is Done, and nothing moves
+    /// an item to In Session (that comes from starting a session). Checked
+    /// again when it's applied, since it may come from a file.
+    public var isValid: Bool {
+        switch kind {
+        case .add: return itemID == nil && (status == .planned || status == .idea) && !title.isEmpty
+        case .done: return itemID != nil && status == .done
+        case .move: return itemID != nil && status != .done && status != .inSession
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, kind, itemID, title, status, reason, isSelected }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try c.decode(Kind.self, forKey: .kind)
+        itemID = try c.decodeIfPresent(UUID.self, forKey: .itemID)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        status = try c.decode(PlanStatus.self, forKey: .status)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        isSelected = try c.decodeIfPresent(Bool.self, forKey: .isSelected) ?? true
+        guard isValid else {
+            throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "A plan change that doesn't make sense")
+        }
     }
 
     /// "New Planned item", "Mark Done", "Move to Idea".
@@ -71,8 +110,8 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public var notes: [FollowUpNote] = []
     public var planChanges: [ProposedPlanChange] = []
     public var createdAt: Date
-    /// You asked for it (Review This Session), rather than it running when
-    /// the session finished.
+    /// It ran because you asked: Follow Up on an offer, or Review This
+    /// Session. False only for an offer.
     public var askedFor: Bool
     /// Later, or ✕: the card leaves the session and waits in Needs You.
     public var isDeferred = false
@@ -86,6 +125,25 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred
+    }
+
+    /// Tolerant: fields a later build adds, or leaves out, take defaults. A
+    /// state it doesn't know fails this entry only (see `NeedsYouData`).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        sessionID = try c.decode(UUID.self, forKey: .sessionID)
+        sessionName = try c.decodeIfPresent(String.self, forKey: .sessionName) ?? "A session"
+        state = try c.decode(State.self, forKey: .state)
+        notes = NeedsYouData.decodeEach(FollowUpNote.self, c, .notes).read
+        planChanges = NeedsYouData.decodeEach(ProposedPlanChange.self, c, .planChanges).read
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
+        askedFor = try c.decodeIfPresent(Bool.self, forKey: .askedFor) ?? true
+        isDeferred = try c.decodeIfPresent(Bool.self, forKey: .isDeferred) ?? false
+    }
 }
 
 /// A note a follow-up wrote: its text, and the note in Notes while it's kept.
@@ -100,6 +158,15 @@ public struct FollowUpNote: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var isKept: Bool { noteID != nil }
+
+    private enum CodingKeys: String, CodingKey { case id, text, noteID }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try c.decode(String.self, forKey: .text)
+        noteID = try c.decodeIfPresent(UUID.self, forKey: .noteID)
+    }
 }
 
 /// A plan change a session suggested with `claudio suggest`.
@@ -116,33 +183,84 @@ public struct SessionSuggestion: Codable, Equatable, Identifiable, Sendable {
         self.text = text
         self.createdAt = createdAt
     }
+
+    private enum CodingKeys: String, CodingKey { case id, sessionID, sessionName, text, createdAt }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        sessionID = try c.decodeIfPresent(UUID.self, forKey: .sessionID)
+        sessionName = try c.decodeIfPresent(String.self, forKey: .sessionName)
+        text = try c.decode(String.self, forKey: .text)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
+    }
 }
 
 /// What's in a project's Needs You, saved as `needs-you.json`. Throwaway,
-/// like `suggestions.json`: no audit, no version, and a file that can't be
-/// read is just empty. A follow-up still working when Claudio quits isn't
-/// kept: its session's mark wasn't moved, so it's asked for again.
+/// like `suggestions.json`: no audit, no version. Entries that can't be read
+/// are kept as they were. Offers, and follow-ups still working when Claudio
+/// quits, aren't kept: their session's mark wasn't moved, so it may be
+/// offered again.
 public struct NeedsYouData: Codable, Equatable, Sendable {
     public var followUps: [FollowUp] = []
     public var suggestions: [SessionSuggestion] = []
+    /// Entries that couldn't be read (from a later build, or cut short),
+    /// kept as they were and written back, so one doesn't cost the rest.
+    public var unreadableFollowUps: [JSONValue] = []
+    public var unreadableSuggestions: [JSONValue] = []
 
     public init(followUps: [FollowUp] = [], suggestions: [SessionSuggestion] = []) {
         self.followUps = followUps
         self.suggestions = suggestions
     }
 
+    private enum CodingKeys: String, CodingKey { case followUps, suggestions }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        followUps = ((try? c.decodeIfPresent([FollowUp].self, forKey: .followUps)) ?? nil) ?? []
-        suggestions = ((try? c.decodeIfPresent([SessionSuggestion].self, forKey: .suggestions)) ?? nil) ?? []
+        (followUps, unreadableFollowUps) = NeedsYouData.decodeEach(FollowUp.self, c, .followUps)
+        (suggestions, unreadableSuggestions) = NeedsYouData.decodeEach(SessionSuggestion.self, c, .suggestions)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        var followUpsArray = c.nestedUnkeyedContainer(forKey: .followUps)
+        for followUp in followUps { try followUpsArray.encode(followUp) }
+        for raw in unreadableFollowUps { try followUpsArray.encode(raw) }
+        var suggestionsArray = c.nestedUnkeyedContainer(forKey: .suggestions)
+        for suggestion in suggestions { try suggestionsArray.encode(suggestion) }
+        for raw in unreadableSuggestions { try suggestionsArray.encode(raw) }
+    }
+
+    /// An array read one entry at a time: those that read, and the rest as they were.
+    static func decodeEach<T: Decodable, K: CodingKey>(_ type: T.Type, _ c: KeyedDecodingContainer<K>, _ key: K)
+        -> (read: [T], unread: [JSONValue]) {
+        guard let raw = ((try? c.decodeIfPresent([JSONValue].self, forKey: key)) ?? nil) else { return ([], []) }
+        var read: [T] = []
+        var unread: [JSONValue] = []
+        let encoder = JSONEncoder()
+        for entry in raw {
+            if let data = try? encoder.encode(entry), let value = try? JSONFileStore.decoder.decode(T.self, from: data) {
+                read.append(value)
+            } else {
+                unread.append(entry)
+            }
+        }
+        return (read, unread)
     }
 
     /// What's saved: everything but offers and follow-ups still working.
     public var saved: NeedsYouData {
-        NeedsYouData(followUps: followUps.filter { $0.state != .working && $0.state != .offered }, suggestions: suggestions)
+        var data = NeedsYouData(followUps: followUps.filter { $0.state != .working && $0.state != .offered },
+                                suggestions: suggestions)
+        data.unreadableFollowUps = unreadableFollowUps
+        data.unreadableSuggestions = unreadableSuggestions
+        return data
     }
 
-    public var isEmpty: Bool { followUps.isEmpty && suggestions.isEmpty }
+    public var unreadableCount: Int { unreadableFollowUps.count + unreadableSuggestions.count }
+
+    public var isEmpty: Bool { followUps.isEmpty && suggestions.isEmpty && unreadableCount == 0 }
 }
 
 /// Counts background calls per day, for the daily limit (users without a
@@ -172,8 +290,8 @@ extension AssistantModels {
 
 public enum FollowUpJob {
     public static let job = "Follow-up"
-    /// A follow-up with an 8k-token digest is estimated at $0.03–0.06 on
-    /// Sonnet (not measured yet); this stops one that runs away.
+    /// A follow-up measured about $0.01 and 2 s on Sonnet (2.1.285, short
+    /// digests); this stops one that runs away.
     public static let budgetUSD = 0.30
     public static let timeout = 120
     /// The whole input, in characters. It goes on the command line, so it's
@@ -256,16 +374,14 @@ public enum FollowUpJob {
             case .add:
                 let title = PlanTitle.clean(raw["title"]?.stringValue ?? "")
                 guard !title.isEmpty else { continue }
-                changes.append(ProposedPlanChange(kind: .add, title: title, status: status == .idea ? .idea : .planned,
-                                                  reason: reason))
+                changes.append(.add(title: title, status: status ?? .planned, reason: reason))
             case .done, .move:
                 guard let ref = raw["ref"]?.stringValue, let itemID = refs[ref],
                       let item = items.first(where: { $0.id == itemID && $0.status != .done }) else { continue }
                 let target: PlanStatus = kind == .done ? .done : (status ?? item.status)
                 // In Session comes from starting a session, not a suggestion.
                 guard target != item.status, target != .inSession else { continue }
-                changes.append(ProposedPlanChange(kind: target == .done ? .done : .move, itemID: itemID, title: item.title,
-                                                  status: target, reason: reason))
+                changes.append(.setStatus(of: item, to: target, reason: reason))
             }
         }
         return (Array(notes), changes)

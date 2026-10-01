@@ -163,7 +163,7 @@ struct ContentView: View {
             await Polling.every(30) { await model.refreshAll() }
         }
         .task {
-            // Finished sessions' follow-ups: code checks first, Claude only when there's something.
+            // Offers follow-ups to sessions that look done: code checks only, no Claude call.
             await Polling.every(AppModel.followUpCheckInterval) { await model.checkFollowUps() }
         }
         .task {

@@ -74,7 +74,8 @@ struct AssistantTool: View {
                             .padding(.horizontal, 10)
                             .padding(.bottom, 10)
                     }
-                    if model.isAssistantOn(inProject: projectID) {
+                    // Hidden with the assistant off, unless a session suggested something.
+                    if model.isAssistantOn(inProject: projectID) || !model.needsYouData(inProject: projectID).suggestions.isEmpty {
                         NeedsYouSection(projectID: projectID)
                             .padding(.horizontal, 10)
                             .padding(.bottom, 10)

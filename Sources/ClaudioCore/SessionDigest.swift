@@ -3,7 +3,7 @@ import Foundation
 // Step 4 of the Project Assistant: what a session did since its last
 // follow-up, boiled down in code from its history file. The digest is what a
 // follow-up call reads (never the raw transcript), and the substance check
-// decides, without Claude, whether there's anything worth a call.
+// decides, without Claude, whether there's anything worth offering.
 
 /// Where a session's last follow-up got to: its conversation, and how far
 /// into that conversation's history file (in bytes; the file is only ever
@@ -22,31 +22,61 @@ public struct FollowUpMark: Codable, Equatable, Sendable {
 
 /// Reads the whole lines a history file gained after an offset.
 public enum HistorySlice {
+    /// What was read: whole lines, and the offset after the last of them.
+    public struct Read: Equatable, Sendable {
+        public var lines: [String]
+        public var end: UInt64
+        /// More than `maxBytes` were new, so only the newest were read.
+        public var truncated = false
+    }
+
+    /// The most read at once. History files hold tool results and can be
+    /// large; a digest only needs the newest part.
+    public static let maxBytes: UInt64 = 8 * 1024 * 1024
+
     /// The complete lines after `offset`, and the offset after the last of
     /// them. An offset in the middle of a line (a mark taken while a line was
-    /// being written) skips to the next line. Nil when the file can't be read.
-    public static func read(_ url: URL, from offset: UInt64) -> (lines: [String], end: UInt64)? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        let start = offset > 0 ? offset - 1 : 0
-        guard (try? handle.seek(toOffset: start)) != nil, var data = try? handle.readToEnd() else { return nil }
-        var end = start
-        if offset > 0 {
-            // The byte before the mark: a newline means the mark is at a line's start.
-            let atLineStart = data.first == 0x0A
-            guard !data.isEmpty else { return ([], offset) }
-            data = data.dropFirst()
-            end += 1
-            if !atLineStart {
-                guard let newline = data.firstIndex(of: 0x0A) else { return ([], offset) }
-                end += UInt64(data.distance(from: data.startIndex, to: newline) + 1)
-                data = data[data.index(after: newline)...]
+    /// being written) skips to the next line. With more than `maxBytes` new,
+    /// only the newest are read, from the first line that starts inside them.
+    public static func read(_ url: URL, from offset: UInt64, maxBytes: UInt64 = HistorySlice.maxBytes) -> Result<Read, Error> {
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let size = try handle.seekToEnd()
+            var from = offset
+            var truncated = false
+            if size > offset, size - offset > maxBytes {
+                // Starting part-way through a line: the skip below finds the next one.
+                from = size - maxBytes
+                truncated = true
             }
+            let start = from > 0 ? from - 1 : 0
+            try handle.seek(toOffset: start)
+            var data = try handle.readToEnd() ?? Data()
+            var end = start
+            if from > 0 {
+                // The byte before: a newline means `from` is at a line's start.
+                guard !data.isEmpty else { return .success(Read(lines: [], end: max(offset, from), truncated: truncated)) }
+                let atLineStart = data.first == 0x0A
+                data = data.dropFirst()
+                end += 1
+                if !atLineStart {
+                    guard let newline = data.firstIndex(of: 0x0A) else {
+                        return .success(Read(lines: [], end: from, truncated: truncated))
+                    }
+                    end += UInt64(data.distance(from: data.startIndex, to: newline) + 1)
+                    data = data[data.index(after: newline)...]
+                }
+            }
+            guard let lastNewline = data.lastIndex(of: 0x0A) else {
+                return .success(Read(lines: [], end: end, truncated: truncated))
+            }
+            let complete = data[data.startIndex...lastNewline]
+            let lines = String(decoding: complete, as: UTF8.self).split(separator: "\n").map(String.init)
+            return .success(Read(lines: lines, end: end + UInt64(complete.count), truncated: truncated))
+        } catch {
+            return .failure(error)
         }
-        guard let lastNewline = data.lastIndex(of: 0x0A) else { return ([], end) }
-        let complete = data[data.startIndex...lastNewline]
-        let lines = String(decoding: complete, as: UTF8.self).split(separator: "\n").map(String.init)
-        return (lines, end + UInt64(complete.count))
     }
 }
 

@@ -242,7 +242,9 @@ extension AppModel {
         }
     }
 
-    public func setStatus(_ status: PlanStatus, ofItem itemID: UUID, projectID: UUID) {
+    /// False when the change couldn't be saved (it's reported).
+    @discardableResult
+    public func setStatus(_ status: PlanStatus, ofItem itemID: UUID, projectID: UUID) -> Bool {
         updateItem(itemID, projectID: projectID) { $0.status = status }
     }
 
@@ -252,14 +254,16 @@ extension AppModel {
         updateItem(itemID, projectID: projectID) { $0.title = title }
     }
 
-    private func updateItem(_ itemID: UUID, projectID: UUID, _ body: (inout PlanItem) -> Void) {
-        guard let before = item(itemID, inProject: projectID) else { return }
+    /// True when the item changed and was saved, or needed no change.
+    @discardableResult
+    private func updateItem(_ itemID: UUID, projectID: UUID, _ body: (inout PlanItem) -> Void) -> Bool {
+        guard let before = item(itemID, inProject: projectID) else { return false }
         var after = before
         body(&after)
-        guard after != before else { return }
+        guard after != before else { return true }
         after.updatedAt = now()
         let entry = AuditEntry(at: now(), actor: .user, action: .itemChanged, beforeItem: before, afterItem: after, cause: "ui")
-        _ = change(projectID: projectID, recording: entry) { data in
+        return change(projectID: projectID, recording: entry) { data in
             if let index = data.items.firstIndex(where: { $0.id == itemID }) { data.items[index] = after }
         }
     }

@@ -61,7 +61,18 @@ extension AppModel {
     /// Background calls made today.
     var backgroundJobsToday: Int {
         let today = DailyJobCount.day(of: now())
-        if dailyJobs == nil { dailyJobs = assistantStore.loadDailyJobs() }
+        if dailyJobs == nil {
+            if let saved = assistantStore.loadDailyJobs() {
+                dailyJobs = saved
+            } else {
+                // None yet, or a file that can't be read: start today at 0
+                // (kept, so it isn't read again on every check).
+                if assistantStore.hasDailyJobsFile() {
+                    log.append(.error, "Couldn't read today's count of assistant calls, so it starts again at 0")
+                }
+                dailyJobs = DailyJobCount(day: today, count: 0)
+            }
+        }
         return dailyJobs?.day == today ? dailyJobs?.count ?? 0 : 0
     }
 
@@ -177,8 +188,8 @@ extension AppModel {
             case .failure(let failure):
                 // A failed Check Again leaves the earlier answer in place.
                 self.setNoteSuggestion(previous, for: note.id)
-                // Only something you asked for says so (step 4 brings the
-                // Job Failed card for background failures).
+                // Only something you asked for says so (4b brings the Job
+                // Failed view for background failures).
                 if askedFor { self.report(failure.message) }
             }
         }
