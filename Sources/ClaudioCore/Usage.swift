@@ -160,19 +160,24 @@ public struct UsageSnapshot: Equatable, Sendable {
         return isAtPlanLimit && credits.isExhausted
     }
 
-    /// When Claude Code can run again once it's out of credits: "back in 2h 14m",
-    /// at the latest reset among the full windows (all of them block). Nil when
-    /// not out of credits, or when no reset time is known. Topping up credits
-    /// would also unblock it, but `/usage` doesn't say when they reset.
+    /// When Claude Code can run again while a plan limit blocks it (out of
+    /// credits, or credits never turned on): "back in 2h 14m", at the latest
+    /// reset among the full windows (all of them block). Nil while there's room
+    /// or credits are being drawn on, or when no reset time is known. Topping
+    /// up credits would also unblock it, but `/usage` doesn't say when they reset.
     public func blockedLabel(now: Date) -> String? {
-        guard isOutOfCredits else { return nil }
+        guard isAtPlanLimit, !isUsingCredits else { return nil }
         let full = [fiveHour, sevenDay].compactMap { $0 }.filter { $0.usedPercentage >= 100 }
         let resets = full.compactMap(\.resetsAt)
         if resets.count == full.count, let latest = resets.max() {
             return "back in \(UsageWindow.duration(until: latest, now: now))"
         }
-        // Only reset text ("3pm"), which can't be compared with another window's.
-        if full.count == 1, let text = full[0].resetText { return "back \(text)" }
+        // Only reset text ("Sep 27 at 4:49am (Europe/London)"), which can't be
+        // compared with another window's. The time zone is dropped to keep it short.
+        if full.count == 1, let text = full[0].resetText {
+            let trimmed = text.replacingOccurrences(of: #"\s*\([^)]*\)$"#, with: "", options: .regularExpression)
+            return "until \(trimmed)"
+        }
         return nil
     }
 }
