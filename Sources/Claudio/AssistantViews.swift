@@ -18,7 +18,6 @@ struct AssistantTool: View {
         let drilledIn = shownItem != nil || shownFollowUp != nil
         VStack(spacing: 0) {
             ToolHeader(title: shownItem != nil ? "Plan Item" : shownFollowUp != nil ? "Follow-up" : "Assistant",
-                       leadingInset: ToolRail.trafficLightInset,
                        onBack: drilledIn ? { model.closePlanItem() } : nil) {
                 IconButton(systemName: "square.and.pencil", help: "New Note (⇧⌘N)", size: 15) {
                     model.beginNoteCapture()

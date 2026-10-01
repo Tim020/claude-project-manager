@@ -7,10 +7,51 @@ final class UsageTests: XCTestCase {
         let window = UsageWindow(usedPercentage: 56.4, resetsAt: now.addingTimeInterval(2 * 3600 + 5 * 60))
         XCTAssertEqual(window.percentLabel, "56%")
         XCTAssertEqual(window.resetLabel(now: now), "resets in 2h 5m")
-        XCTAssertEqual(UsageWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(3 * 86400 + 3600)).resetLabel(now: now), "resets in 3d 1h")
         XCTAssertEqual(UsageWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(30)).resetLabel(now: now), "resets in 1m")
         XCTAssertEqual(UsageWindow(usedPercentage: 10, resetsAt: nil).resetLabel(now: now), "")
         XCTAssertEqual(UsageWindow(usedPercentage: 150, resetsAt: nil).fraction, 1)
+    }
+
+    func testResetsADayOrMoreOffShowTheDate() {
+        // 2026-09-25 12:40 UTC.
+        let now = Date(timeIntervalSince1970: 1_790_340_000)
+        let utc = TimeZone(identifier: "UTC")!
+        func label(_ seconds: TimeInterval, _ zone: TimeZone = utc) -> String {
+            UsageWindow(usedPercentage: 10, resetsAt: now.addingTimeInterval(seconds)).resetLabel(now: now, timeZone: zone)
+        }
+        XCTAssertEqual(label(23 * 3600 + 59 * 60), "resets in 23h 59m")
+        XCTAssertEqual(label(86400), "resets Sep 26 at 12:40pm")
+        XCTAssertEqual(label(3 * 86400 + 3600), "resets Sep 28 at 1:40pm", "not \"in 3d 1h\"")
+        XCTAssertEqual(label(3 * 86400 - 40 * 60), "resets Sep 28 at 12pm", "on the hour: no minutes")
+        XCTAssertEqual(label(3 * 86400 + 11 * 3600 + 20 * 60), "resets Sep 29 at 12am", "midnight")
+        XCTAssertEqual(label(3 * 86400 + 3600, TimeZone(identifier: "Europe/London")!), "resets Sep 28 at 2:40pm", "in the given zone")
+    }
+
+    func testReadsResetTimesFromTheUsageText() {
+        // 2026-09-25 12:40 UTC, 1:40pm in London.
+        let now = Date(timeIntervalSince1970: 1_790_340_000)
+        let utc = TimeZone(identifier: "UTC")!
+        func parse(_ text: String, at now: Date = now) -> Date? { UsageWindow.parseResetText(text, now: now, timeZone: utc) }
+        func utcDate(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
+
+        XCTAssertEqual(parse("3:10pm (Europe/London)"), utcDate("2026-09-25T14:10:00Z"), "today, in the named zone")
+        XCTAssertEqual(parse("5pm"), utcDate("2026-09-25T17:00:00Z"), "no zone: the local one")
+        XCTAssertEqual(parse("12:40pm"), utcDate("2026-09-25T12:40:00Z"), "this minute: due now, not tomorrow")
+        XCTAssertEqual(parse("12:38pm"), utcDate("2026-09-25T12:38:00Z"), "just gone (a cached reading): the reset that's happened")
+        XCTAssertEqual(parse("12am"), utcDate("2026-09-26T00:00:00Z"), "long gone: tomorrow's midnight")
+        XCTAssertEqual(parse("Sep 25 at 12:39pm"), utcDate("2026-09-25T12:39:00Z"), "just gone, with a date: not next year")
+        XCTAssertEqual(parse("Sep 29, 9am (Europe/London)"), utcDate("2026-09-29T08:00:00Z"))
+        XCTAssertEqual(parse("Sep 27 at 4:49am (Europe/London)"), utcDate("2026-09-27T03:49:00Z"))
+        XCTAssertEqual(parse("Sept 29 at 9am"), utcDate("2026-09-29T09:00:00Z"), "a longer month name")
+        let december = utcDate("2026-12-30T12:00:00Z")
+        XCTAssertEqual(parse("Jan 2 at 9am", at: december), utcDate("2027-01-02T09:00:00Z"), "into the new year")
+        XCTAssertNil(parse("in 3 hours"))
+        XCTAssertNil(parse("13pm"))
+        XCTAssertNil(parse("Foo 2 at 9am"))
+
+        // Text that can't be read is shown as it is.
+        let window = UsageWindow(usedPercentage: 10, resetsAt: nil, resetText: "soon")
+        XCTAssertEqual(window.resetLabel(now: now), "resets soon")
     }
 
     func testReadsTheUsersOwnStatusLine() throws {
@@ -62,6 +103,7 @@ final class UsageTests: XCTestCase {
 /// 2.1.283 (ids and credit amounts changed, hook and behaviour lines trimmed).
 final class UsageCreditsTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_790_380_000)
+    let utc = TimeZone(identifier: "UTC")!
 
     func testParsesTheUsageReport() throws {
         let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(try Fixtures.string("usage-stream.jsonl"), updatedAt: now))
@@ -143,7 +185,7 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertNil(usage.current(at: session.addingTimeInterval(60)).blockedLabel(now: session.addingTimeInterval(60)), "the session reset unblocks it")
 
         usage.sevenDay?.usedPercentage = 100
-        XCTAssertEqual(usage.blockedLabel(now: now), "back in 3d 4h", "both full: the later reset")
+        XCTAssertEqual(usage.blockedLabel(now: now, timeZone: utc), "until Sep 29 at 3:46am", "both full: the later reset, a date as it's days off")
 
         usage.sevenDay = UsageWindow(usedPercentage: 100, resetsAt: nil, resetText: "Sep 28 at 5:59am (Europe/London)")
         XCTAssertNil(usage.blockedLabel(now: now), "a window with no timestamp can't be compared")
@@ -258,7 +300,8 @@ final class UsageCreditsTests: XCTestCase {
         let usage = try XCTUnwrap(UsageSnapshot.parseUsageStream(renamed, updatedAt: now))
         XCTAssertEqual(usage.fiveHour?.usedPercentage, 5)
         XCTAssertEqual(usage.sevenDay?.usedPercentage, 42)
-        XCTAssertNil(usage.fiveHour?.resetsAt, "from the text")
+        XCTAssertEqual(usage.fiveHour?.resetsAt, Date(timeIntervalSince1970: 1_790_480_940),
+                       "read from the text (\"Sep 27 at 4:49am (Europe/London)\"): the report's time, to the minute")
         XCTAssertEqual(usage.credits?.usedCredits, 2000, "credits still come from the report")
 
         // `"rate_limits": null`
