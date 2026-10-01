@@ -460,6 +460,7 @@ Decided (2026-09-28):
 - **Plan in git:** no. There's no `PLAN.md` export.
 
 Decided in step 4a (2026-09-30):
+- **No baseline when Automatic is turned back on** (Tim's call, PR #28 review round 1). Sessions made while a project was Manual or Off, or while the assistant switch was off, keep their unread start. So turning Automatic on can bring a one-off batch of offers for sessions finished meanwhile. Offers cost nothing, and Review This Session covers anything skipped.
 - **Follow-ups are offered, not run.** Code decides a session looks ready from Claude Code's own signals (turn ended normally, not waiting on you, task state `done` or `review_ready`, or stopped); the card asks, and Claude is called only when you accept. No timers, so sessions left overnight or waiting for a usage limit cost nothing. A new prompt withdraws the offer.
 
 Decided in step 3 (2026-09-29):
