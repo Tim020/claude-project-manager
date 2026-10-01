@@ -253,7 +253,8 @@ struct StatusBar: View {
     }
 
     /// "Session 80% · Week 11%". While Claude Code draws on usage credits, the
-    /// windows stay put, so it shows the credit spend ("£12.50 of £50.00") instead.
+    /// windows stay put, so it shows the credit spend ("£12.50 of £50.00") instead,
+    /// and once those are spent, when it can run again ("back in 2h 14m").
     private var usageButton: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let usage = model.usage?.current(at: context.date)
@@ -265,6 +266,9 @@ struct StatusBar: View {
                         Text(credits.amountLabel())
                             .font(DS.font(12, .bold))
                             .foregroundStyle(DS.orange)
+                    } else if let usage, let blocked = usage.blockedLabel(now: context.date) {
+                        UsageSection.creditsBadge("OUT OF CREDITS", DS.red)
+                        Text(blocked)
                     } else {
                         if let usage, usage.isOutOfCredits {
                             UsageSection.creditsBadge("OUT OF CREDITS", DS.red)

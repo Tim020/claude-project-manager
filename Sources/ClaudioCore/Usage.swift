@@ -19,11 +19,16 @@ public struct UsageWindow: Equatable, Sendable {
 
     public func resetLabel(now: Date) -> String {
         guard let resetsAt else { return resetText.map { "resets \($0)" } ?? "" }
-        let minutes = max(1, Int((resetsAt.timeIntervalSince(now) / 60).rounded(.up)))
-        if minutes < 60 { return "resets in \(minutes)m" }
+        return "resets in \(UsageWindow.duration(until: resetsAt, now: now))"
+    }
+
+    /// "14m", "2h 14m" or "3d 4h", rounded up to the minute.
+    static func duration(until date: Date, now: Date) -> String {
+        let minutes = max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
+        if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
-        if hours < 24 { return "resets in \(hours)h \(minutes % 60)m" }
-        return "resets in \(hours / 24)d \(hours % 24)h"
+        if hours < 24 { return "\(hours)h \(minutes % 60)m" }
+        return "\(hours / 24)d \(hours % 24)h"
     }
 
     /// The window as it stands at `now`: once its reset time has passed,
@@ -153,6 +158,22 @@ public struct UsageSnapshot: Equatable, Sendable {
     public var isOutOfCredits: Bool {
         guard let credits, credits.isShown else { return false }
         return isAtPlanLimit && credits.isExhausted
+    }
+
+    /// When Claude Code can run again once it's out of credits: "back in 2h 14m",
+    /// at the latest reset among the full windows (all of them block). Nil when
+    /// not out of credits, or when no reset time is known. Topping up credits
+    /// would also unblock it, but `/usage` doesn't say when they reset.
+    public func blockedLabel(now: Date) -> String? {
+        guard isOutOfCredits else { return nil }
+        let full = [fiveHour, sevenDay].compactMap { $0 }.filter { $0.usedPercentage >= 100 }
+        let resets = full.compactMap(\.resetsAt)
+        if resets.count == full.count, let latest = resets.max() {
+            return "back in \(UsageWindow.duration(until: latest, now: now))"
+        }
+        // Only reset text ("3pm"), which can't be compared with another window's.
+        if full.count == 1, let text = full[0].resetText { return "back \(text)" }
+        return nil
     }
 }
 
