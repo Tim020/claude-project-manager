@@ -18,6 +18,7 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     private var shells: [UUID: ShellTerminalView] = [:]
 
     private var clickMonitor: Any?
+    private var keyMonitor: Any?
 
     init(model: AppModel) {
         self.model = model
@@ -26,6 +27,33 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         // decides whether a shell or a session's terminal has the keyboard.
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             self?.noteClick(event)
+            return event
+        }
+        // SwiftTerm's keyDown isn't open, so keys are fixed up before it sees them.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKey(event) ?? event
+        }
+    }
+
+    /// Makes Option and ⌘ keys behave as in a Mac terminal (see `TerminalKeys`),
+    /// in session terminals and shells. Returns nil when the key was handled.
+    private func handleKey(_ event: NSEvent) -> NSEvent? {
+        guard let view = event.window?.firstResponder as? LocalProcessTerminalView,
+              views.values.contains(where: { $0 === view }) || shells.values.contains(where: { $0 === view }),
+              !view.hasMarkedText() else { return event }
+        let flags = event.modifierFlags
+        let press = TerminalKeys.Press(keyCode: event.keyCode, characters: event.characters ?? "",
+                                       charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+                                       shift: flags.contains(.shift), control: flags.contains(.control),
+                                       option: flags.contains(.option), command: flags.contains(.command))
+        switch TerminalKeys.action(for: press, enhancedKeyboard: !view.getTerminal().keyboardEnhancementFlags.isEmpty) {
+        case .send(let bytes):
+            view.send(data: bytes[...])
+            return nil
+        case .optionAsMeta(let meta):
+            view.optionAsMetaKey = meta
+            return event
+        case .none:
             return event
         }
     }
