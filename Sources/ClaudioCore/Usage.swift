@@ -4,7 +4,8 @@ import Foundation
 public struct UsageWindow: Equatable, Sendable {
     public var usedPercentage: Double
     public var resetsAt: Date?
-    /// Reset time as `claude /usage` words it, when there's no timestamp.
+    /// Reset time as `claude /usage`'s text words it. Shown only when it
+    /// couldn't be read into `resetsAt`.
     public var resetText: String?
 
     public init(usedPercentage: Double, resetsAt: Date?, resetText: String? = nil) {
@@ -17,9 +18,18 @@ public struct UsageWindow: Equatable, Sendable {
 
     public var percentLabel: String { "\(Int(usedPercentage.rounded(.down)))%" }
 
-    public func resetLabel(now: Date) -> String {
+    /// "resets in 2h 14m" within a day, "resets Sep 29 at 9am" further off.
+    public func resetLabel(now: Date, timeZone: TimeZone = .current) -> String {
         guard let resetsAt else { return resetText.map { "resets \($0)" } ?? "" }
-        return "resets in \(UsageWindow.duration(until: resetsAt, now: now))"
+        return "resets \(UsageWindow.when(resetsAt, now: now, timeZone: timeZone, soon: "in"))"
+    }
+
+    /// A reset time as "<soon> 2h 14m" within a day, else as the date and
+    /// time ("Sep 29 at 9am"), so every window reads the same way.
+    static func when(_ date: Date, now: Date, timeZone: TimeZone, soon: String) -> String {
+        date.timeIntervalSince(now) < 86400
+            ? "\(soon) \(duration(until: date, now: now))"
+            : dateTime(date, timeZone: timeZone)
     }
 
     /// "14m", "2h 14m" or "3d 4h", rounded up to the minute.
@@ -29,6 +39,49 @@ public struct UsageWindow: Equatable, Sendable {
         let hours = minutes / 60
         if hours < 24 { return "\(hours)h \(minutes % 60)m" }
         return "\(hours / 24)d \(hours % 24)h"
+    }
+
+    /// "Sep 29 at 9am" or "Sep 29 at 4:49pm", worded as Claude Code's `/usage`
+    /// words it. Built by hand so it's the same in every locale and on Linux.
+    static func dateTime(_ date: Date, timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let parts = calendar.dateComponents([.month, .day, .hour, .minute], from: date)
+        let hour = parts.hour ?? 0, minute = parts.minute ?? 0
+        let clock = "\(hour % 12 == 0 ? 12 : hour % 12)" + (minute == 0 ? "" : String(format: ":%02d", minute))
+        return "\(monthNames[(parts.month ?? 1) - 1]) \(parts.day ?? 1) at \(clock)\(hour < 12 ? "am" : "pm")"
+    }
+
+    private static let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    private static let resetTextPattern = try! NSRegularExpression(
+        pattern: #"^(?:([A-Za-z]{3})[a-z]*\.? (\d{1,2})(?:,| at) )?(\d{1,2})(?::(\d{2}))?(am|pm)(?: \(([^)]+)\))?$"#)
+
+    /// The time in `/usage`'s reset text ("3:10pm (Europe/London)",
+    /// "Sep 29, 9am (…)", "Sep 27 at 4:49am (…)"): its next occurrence from
+    /// `now`, in the zone the text names (else `timeZone`). Nil for any other
+    /// wording, which is then shown as it is.
+    static func parseResetText(_ text: String, now: Date, timeZone: TimeZone = .current) -> Date? {
+        guard let match = resetTextPattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        func group(_ index: Int) -> String? { Range(match.range(at: index), in: text).map { String(text[$0]) } }
+        guard let hour = group(3).flatMap(Int.init), (1...12).contains(hour), let meridiem = group(5) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = group(6).flatMap(TimeZone.init(identifier:)) ?? timeZone
+        var parts = calendar.dateComponents([.year, .month, .day], from: now)
+        parts.hour = hour % 12 + (meridiem == "pm" ? 12 : 0)
+        parts.minute = group(4).flatMap(Int.init) ?? 0
+        let hasDate = group(1) != nil
+        if hasDate {
+            guard let name = group(1), let month = monthNames.firstIndex(where: { $0.caseInsensitiveCompare(name) == .orderedSame }),
+                  let day = group(2).flatMap(Int.init) else { return nil }
+            parts.month = month + 1
+            parts.day = day
+        }
+        guard let date = calendar.date(from: parts) else { return nil }
+        // The text is to the minute, so a time within the last minute is a
+        // reset that's due now, not tomorrow's (or, with a date, next year's).
+        guard date.addingTimeInterval(60) <= now else { return date }
+        return calendar.date(byAdding: hasDate ? .year : .day, value: 1, to: date)
     }
 
     /// The window as it stands at `now`: once its reset time has passed,
@@ -162,18 +215,20 @@ public struct UsageSnapshot: Equatable, Sendable {
 
     /// When Claude Code can run again while a plan limit blocks it (out of
     /// credits, or credits never turned on): "back in 2h 14m", at the latest
-    /// reset among the full windows (all of them block). Nil while there's room
-    /// or credits are being drawn on, or when no reset time is known. Topping
-    /// up credits would also unblock it, but `/usage` doesn't say when they reset.
-    public func blockedLabel(now: Date) -> String? {
+    /// reset among the full windows (all of them block), or "until Sep 29 at
+    /// 9am" when that's more than a day off. Nil while there's room or credits
+    /// are being drawn on, or when no reset time is known. Topping up credits
+    /// would also unblock it, but `/usage` doesn't say when they reset.
+    public func blockedLabel(now: Date, timeZone: TimeZone = .current) -> String? {
         guard isAtPlanLimit, !isUsingCredits else { return nil }
         let full = [fiveHour, sevenDay].compactMap { $0 }.filter { $0.usedPercentage >= 100 }
         let resets = full.compactMap(\.resetsAt)
         if resets.count == full.count, let latest = resets.max() {
-            return "back in \(UsageWindow.duration(until: latest, now: now))"
+            let when = UsageWindow.when(latest, now: now, timeZone: timeZone, soon: "back in")
+            return latest.timeIntervalSince(now) < 86400 ? when : "until \(when)"
         }
-        // Only reset text ("Sep 27 at 4:49am (Europe/London)"), which can't be
-        // compared with another window's. The time zone is dropped to keep it short.
+        // Only reset text that couldn't be read as a time, which can't be
+        // compared with another window's. A time zone is dropped to keep it short.
         if full.count == 1, let text = full[0].resetText {
             let trimmed = text.replacingOccurrences(of: #"\s*\([^)]*\)$"#, with: "", options: .regularExpression)
             return "until \(trimmed)"
@@ -187,7 +242,7 @@ extension UsageSnapshot {
 
     /// Parses `claude -p /usage` output ("Current session: 56% used · resets 3pm").
     /// It needs no model call, so it works before any session has run.
-    public static func parseUsageCommand(_ output: String, updatedAt: Date) -> UsageSnapshot? {
+    public static func parseUsageCommand(_ output: String, updatedAt: Date, timeZone: TimeZone = .current) -> UsageSnapshot? {
         var snapshot = UsageSnapshot(fiveHour: nil, sevenDay: nil, subscriptionType: nil, updatedAt: updatedAt)
         for raw in output.split(separator: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -197,7 +252,9 @@ extension UsageSnapshot {
                   let percent = Double(line[percentRange])
             else { continue }
             let reset = Range(match.range(at: 3), in: line).map { String(line[$0]) }
-            let window = UsageWindow(usedPercentage: percent, resetsAt: nil, resetText: reset)
+            // Read into a time, so it shows the way the stream's exact one does.
+            let resetsAt = reset.flatMap { UsageWindow.parseResetText($0, now: updatedAt, timeZone: timeZone) }
+            let window = UsageWindow(usedPercentage: percent, resetsAt: resetsAt, resetText: reset)
             if line[titleRange] == "Current session" { snapshot.fiveHour = window } else { snapshot.sevenDay = window }
         }
         snapshot.reportsUsingCredits = output.contains("currently using your overages")

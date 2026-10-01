@@ -252,6 +252,30 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// Archiving a live agent stops it, and that stop isn't notified either.
+    func testArchivingALiveAgentStopsIt() async throws {
+        let runner = FakeRunner()
+        let (model, a) = try await MainActor.run { () -> (AppModel, UUID) in
+            let (model, a, _) = try makeModel(runner: runner)
+            var settings = model.settings
+            settings.notifications.stoppedUnexpectedly = true
+            model.updateSettings(settings)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            model.checkNotifications()
+            runner.agentsJSON = #"[{"id":"a1","sessionId":"a","kind":"background","cwd":"/code/DigiScript","state":"stopped"}]"#
+            model.archive(a)
+            return (model, a)
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertTrue(runner.commands.contains(["stop", "a1"]))
+            XCTAssertTrue(model.workspace.session(a)!.isArchived)
+            XCTAssertFalse(model.workspace.isOpen(a))
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.kind), [])
+        }
+    }
+
     /// A stopped agent that was waiting on you no longer is, although the list
     /// can still say "blocked" (as agents whose process went do).
     func testAStoppedAgentEndsAWait() throws {

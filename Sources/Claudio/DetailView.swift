@@ -134,7 +134,7 @@ private struct DetailHeader: View {
             .fixedSize()
             .help("Session actions")
         }
-        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.leading, 20)
         .padding(.trailing, 20)
         .frame(height: Self.height)
         .background(DS.sidebar)

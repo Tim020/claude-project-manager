@@ -11,32 +11,20 @@ import SwiftUI
 
 enum ToolRail {
     static let width: CGFloat = 44
-    /// The rails' icons start below the window's traffic lights, level with
-    /// the headers' bottom edge.
+    /// The headers' height. The rails' icons start level with their bottom edge.
     static let topInset: CGFloat = 52
-    /// Room a header right of the left rail leaves for the traffic lights,
-    /// which are wider than the rail.
-    static let trafficLightInset: CGFloat = 34
     static let rightPanelWidth: CGFloat = 320
-
-    /// With the left rail's tool hidden, the session and overview headers
-    /// start beside the rail, under the traffic lights, so they leave room.
-    @MainActor static func headerInset(_ model: AppModel) -> CGFloat {
-        model.toolWindows.visibleLeft == nil ? trafficLightInset : 0
-    }
 }
 
 /// A tool's title bar: "SESSIONS", with the tool's own buttons at the end.
 struct ToolHeader<Accessory: View>: View {
     let title: String
-    var leadingInset: CGFloat = 0
     /// A ‹ back button before the title, for a tool drilled into something.
     var onBack: (() -> Void)? = nil
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: leadingInset)
             if let onBack {
                 IconButton(systemName: "chevron.left", help: "Back", size: 13, action: onBack)
                     .padding(.leading, -6)
@@ -50,7 +38,7 @@ struct ToolHeader<Accessory: View>: View {
             Spacer(minLength: 4)
             accessory()
         }
-        .padding(.leading, 14)
+        .padding(.leading, 22)
         .padding(.trailing, 10)
         .frame(height: ToolRail.topInset)
     }
@@ -143,7 +131,7 @@ struct LeftToolPanel: View {
                 SidebarView(width: width)
             case .pullRequests:
                 VStack(spacing: 0) {
-                    ToolHeader(title: "Pull Requests", leadingInset: ToolRail.trafficLightInset) {
+                    ToolHeader(title: "Pull Requests") {
                         IconButton(systemName: "arrow.clockwise", help: "Refresh Pull Requests", size: 13) {
                             Task { await model.refreshAllPullRequests(force: true) }
                         }

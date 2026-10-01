@@ -12,12 +12,15 @@ final class UsageCommandTests: XCTestCase {
     """
 
     func testParsesPlanUsageFromTheUsageCommand() throws {
+        // 2026-09-25 12:40 UTC, 1:40pm in London.
         let now = Date(timeIntervalSince1970: 1_790_340_000)
-        let usage = try XCTUnwrap(UsageSnapshot.parseUsageCommand(output, updatedAt: now))
+        let london = TimeZone(identifier: "Europe/London")!
+        let usage = try XCTUnwrap(UsageSnapshot.parseUsageCommand(output, updatedAt: now, timeZone: london))
         XCTAssertEqual(usage.fiveHour?.usedPercentage, 56)
-        XCTAssertEqual(usage.fiveHour?.resetLabel(now: now), "resets 3:10pm (Europe/London)")
+        XCTAssertEqual(usage.fiveHour?.resetLabel(now: now, timeZone: london), "resets in 1h 30m",
+                       "the same wording as the stream's exact times")
         XCTAssertEqual(usage.sevenDay?.usedPercentage, 7)
-        XCTAssertEqual(usage.sevenDay?.resetLabel(now: now), "resets Sep 29, 9am (Europe/London)")
+        XCTAssertEqual(usage.sevenDay?.resetLabel(now: now, timeZone: london), "resets Sep 29 at 9am")
         XCTAssertEqual(usage.updatedAt, now)
     }
 
