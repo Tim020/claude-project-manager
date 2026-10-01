@@ -4,12 +4,16 @@ import Foundation
 ///
 /// SwiftTerm treats Option as Meta for every key, so Option+3 sends ESC 3.
 /// On a British layout that's how you type `#`, and other layouts put `@`,
-/// `|`, `[`, `{`, `~` and `\` behind Option too. Claude Code's own Alt
-/// shortcuts (Alt+P, Alt+T, Alt+O, the word keys Alt+B/F/D/⌫) sit on letters
-/// whose Option character isn't ASCII, so Option stays Meta there, and types
-/// its character where a layout uses it for ASCII punctuation, on the digit
-/// row (UK Option+2 is `€`) and for dead keys (Option+E then E types `é`).
-/// Claude Code 2.1.285 binds none of those as Alt shortcuts.
+/// `|`, `[`, `{`, `~` and `\` behind Option too, and Polish Pro puts its
+/// letters there (Option+A is `ą`). So Option types its character, except
+/// where it's needed as Meta:
+/// - on the letters Claude Code 2.1.285 binds with Alt (P, O, T, W) and the
+///   word keys it and readline share (B, F, D, Y), unless the layout puts
+///   ASCII there (German Option+L is `@`, but nothing ASCII sits on those);
+/// - on punctuation keys whose Option character isn't ASCII (readline's M-.);
+/// - for keys that don't type, such as Return and ⌫ (Option+Return adds a line).
+/// Dead keys compose (Option+E then E types `é`), and the digit row, matched
+/// by position so Option+Shift and AZERTY count, always types (UK Option+2 is `€`).
 ///
 /// It also fixes a few keys (only while the kitty keyboard protocol is off,
 /// since with it on SwiftTerm reports them in full):
@@ -17,7 +21,8 @@ import Foundation
 ///   panel printed `;3D`). They send `ESC b` / `ESC f`, the word moves both
 ///   readline and Claude Code know.
 /// - ⌘←/→ moved a word, and ⌘⌫ sent nothing. They send Ctrl+A, Ctrl+E and
-///   Ctrl+U (start of line, end of line, delete to start), as in Ghostty.
+///   Ctrl+U (start of line, end of line, delete to start; zsh deletes the
+///   whole line), as in Ghostty.
 public enum TerminalKeys {
     /// A key press, from `NSEvent`.
     public struct Press: Equatable, Sendable {
@@ -56,6 +61,10 @@ public enum TerminalKeys {
     static let leftArrow: UInt16 = 123
     static let rightArrow: UInt16 = 124
     static let delete: UInt16 = 51
+    /// kVK_ANSI_1 … kVK_ANSI_0.
+    static let digitRow: Set<UInt16> = [18, 19, 20, 21, 23, 22, 26, 28, 25, 29]
+    /// Letters whose Option press stays Meta (see above).
+    static let metaLetters: Set<Character> = ["b", "d", "f", "o", "p", "t", "w", "y"]
 
     /// What to do with `press`. `enhancedKeyboard` is whether the program has
     /// turned on the kitty keyboard protocol.
@@ -89,9 +98,10 @@ public enum TerminalKeys {
         if press.characters.isEmpty { return true }
         let typed = press.characters.unicodeScalars
         guard typed.allSatisfy(isPrintable), press.characters != press.charactersIgnoringModifiers else { return false }
-        let base = press.charactersIgnoringModifiers.unicodeScalars
-        if !base.isEmpty, base.allSatisfy({ ("0"..."9").contains($0) }) { return true }
-        return typed.allSatisfy { $0.isASCII }
+        if digitRow.contains(press.keyCode) || typed.allSatisfy({ $0.isASCII }) { return true }
+        guard let base = press.charactersIgnoringModifiers.lowercased().first,
+              press.charactersIgnoringModifiers.count == 1, base.isLetter else { return false }
+        return !metaLetters.contains(base)
     }
 
     /// Not a control character, nor one of AppKit's function-key characters

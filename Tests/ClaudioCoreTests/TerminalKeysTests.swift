@@ -22,8 +22,17 @@ final class TerminalKeysTests: XCTestCase {
     }
 
     func testOptionTypesAnyCharacterOnTheDigitRow() {
-        XCTAssertEqual(action("€", "2"), typesCharacter, "British Option+2")
-        XCTAssertEqual(action("£", "3"), typesCharacter, "US Option+3")
+        XCTAssertEqual(action("€", "2", keyCode: 19), typesCharacter, "British Option+2")
+        XCTAssertEqual(action("£", "3", keyCode: 20), typesCharacter, "US Option+3")
+        XCTAssertEqual(action("€", "@", keyCode: 19, shift: true), typesCharacter, "US Option+Shift+2")
+        XCTAssertEqual(action("“", "&", keyCode: 18), typesCharacter, "AZERTY's digit row has no digits")
+    }
+
+    func testOptionTypesTheLayoutsLetters() {
+        XCTAssertEqual(action("ą", "a"), typesCharacter, "Polish Pro Option+A")
+        XCTAssertEqual(action("ł", "l"), typesCharacter, "Polish Pro Option+L")
+        XCTAssertEqual(action("Ś", "S", shift: true), typesCharacter, "Polish Pro Option+Shift+S")
+        XCTAssertEqual(action("ß", "s"), typesCharacter, "US Option+S")
     }
 
     func testDeadKeysCompose() {
@@ -35,7 +44,11 @@ final class TerminalKeysTests: XCTestCase {
         XCTAssertEqual(action("π", "p"), meta, "Alt+P picks the model")
         XCTAssertEqual(action("†", "t"), meta, "Alt+T toggles thinking")
         XCTAssertEqual(action("ø", "o"), meta)
+        XCTAssertEqual(action("ó", "o"), meta, "Polish Pro gives up ó for Alt+O")
+        XCTAssertEqual(action("∑", "w"), meta)
         XCTAssertEqual(action("∫", "b"), meta, "word back")
+        XCTAssertEqual(action("∂", "d"), meta, "delete word")
+        XCTAssertEqual(action("Π", "P", shift: true), meta)
         XCTAssertEqual(action("≥", "."), meta, "M-. in a shell")
     }
 
