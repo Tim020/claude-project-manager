@@ -116,6 +116,23 @@ final class UsageCreditsTests: XCTestCase {
         XCTAssertTrue(reported.isUsingCredits)
     }
 
+    func testCreditsInUseOnlyWhileDrawingOnThem() {
+        let enabled = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 1250, utilization: 25, currency: "GBP")
+        let resets = now.addingTimeInterval(3600)
+        let full = UsageSnapshot(fiveHour: UsageWindow(usedPercentage: 100, resetsAt: resets), sevenDay: UsageWindow(usedPercentage: 40, resetsAt: nil),
+                                 subscriptionType: nil, updatedAt: now, credits: enabled)
+        XCTAssertEqual(full.creditsInUse, enabled)
+        XCTAssertEqual(full.creditsInUse?.amountLabel(locale: Locale(identifier: "en_GB")), "£12.50 of £50.00")
+        XCTAssertNil(full.current(at: resets.addingTimeInterval(60)).creditsInUse, "back on the plan after the reset")
+
+        var spent = full
+        spent.credits = UsageCredits(isEnabled: true, monthlyLimit: 5000, usedCredits: 5000, utilization: 100, currency: "GBP")
+        XCTAssertNil(spent.creditsInUse, "out of credits: the plan windows show")
+        var roomLeft = full
+        roomLeft.fiveHour = UsageWindow(usedPercentage: 80, resetsAt: nil)
+        XCTAssertNil(roomLeft.creditsInUse)
+    }
+
     func testSpentCreditsStayShownWhenTurnedOff() throws {
         // Hitting the monthly spend limit turns `is_enabled` off (2.1.283:
         // `"is_enabled":false,…,"used_credits":5031,"utilization":100` against

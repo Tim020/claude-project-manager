@@ -142,6 +142,12 @@ public struct UsageSnapshot: Equatable, Sendable {
         return isAtPlanLimit || reportsUsingCredits
     }
 
+    /// The credits being drawn on, when they are. The status bar then shows
+    /// their spend instead of the plan windows, which don't move meanwhile.
+    public var creditsInUse: UsageCredits? {
+        isUsingCredits ? credits : nil
+    }
+
     /// A plan limit is reached and the month's usage credits are spent too.
     /// Doesn't need `isEnabled`, which spending the limit turns off.
     public var isOutOfCredits: Bool {
