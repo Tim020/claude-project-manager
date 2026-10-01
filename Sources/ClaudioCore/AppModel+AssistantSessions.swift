@@ -35,6 +35,8 @@ extension AppModel {
                            : "\nNew sessions get the copy already there."))
         }
         for project in workspace.projects {
+            let settings = assistantStore.loadProjectSettings(projectID: project.id)
+            if settings != ProjectAssistantSettings() { projectAssistantSettings[project.id] = settings }
             prepareSkillsRoot(projectID: project.id)
             writePlanSnapshot(projectID: project.id)
             refreshApprovedSkills(projectID: project.id)

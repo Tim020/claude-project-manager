@@ -35,6 +35,7 @@ public struct AssistantCall: Equatable, Sendable {
     }
 
     /// A quick check costs $0.004–0.006 (Haiku, measured with 2.1.284).
+    /// This is Haiku's cap; other models scale it (`AssistantModel.budgetFactor`).
     public static let quickBudgetUSD = 0.05
     /// A quick check answers in 5–8 s.
     public static let quickTimeout = 60
@@ -229,7 +230,7 @@ public enum PromoteCheck {
         public var refs: [String: UUID]
     }
 
-    public static func request(note: ProjectNote, items: [PlanItem], model: String = AssistantModels.quick) -> Request {
+    public static func request(note: ProjectNote, items: [PlanItem], model: AssistantModel = .haiku) -> Request {
         let offered = refs(for: items)
         let plan: [JSONValue] = offered.map {
             .object(["ref": .string($0.ref), "title": .string($0.item.title), "status": .string($0.item.status.rawValue)])
@@ -238,7 +239,8 @@ public enum PromoteCheck {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let text = (try? encoder.encode(input)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        return Request(call: AssistantCall(job: job, model: model, systemPrompt: systemPrompt, schema: schema, input: text),
+        return Request(call: AssistantCall(job: job, model: model.rawValue, systemPrompt: systemPrompt, schema: schema, input: text,
+                                           maxBudgetUSD: AssistantCall.quickBudgetUSD * model.budgetFactor),
                        refs: Dictionary(uniqueKeysWithValues: offered.map { ($0.ref, $0.item.id) }))
     }
 

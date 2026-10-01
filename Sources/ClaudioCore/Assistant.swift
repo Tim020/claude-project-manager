@@ -349,6 +349,12 @@ public protocol AssistantStoring: AnyObject {
     func saveDailyJobs(_ count: DailyJobCount) throws
     /// Whether a count file exists (to tell "none yet" from "unreadable").
     func hasDailyJobsFile() -> Bool
+    // Step 4b: Assistant Settings (tolerant, no version) and the audit log's reader.
+    func loadProjectSettings(projectID: UUID) -> ProjectAssistantSettings
+    func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws
+    /// The newest lines of `audit.jsonl` that read, oldest first, and how
+    /// many didn't (from a later build, or a line cut short).
+    func readAudit(projectID: UUID, limit: Int) -> (entries: [AuditEntry], unreadable: Int)
 }
 
 extension AssistantStoring {
@@ -368,6 +374,9 @@ extension AssistantStoring {
     public func loadDailyJobs() -> DailyJobCount? { nil }
     public func saveDailyJobs(_ count: DailyJobCount) throws {}
     public func hasDailyJobsFile() -> Bool { false }
+    public func loadProjectSettings(projectID: UUID) -> ProjectAssistantSettings { ProjectAssistantSettings() }
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {}
+    public func readAudit(projectID: UUID, limit: Int) -> (entries: [AuditEntry], unreadable: Int) { ([], 0) }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -413,6 +422,16 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func loadDailyJobs() -> DailyJobCount? { dailyJobs }
     public func saveDailyJobs(_ count: DailyJobCount) throws { dailyJobs = count }
     public func hasDailyJobsFile() -> Bool { dailyJobs != nil }
+    public var projectSettings: [UUID: ProjectAssistantSettings] = [:]
+    public func loadProjectSettings(projectID: UUID) -> ProjectAssistantSettings {
+        projectSettings[projectID] ?? ProjectAssistantSettings()
+    }
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {
+        projectSettings[projectID] = settings
+    }
+    public func readAudit(projectID: UUID, limit: Int) -> (entries: [AuditEntry], unreadable: Int) {
+        (Array((audit[projectID] ?? []).suffix(limit)), 0)
+    }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -539,6 +558,46 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func hasDailyJobsFile() -> Bool {
         FileManager.default.fileExists(atPath: root.appendingPathComponent("daily-jobs.json").path)
+    }
+
+    /// `settings.json`; one that can't be read gives the defaults.
+    public func loadProjectSettings(projectID: UUID) -> ProjectAssistantSettings {
+        let url = directory(projectID: projectID).appendingPathComponent("settings.json")
+        guard let data = try? Data(contentsOf: url) else { return ProjectAssistantSettings() }
+        return (try? JSONDecoder().decode(ProjectAssistantSettings.self, from: data)) ?? ProjectAssistantSettings()
+    }
+
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {
+        let directory = directory(projectID: projectID)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(settings).write(to: directory.appendingPathComponent("settings.json"), options: .atomic)
+    }
+
+    /// Reads from the end, at most `limit` lines (and at most 4 MB), so a
+    /// long log stays quick. Lines that don't decode are skipped and counted:
+    /// the first, when the read starts part-way through a line, isn't counted.
+    public func readAudit(projectID: UUID, limit: Int) -> (entries: [AuditEntry], unreadable: Int) {
+        let url = directory(projectID: projectID).appendingPathComponent("audit.jsonl")
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return ([], 0) }
+        defer { try? handle.close() }
+        let maxBytes: UInt64 = 4 * 1024 * 1024
+        guard let size = try? handle.seekToEnd() else { return ([], 0) }
+        let start = size > maxBytes ? size - maxBytes : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return ([], 0) }
+        var lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+        var entries: [AuditEntry] = []
+        var unreadable = 0
+        for line in lines.suffix(limit) {
+            if let entry = try? JSONFileStore.decoder.decode(AuditEntry.self, from: Data(line.utf8)) {
+                entries.append(entry)
+            } else {
+                unreadable += 1
+            }
+        }
+        return (entries, unreadable)
     }
 
     public func saveDailyJobs(_ count: DailyJobCount) throws {

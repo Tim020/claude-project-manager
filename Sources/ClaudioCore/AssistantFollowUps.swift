@@ -291,8 +291,9 @@ extension AssistantModels {
 public enum FollowUpJob {
     public static let job = "Follow-up"
     /// A follow-up measured about $0.01 and 2 s on Sonnet (2.1.285, short
-    /// digests); this stops one that runs away.
-    public static let budgetUSD = 0.30
+    /// digests). The cap stops one that runs away: $0.10 on Haiku, scaled by
+    /// model ($0.30 on Sonnet, an estimated $1.50 on Opus).
+    public static let budgetUSD = 0.10
     public static let timeout = 120
     /// The whole input, in characters. It goes on the command line, so it's
     /// capped well below any limit; the digest's own caps keep it far under.
@@ -322,7 +323,7 @@ public enum FollowUpJob {
 
     public static func request(digest: SessionDigest, mark: FollowUpMark, sessionName: String, items: [PlanItem],
                                sessionItem: PlanItem?, sessionNotes: [ProjectNote], memoryIndex: String?,
-                               withTranscripts: Bool = true, model: String = AssistantModels.deep) -> Request {
+                               withTranscripts: Bool = true, model: AssistantModel = .sonnet) -> Request {
         let offered = PromoteCheck.refs(for: items)
         let refByItem = Dictionary(uniqueKeysWithValues: offered.map { ($0.item.id, $0.ref) })
         let plan: [JSONValue] = offered.map {
@@ -348,8 +349,8 @@ public enum FollowUpJob {
                 text = (try? encoder.encode(JSONValue.object(input))).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
             }
         }
-        let call = AssistantCall(job: job, model: model, systemPrompt: systemPrompt, schema: schema, input: text,
-                                 maxBudgetUSD: budgetUSD, timeout: timeout)
+        let call = AssistantCall(job: job, model: model.rawValue, systemPrompt: systemPrompt, schema: schema, input: text,
+                                 maxBudgetUSD: budgetUSD * model.budgetFactor, timeout: timeout)
         return Request(call: call, refs: Dictionary(uniqueKeysWithValues: offered.map { ($0.ref, $0.item.id) }),
                        mark: mark)
     }

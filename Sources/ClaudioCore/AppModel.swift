@@ -269,6 +269,14 @@ public final class AppModel {
     @ObservationIgnored var followUpHistoryMissing: [UUID: String] = [:]
     /// Projects with a background call running: one at a time each.
     @ObservationIgnored var assistantBackgroundProjects = Set<UUID>()
+    /// Background jobs held back by the usage gate (see AppModel+AssistantQueue).
+    public internal(set) var heldJobs: [HeldJob] = []
+    @ObservationIgnored var heldJobRuns: [UUID: @MainActor () -> Bool] = [:]
+    /// Each project's Activity Log rows, as last read (see AppModel+AssistantLog).
+    public internal(set) var assistantLogRows: [UUID: [AssistantLogRow]] = [:]
+    @ObservationIgnored var assistantLogUnreadable: [UUID: Int] = [:]
+    /// Each project's Assistant Settings (see AssistantSettings.swift).
+    public internal(set) var projectAssistantSettings: [UUID: ProjectAssistantSettings] = [:]
     /// Sessions whose Review This Session is reading their history, so a
     /// second click doesn't start a second call.
     @ObservationIgnored var reviewsStarting = Set<UUID>()
@@ -1893,6 +1901,8 @@ public final class AppModel {
         var snapshot = snapshot
         snapshot.subscriptionType = plan(keeping: usage?.subscriptionType)
         if snapshot != usage { usage = snapshot }
+        // A new reading may let held-back assistant work run.
+        releaseHeldJobs()
     }
 
     /// The plan name ("pro", "max") from `claude auth status`. Until that has
@@ -1913,8 +1923,10 @@ public final class AppModel {
     }
 
     public func updateSettings(_ settings: AppSettings) {
+        let old = state.settings.assistant
         state.settings = settings
         save()
+        assistantSettingsChanged(from: old, to: settings.assistant)
     }
 
     // MARK: - Helpers

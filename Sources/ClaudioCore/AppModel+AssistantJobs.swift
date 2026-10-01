@@ -48,15 +48,11 @@ extension AppModel {
         if let reason = usagePauseReason { return .paused(reason) }
         if usage == nil && expectsUsageReading { return .waitingForUsage }
         // Without a plan-usage reading, the daily limit is the only cap.
-        if !expectsUsageReading, backgroundJobsToday >= AppModel.dailyJobLimit {
-            return .paused("Daily limit of \(AppModel.dailyJobLimit) reached")
+        if !expectsUsageReading, backgroundJobsToday >= settings.assistant.dailyJobLimit {
+            return .paused("Daily limit of \(settings.assistant.dailyJobLimit) reached")
         }
         return .run
     }
-
-    /// Background calls a day, for users without a plan-usage reading (its
-    /// editing UI comes in step 4b).
-    public static let dailyJobLimit = 20
 
     /// Background calls made today.
     var backgroundJobsToday: Int {
@@ -138,18 +134,28 @@ extension AppModel {
             promoteNote(noteID, projectID: projectID, status: .idea)
             return
         }
+        // You asked: a check of it waiting for the gate isn't needed now.
+        cancelHeldJob(key: AppModel.noteCheckKey(noteID))
         checkNote(note, projectID: projectID, askedFor: true)
     }
 
     /// After a capture: in Automatic mode, check the note against the plan.
-    /// Skipped, not queued, when the gate says no (the note keeps its
-    /// Promote… link): an exception to "held-back work waits", because the
-    /// check is only useful while the note is fresh.
+    /// While the gate holds background work back, the check waits and runs
+    /// once it opens (step 4b; step 2 skipped it). When it runs, the note
+    /// must still be there, without a plan item or a suggestion.
     func checkCapturedNote(_ note: ProjectNote, projectID: UUID) {
-        guard backgroundGate(forProject: projectID) == .run else { return }
-        countBackgroundJob()
-        checkNote(note, projectID: projectID, askedFor: false)
+        runOrHoldBackground(key: AppModel.noteCheckKey(note.id), projectID: projectID, job: PromoteCheck.job,
+                            subject: PlanTitle.from(note.text)) { [weak self] in
+            guard let self,
+                  let current = self.assistantData[projectID]?.notes.first(where: { $0.id == note.id }),
+                  current.itemID == nil, self.noteSuggestions[note.id] == nil
+            else { return false }
+            self.checkNote(current, projectID: projectID, askedFor: false)
+            return true
+        }
     }
+
+    static func noteCheckKey(_ noteID: UUID) -> String { "notecheck:\(noteID.uuidString.lowercased())" }
 
     /// Keep as Note: dismisses the suggestion.
     public func keepAsNote(_ noteID: UUID) {
@@ -167,7 +173,8 @@ extension AppModel {
         let previous = noteSuggestions[note.id]
         guard previous != .checking else { return }
         setNoteSuggestion(.checking, for: note.id)
-        let request = PromoteCheck.request(note: note, items: items(inProject: projectID))
+        let request = PromoteCheck.request(note: note, items: items(inProject: projectID),
+                                           model: assistantSettings(forProject: projectID).quickModel)
         runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString, isBackground: !askedFor) {
             [weak self] result in
             guard let self else { return }

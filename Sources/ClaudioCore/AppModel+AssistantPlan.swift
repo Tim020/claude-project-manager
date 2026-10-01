@@ -297,7 +297,24 @@ extension AppModel {
     public func setAssistantMode(_ mode: AssistantMode, projectID: UUID) {
         guard assistantMode(ofProject: projectID) != mode else { return }
         // Not a change to notes or items, so it has no audit entry.
-        _ = change(projectID: projectID, recording: []) { $0.mode = mode }
+        guard change(projectID: projectID, recording: [], { $0.mode = mode }) else { return }
+        if mode == .automatic { releaseHeldJobs() } else { assistantStoppedBackgroundWork(inProject: projectID) }
+    }
+
+    // MARK: - Assistant Settings (per project)
+
+    public func assistantSettings(forProject projectID: UUID) -> ProjectAssistantSettings {
+        projectAssistantSettings[projectID] ?? ProjectAssistantSettings()
+    }
+
+    public func setAssistantSettings(_ settings: ProjectAssistantSettings, projectID: UUID) {
+        guard assistantSettings(forProject: projectID) != settings, !isAssistantDataUnreadable(projectID) else { return }
+        do {
+            try assistantStore.saveProjectSettings(settings, projectID: projectID)
+            projectAssistantSettings[projectID] = settings
+        } catch {
+            report("Couldn't save the assistant's settings: \(AppModel.describe(error))")
+        }
     }
 
     /// Removes what the assistant suggested for a note (after Promote or

@@ -122,9 +122,14 @@ public struct AssistantAppSettings: Codable, Equatable, Sendable {
     public var pauseThreshold = AssistantAppSettings.defaultPauseThreshold
     /// Whether background work may run while usage credits are being spent.
     public var allowWhileUsingCredits = false
+    /// Background calls a day for sign-ins without a plan-usage reading
+    /// (API key, Bedrock, Vertex), where the usage threshold can't apply.
+    public var dailyJobLimit = AssistantAppSettings.defaultDailyJobLimit
 
     public static let defaultPauseThreshold = 80
     public static let pauseThresholdRange = 50...100
+    public static let defaultDailyJobLimit = 20
+    public static let dailyJobLimitRange = 1...200
 
     public init() {}
 
@@ -135,6 +140,9 @@ public struct AssistantAppSettings: Codable, Equatable, Sendable {
         pauseThreshold = min(max(threshold, AssistantAppSettings.pauseThresholdRange.lowerBound),
                              AssistantAppSettings.pauseThresholdRange.upperBound)
         allowWhileUsingCredits = try c.decodeIfPresent(Bool.self, forKey: .allowWhileUsingCredits) ?? false
+        let limit = try c.decodeIfPresent(Int.self, forKey: .dailyJobLimit) ?? AssistantAppSettings.defaultDailyJobLimit
+        dailyJobLimit = min(max(limit, AssistantAppSettings.dailyJobLimitRange.lowerBound),
+                            AssistantAppSettings.dailyJobLimitRange.upperBound)
     }
 }
 

@@ -47,6 +47,8 @@ extension AppModel {
     /// follow-up, and offers one (every 15 s). An offer costs nothing: Claude
     /// is only asked when you accept it. Automatic mode only.
     public func checkFollowUps() async {
+        // The same tick lets held-back work run (the daily limit at midnight, say).
+        releaseHeldJobs()
         for session in workspace.sessions {
             guard isAssistantOn(inProject: session.projectID), assistantMode(ofProject: session.projectID) == .automatic,
                   isFollowUpCandidate(session) else { continue }
@@ -303,7 +305,9 @@ extension AppModel {
         let request = FollowUpJob.request(digest: digest, mark: mark, sessionName: session.name,
                                           items: items(inProject: projectID), sessionItem: item,
                                           sessionNotes: notes(inProject: projectID).filter { $0.sessionID == sessionID },
-                                          memoryIndex: memoryIndex(forProject: projectID))
+                                          memoryIndex: memoryIndex(forProject: projectID),
+                                          withTranscripts: !assistantSettings(forProject: projectID).dontSendTranscripts,
+                                          model: assistantSettings(forProject: projectID).deepModel)
         let id = followUp.id
         runAssistantJob(request.call, projectID: projectID, subject: sessionID.uuidString, key: "followup:\(sessionID)",
                         isBackground: !askedFor) {
