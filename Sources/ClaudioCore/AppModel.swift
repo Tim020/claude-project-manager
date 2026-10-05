@@ -184,7 +184,7 @@ public final class AppModel {
     /// Sessions you stopped, until their agent is seen gone: they get no
     /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
     /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
-    @ObservationIgnored private var stopsRequested: Set<UUID> = []
+    private var stopsRequested: Set<UUID> = []
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -505,9 +505,11 @@ public final class AppModel {
         }
         let discovery = self.discovery
         let directory = session.workingDirectory
+        let projectPath = state.workspace.project(session.projectID)?.path ?? directory
         let lines = await Task.detached(priority: .userInitiated) { () -> [TranscriptLine] in
             var builder = TranscriptBuilder(workingDirectory: directory)
-            (try? discovery.loadHistory(projectPath: directory, claudeSessionID: claudeID))?.forEach { builder.apply($0) }
+            let file = discovery.newestHistoryFile(projectPath: projectPath, workingDirectory: directory, claudeSessionID: claudeID)
+            (file.flatMap { try? discovery.loadHistory(file: $0) })?.forEach { builder.apply($0) }
             return builder.lines
         }.value
         if historyLines[sessionID] != lines { historyLines[sessionID] = lines }
@@ -1102,9 +1104,10 @@ public final class AppModel {
             if let agentID = session.agentID {
                 runAgentCommand { $0.remove(agentID: agentID) }
             }
-            // After `claude rm`, so the agent can't write to them again.
-            if let claudeID = session.claudeSessionID {
-                let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            // After `claude rm`, so the agent can't write to them again. With
+            // the conversations `/clear` left behind.
+            let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            for claudeID in session.conversations {
                 enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
             }
         }
@@ -1208,6 +1211,21 @@ public final class AppModel {
     }
 
     // MARK: - Background agents
+
+    /// A live agent's tab was shown without a terminal: attach to it, unless
+    /// it's being stopped. Stopping closes the terminal before the agent has
+    /// gone, and attaching then would bring it back.
+    public func attachIfLive(_ sessionID: UUID) {
+        guard isAgentAlive(sessionID), !isStopping(sessionID) else { return }
+        resume(sessionID)
+    }
+
+    /// Whether a stop was asked for and its agent hasn't been seen gone yet.
+    /// (`stopsRequested` itself lasts until the notification check has seen
+    /// it go.)
+    public func isStopping(_ sessionID: UUID) -> Bool {
+        stopsRequested.contains(sessionID) && isAgentAlive(sessionID)
+    }
 
     /// Opens a session: reattaches a live agent, resumes a stopped one in the
     /// background, or (without an agent) starts `claude` directly. A message,
@@ -1345,7 +1363,8 @@ public final class AppModel {
                 let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
-                    session.claudeSessionID = agent.sessionID
+                    // Changes with `/clear`, which may have run while Claudio was closed.
+                    session.adoptConversation(agent.sessionID)
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }

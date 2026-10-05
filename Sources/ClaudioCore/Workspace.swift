@@ -503,7 +503,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// Deletes a session for good (it's being deleted from Claude Code too).
     public mutating func deleteSession(_ id: UUID) {
         if let session = session(id) {
-            if let claudeID = session.claudeSessionID { deletedClaudeSessionIDs.insert(claudeID) }
+            deletedClaudeSessionIDs.formUnion(session.conversations)
             if let agentID = session.agentID { deletedAgentIDs.insert(agentID) }
         }
         removeSession(id)
@@ -518,7 +518,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// session, so mustn't be imported again.
     public func isRemoved(claudeSessionID: String?, agentID: String? = nil) -> Bool {
         if let claudeSessionID, deletedClaudeSessionIDs.contains(claudeSessionID)
-            || removedSessions.contains(where: { $0.session.claudeSessionID == claudeSessionID }) {
+            || removedSessions.contains(where: { $0.session.conversations.contains(claudeSessionID) }) {
             return true
         }
         if let agentID, deletedAgentIDs.contains(agentID) || removedSessions.contains(where: { $0.session.agentID == agentID }) {

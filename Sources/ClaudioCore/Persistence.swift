@@ -296,5 +296,6 @@ extension Session {
         // Tolerant: launch checks it against the agent's job state anyway.
         self.backgroundTasks = ((try? c.decodeIfPresent([BackgroundTask].self, forKey: .backgroundTasks)) ?? nil) ?? []
         self.finishedBackgroundTasks = ((try? c.decodeIfPresent([String].self, forKey: .finishedBackgroundTasks)) ?? nil) ?? []
+        self.replacedConversations = try c.decodeIfPresent([String].self, forKey: .replacedConversations) ?? []
     }
 }
