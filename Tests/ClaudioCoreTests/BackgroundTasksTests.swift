@@ -99,18 +99,23 @@ final class BackgroundTasksTests: XCTestCase {
     func testLongRunningSessionsNeedYou() throws {
         try MainActor.assumeIsolated {
             let (model, p, a, b) = try makeModel()
-            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"npm run dev"}]}"#)
-            clock = clock.addingTimeInterval(10 * 60)
+            // b's task starts first, though a comes first in the workspace.
             try hook(model, #"{"session_id":"b","hook_event_name":"Stop","background_tasks":[{"id":"b2","type":"shell","status":"running"}]}"#)
+            clock = clock.addingTimeInterval(10 * 60)
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"npm run dev"}]}"#)
             XCTAssertEqual(model.workspace.session(a)?.status, .working)
             XCTAssertEqual(model.longRunningSessions(inProject: p), [])
             XCTAssertEqual(model.needsYouCount(inProject: p), 0)
 
             clock = clock.addingTimeInterval(25 * 60)
-            XCTAssertEqual(model.longRunningSessions(inProject: p).map(\.id), [a])
-            XCTAssertEqual(model.needsYouCount(inProject: p), 1, "counted with the assistant off")
+            XCTAssertEqual(model.longRunningSessions(inProject: p).map(\.id), [b])
+            XCTAssertTrue(model.isAssistantOn(inProject: p))
+            XCTAssertEqual(model.needsYouCount(inProject: p), 1, "counted with the assistant on")
+            model.setAssistantMode(.off, projectID: p)
+            XCTAssertFalse(model.isAssistantOn(inProject: p))
+            XCTAssertEqual(model.needsYouCount(inProject: p), 1, "and off")
             clock = clock.addingTimeInterval(10 * 60)
-            XCTAssertEqual(model.longRunningSessions(inProject: p).map(\.id), [a, b], "longest first")
+            XCTAssertEqual(model.longRunningSessions(inProject: p).map(\.id), [b, a], "longest first")
 
             model.markBackgroundTasksFinished(a)
             XCTAssertEqual(model.workspace.session(a)?.status, .completed)
@@ -146,26 +151,56 @@ final class BackgroundTasksTests: XCTestCase {
         }
     }
 
-    /// Marked finished before a relaunch: the job state still lists it, but
-    /// it doesn't count.
-    func testMarksSurviveARelaunch() throws {
+    /// Through the real state file and back: tasks keep their details and
+    /// times (to the millisecond the file keeps), and a task marked finished
+    /// still doesn't count, though the job state lists it.
+    func testTasksAndMarksSurviveARelaunch() throws {
         try MainActor.assumeIsolated {
+            let since = Date(timeIntervalSince1970: 1_791_212_707.893)
             var state = PersistedState()
             let p = state.workspace.addProject(path: "/code/DigiScript")
             var session = Session(projectID: p, claudeSessionID: "a", hasConversation: true, name: "dev server", workingDirectory: "/code/DigiScript")
             session.agentID = "a1"
-            session.finishedBackgroundTasks = ["b1"]
+            session.backgroundTasks = [BackgroundTask(id: "b1", kind: "shell", description: "Run tests", since: since)]
+            session.finishedBackgroundTasks = ["b2"]
             try state.workspace.addSession(session)
-            store.state = state
             let home = try makeTemporaryDirectory()
+            let fileStore = JSONFileStore(url: home.appendingPathComponent("state.json"))
+            try fileStore.save(state)
+
+            let saved = try XCTUnwrap(fileStore.load().workspace.session(session.id))
+            XCTAssertEqual(saved.backgroundTasks.map(\.id), ["b1"])
+            XCTAssertEqual(saved.backgroundTasks.first?.kind, "shell")
+            XCTAssertEqual(saved.backgroundTasks.first?.description, "Run tests")
+            XCTAssertEqual(saved.backgroundTasks.first?.since.timeIntervalSince1970 ?? 0, since.timeIntervalSince1970, accuracy: 0.001)
+            XCTAssertEqual(saved.finishedBackgroundTasks, ["b2"])
+
             let url = BackgroundJobState.url(claudeHome: home, agentID: "a1")
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(#"{"fan":[{"id":"b1","kind":"shell","startedAt":1}]}"#.utf8).write(to: url)
-            let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: home),
+            try Data(#"{"fan":[{"id":"b1","kind":"shell","label":"Run tests","startedAt":1791212707893},{"id":"b2","kind":"shell","label":"npm run dev","startedAt":1}]}"#.utf8).write(to: url)
+            let model = AppModel(store: fileStore, discovery: SessionDiscovery(claudeHome: home),
                                  hookEventsURL: home.appendingPathComponent("h.log"), runner: FakeRunner(),
                                  locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
-            XCTAssertEqual(model.workspace.session(session.id)?.backgroundTasks, [])
-            XCTAssertEqual(model.workspace.session(session.id)?.finishedBackgroundTasks, ["b1"])
+            XCTAssertEqual(model.workspace.session(session.id)?.backgroundTasks.map(\.id), ["b1"], "b2 was marked finished")
+            XCTAssertEqual(model.workspace.session(session.id)?.finishedBackgroundTasks, ["b2"])
+        }
+    }
+
+    /// Marked finished, the session stays Completed while its idle agent is
+    /// listed: only tasks still counted put it back to Working.
+    func testAMarkHoldsAgainstTheAgentList() throws {
+        try MainActor.assumeIsolated {
+            let (model, _, a, _) = try makeModel()
+            let idle = BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle",
+                                       state: "working", waitingFor: nil, startedAt: nil)
+            model.apply([idle])
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.apply([idle])
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+            model.markBackgroundTasksFinished(a)
+            model.apply([idle])
+            model.apply([idle])
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
         }
     }
 }

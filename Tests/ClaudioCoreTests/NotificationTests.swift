@@ -265,6 +265,40 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// The same, when that agent is no longer listed at all (removed while
+    /// Claudio was closed, so its id stayed).
+    func testAnUnlistedAgentDoesntEndTasksOfASessionRunningDirectly() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel(runner: FakeRunner())
+            try Data().write(to: hooks)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "stopped", waitingFor: nil, startedAt: nil)])
+            XCTAssertTrue(model.start(a))
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.checkNotifications()
+            model.apply([])
+            model.checkNotifications()
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+            XCTAssertEqual(model.workspace.session(a)?.backgroundTasks.map(\.id), ["b1"])
+            XCTAssertFalse(notifier.posted.contains { $0.kind == .finished })
+        }
+    }
+
+    /// A dead agent never puts a session back to Working, even one whose
+    /// tasks it leaves alone because it runs directly in a tab.
+    func testADeadAgentDoesntMakeASessionWorking() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel(runner: FakeRunner())
+            try Data().write(to: hooks)
+            let stopped = BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "stopped", waitingFor: nil, startedAt: nil)
+            model.apply([stopped])
+            XCTAssertTrue(model.start(a))
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.applyStatus(a, .completed)
+            model.apply([stopped])
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+        }
+    }
+
     /// Its background tasks end with its process.
     func testBackgroundTasksEndWhenTheAgentExits() throws {
         try MainActor.assumeIsolated {

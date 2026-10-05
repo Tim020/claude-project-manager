@@ -1367,7 +1367,7 @@ public final class AppModel {
                     }
                     let waitsOnTasks = !session.backgroundTasks.isEmpty && agent.sessionStatus == .completed
                     // Tasks restored at launch, now that the agent is seen alive.
-                    if waitsOnTasks && session.status == .completed { session.status = .working }
+                    if waitsOnTasks && agent.isAlive && session.status == .completed { session.status = .working }
                     if stateChanged && !keepsWaiting && !waitsOnTasks {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
@@ -1395,8 +1395,9 @@ public final class AppModel {
                 // Removed outside the app (`claude rm`).
                 workspace.updateSession(session.id) { $0.agentID = nil }
             }
-            if !session.backgroundTasks.isEmpty {
-                // Gone with its agent (tasks restored at launch, say).
+            if !session.backgroundTasks.isEmpty && !runningDirectly.contains(session.id) {
+                // Gone with its agent (tasks restored at launch, say). Not a
+                // session running directly in a tab: those are its own.
                 workspace.updateSession(session.id) { session in
                     session.forgetBackgroundTasks()
                     if session.status == .working { session.status = .completed }

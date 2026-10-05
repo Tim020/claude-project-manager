@@ -41,7 +41,11 @@ final class HookEventParserTests: XCTestCase {
     func testParsesBackgroundTasksFromStop() throws {
         let events = try Fixtures.lines("hook-background-tasks.log").compactMap(HookEventParser.parse)
         XCTAssertEqual(events.map(\.name), [.stop, .userPromptSubmit, .stop])
-        XCTAssertEqual(events[0].backgroundTasks?.map(\.id), ["ad27390be441d920f", "aeaf4288ef73ac620", "b725tsd1i"])
+        XCTAssertEqual(events[0].backgroundTasks, [
+            BackgroundTaskReport(id: "ad27390be441d920f", kind: "subagent", description: "Round-4 review PR 1427"),
+            BackgroundTaskReport(id: "aeaf4288ef73ac620", kind: "subagent", description: "Round-4 tests PR 1427"),
+            BackgroundTaskReport(id: "b725tsd1i", kind: "shell", description: "Run backend test subsets and full suite"),
+        ])
         XCTAssertNil(events[1].backgroundTasks)
         XCTAssertEqual(events[2].backgroundTasks?.map(\.id), [])
 
@@ -208,11 +212,26 @@ final class HookReducerTests: XCTestCase {
         XCTAssertEqual(s.backgroundTasks.map(\.id), ["b1"])
     }
 
-    func testAFailedTurnWithBackgroundTasksKeepsWorking() {
+    /// StopFailure doesn't list background tasks (recorded with 2.1.289, an
+    /// invalid API key in a container), so the last Stop's still run, and
+    /// tasks marked finished stay marked.
+    func testAFailedTurnKeepsItsBackgroundTasks() throws {
+        let failure = try XCTUnwrap(Fixtures.lines("hook-stop-failure-2.1.289.log").compactMap(HookEventParser.parse).first)
+        XCTAssertEqual(failure.name, .stopFailure)
+        XCTAssertNil(failure.backgroundTasks)
+
         var s = session(.working)
-        HookReducer.apply(event(.stopFailure) { $0.backgroundTasks = [BackgroundTaskReport(id: "b1")] }, to: &s, now: now)
+        s.backgroundTasks = ["b1"]
+        s.finishedBackgroundTasks = ["b2"]
+        HookReducer.apply(failure, to: &s, now: now)
         XCTAssertEqual(s.status, .working)
         XCTAssertTrue(s.lastTurnFailed)
+        XCTAssertEqual(s.backgroundTasks.map(\.id), ["b1"])
+        XCTAssertEqual(s.finishedBackgroundTasks, ["b2"])
+
+        var idle = session(.working)
+        HookReducer.apply(failure, to: &idle, now: now)
+        XCTAssertEqual(idle.status, .completed)
     }
 
     func testStopWithoutTheFieldCompletes() {

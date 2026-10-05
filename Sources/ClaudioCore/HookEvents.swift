@@ -188,7 +188,9 @@ public enum HookReducer {
             session.lastTurnFailed = false
         case .stopFailure:
             // The turn ended (it comes instead of Stop), with an API error.
-            session.setBackgroundTasks(event.backgroundTasks ?? [], now: now)
+            // It doesn't list background tasks (2.1.289), so the last Stop's
+            // stand: they're still running.
+            if let tasks = event.backgroundTasks { session.setBackgroundTasks(tasks, now: now) }
             session.status = session.backgroundTasks.isEmpty ? .completed : .working
             session.needsAction = nil
             session.lastTurnFailed = true
