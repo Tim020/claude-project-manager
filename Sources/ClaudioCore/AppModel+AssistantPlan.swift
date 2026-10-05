@@ -359,6 +359,7 @@ extension AppModel {
     /// Attach, Keep as Note, or when the note goes).
     public func clearNoteSuggestion(_ noteID: UUID) {
         setNoteSuggestion(nil, for: noteID)
+        clearNoteCheckFailure(noteID)
     }
 
     /// Every change to a note's suggestion comes through here, so what's

@@ -15,12 +15,32 @@ public struct ApprovedSkill: Equatable, Sendable {
     public var paths: [String]
     /// `metadata.claudio-folders`: folder names it's meant for.
     public var folders: [String]
+    /// The whole file, as read.
+    public var text: String
+    /// `metadata.claudio-version`: the approval it came from (step 5).
+    public var version: Int?
 
-    public init(name: String, description: String = "", paths: [String] = [], folders: [String] = []) {
+    public init(name: String, description: String = "", paths: [String] = [], folders: [String] = [], text: String = "",
+                version: Int? = nil) {
         self.name = name
         self.description = description
         self.paths = paths
         self.folders = folders
+        self.text = text
+        self.version = version
+    }
+}
+
+/// A project's approved skills as read from disk, and the files that
+/// couldn't be used (logged, so a skill doesn't go missing silently).
+public struct SkillScan: Equatable, Sendable {
+    public var skills: [ApprovedSkill]
+    /// "readme-style/SKILL.md has no closing --- after its frontmatter".
+    public var problems: [String]
+
+    public init(skills: [ApprovedSkill] = [], problems: [String] = []) {
+        self.skills = skills
+        self.problems = problems
     }
 }
 
@@ -28,34 +48,71 @@ public enum SkillFiles {
     /// The approved skills under a skills root: `<root>/.claude/skills/<name>/SKILL.md`,
     /// sorted by name. A folder without a readable `SKILL.md` is skipped.
     public static func approved(inRoot root: URL) -> [ApprovedSkill] {
+        scan(inRoot: root).skills
+    }
+
+    /// The approved skills, and what's wrong with the files that couldn't
+    /// be used: a folder with no `SKILL.md`, one that can't be read, or
+    /// frontmatter with no closing `---` (that one is still listed, under
+    /// its folder's name, as Claude Code may still load it).
+    public static func scan(inRoot root: URL) -> SkillScan {
         let skills = root.appendingPathComponent(".claude/skills")
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: skills.path) else { return [] }
-        return names.sorted().compactMap { name in
-            guard !name.hasPrefix("."),
-                  let text = try? String(contentsOf: skills.appendingPathComponent(name).appendingPathComponent("SKILL.md"),
-                                         encoding: .utf8)
-            else { return nil }
-            return skill(fromSkillFile: text, folderName: name)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: skills.path) else { return SkillScan() }
+        var scan = SkillScan()
+        for name in names.sorted() where !name.hasPrefix(".") {
+            let folder = skills.appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            let file = folder.appendingPathComponent("SKILL.md")
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                scan.problems.append("\(name) has no SKILL.md, so it isn't a skill")
+                continue
+            }
+            let text: String
+            do {
+                text = try String(contentsOf: file, encoding: .utf8)
+            } catch {
+                scan.problems.append("\(name)/SKILL.md couldn't be read: \(error.localizedDescription)")
+                continue
+            }
+            if opensFrontmatter(text) && !closesFrontmatter(text) {
+                scan.problems.append("\(name)/SKILL.md has no closing --- after its frontmatter, so its name and description can't be read")
+            }
+            scan.skills.append(skill(fromSkillFile: text, folderName: name))
         }
+        return scan
     }
 
     /// A skill from its file's frontmatter. The name falls back to its folder's.
     public static func skill(fromSkillFile text: String, folderName: String) -> ApprovedSkill {
-        let fields = frontmatter(text)
+        let fields = closesFrontmatter(text) ? frontmatter(text) : [:]
         let name = fields["name"]?.first.flatMap { $0.isEmpty ? nil : $0 } ?? folderName
         return ApprovedSkill(name: name,
                              description: fields["description"]?.first ?? "",
                              paths: fields["paths"] ?? [],
-                             folders: fields["metadata.claudio-folders"] ?? [])
+                             folders: fields["metadata.claudio-folders"] ?? [],
+                             text: text,
+                             version: fields["metadata.claudio-version"]?.first.flatMap { Int($0) })
+    }
+
+    static func lines(_ text: String) -> [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { String($0).replacingOccurrences(of: "\r", with: "") }
+    }
+
+    static func opensFrontmatter(_ text: String) -> Bool {
+        lines(text).first?.trimmingCharacters(in: .whitespaces) == "---"
+    }
+
+    /// Whether the frontmatter has its closing `---`.
+    static func closesFrontmatter(_ text: String) -> Bool {
+        lines(text).dropFirst().contains { $0.trimmingCharacters(in: .whitespaces) == "---" }
     }
 
     /// The little of YAML that skill frontmatter uses: `key: value`, lists
     /// (`key: [a, b]`, `key: a, b` for `paths`, or `- item` lines), and one
     /// level of nesting (`metadata:` → "metadata.key"). Values are unquoted.
     static func frontmatter(_ text: String) -> [String: [String]] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map {
-            String($0).replacingOccurrences(of: "\r", with: "")
-        }
+        let lines = lines(text)
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return [:] }
         var fields: [String: [String]] = [:]
         var parent: String?
@@ -142,9 +199,9 @@ public enum SkillChips {
 
     /// The skills to name in an item's opening prompt, best first. A skill
     /// scores for its `paths` matching files the item's sessions touched, for
-    /// being meant for the item's folder, and for use by sessions in that
-    /// folder (usage counts come with step 5). Skills that score nothing
-    /// aren't suggested.
+    /// being meant for the session's folder, and for use by sessions in that
+    /// folder (`usage`: how many used it, by name). Skills that score
+    /// nothing aren't suggested.
     public static func pick(from skills: [ApprovedSkill], touchedFiles: [String], folderName: String?,
                             usage: [String: Int] = [:], limit: Int = SkillChips.limit) -> [ApprovedSkill] {
         let folder = folderName?.lowercased()

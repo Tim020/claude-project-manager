@@ -174,6 +174,8 @@ extension AppModel {
         let previous = noteSuggestions[note.id]
         guard previous != .checking else { return }
         setNoteSuggestion(.checking, for: note.id)
+        clearNoteCheckFailure(note.id)
+        let model = AssistantModels.displayName(assistantSettings(forProject: projectID).quickModel.rawValue)
         let request = PromoteCheck.request(note: note, items: items(inProject: projectID),
                                            model: assistantSettings(forProject: projectID).quickModel)
         runAssistantJob(request.call, projectID: projectID, subject: note.id.uuidString, isBackground: !askedFor) {
@@ -196,9 +198,14 @@ extension AppModel {
             case .failure(let failure):
                 // A failed Check Again leaves the earlier answer in place.
                 self.setNoteSuggestion(previous, for: note.id)
-                // Only something you asked for says so; a background
-                // failure shows in the Activity Log, as Failed with Try Again.
-                if askedFor { self.report(failure.message) }
+                // Something you asked for says so; a background failure
+                // marks the note (Check Failed, opening Job Failed), and
+                // shows in the Activity Log as Failed with Try Again.
+                if askedFor {
+                    self.report(failure.message)
+                } else {
+                    self.recordNoteCheckFailure(note.id, message: failure.message, model: model)
+                }
             }
         }
     }

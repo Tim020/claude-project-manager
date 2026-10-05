@@ -341,6 +341,20 @@ struct NoteCard: View {
             }
             if let suggestion {
                 SuggestionBox(suggestion: suggestion, note: note, projectID: projectID)
+            } else if let failure = model.noteCheckFailure(note.id, inProject: projectID) {
+                // A background check that failed: Job Failed says why, with Try Again.
+                Button { model.openNoteCheckFailure(note.id, projectID: projectID) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.circle")
+                        Text("Check against the plan failed")
+                        Image(systemName: "chevron.right").font(.system(size: 9))
+                    }
+                    .font(DS.font(11.5))
+                    .foregroundStyle(DS.red)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(failure.message)
             }
         }
         .padding(.horizontal, 10)
