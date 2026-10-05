@@ -1293,6 +1293,10 @@ public final class AppModel {
     }
 
     func apply(_ listed: [BackgroundAgent]) {
+        // A turn's Stop hook is written before its process goes idle: apply
+        // it first, or an idle reading would end a turn that left
+        // background tasks running, until the next hook poll.
+        pollHookEvents()
         // Work on a copy and only publish real changes: this runs every few
         // seconds, and every change to observed state redraws views.
         var workspace = state.workspace

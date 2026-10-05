@@ -201,6 +201,22 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// The agent list can be read before the hook poll that would see the
+    /// Stop: the Stop is read first, so the session never looks finished.
+    func testAnIdleListingReadsTheStopFirst() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            try Data().write(to: hooks)
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "busy", state: "working", waitingFor: nil, startedAt: nil)])
+            let handle = try FileHandle(forWritingTo: hooks)
+            try handle.write(contentsOf: Data("\(UUID().uuidString)\t".utf8)
+                + Data(#"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#.utf8) + Data("\n".utf8))
+            try handle.close()
+            model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: 5, status: "idle", state: "working", waitingFor: nil, startedAt: nil)])
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+        }
+    }
+
     /// Its background tasks end with its process.
     func testBackgroundTasksEndWhenTheAgentExits() throws {
         try MainActor.assumeIsolated {
