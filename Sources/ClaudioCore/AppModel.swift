@@ -1275,7 +1275,7 @@ public final class AppModel {
                 if terminal.isBusy {
                     session.status = .working
                     session.needsAction = nil
-                } else if session.status == .working {
+                } else if session.status == .working && session.backgroundTasks.isEmpty {
                     session.status = .completed
                 }
                 session.lastActivity = now()
@@ -1328,7 +1328,11 @@ public final class AppModel {
                     // or the process has gone (nothing is waiting any more).
                     let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
                         && agent.isAlive && !listSaidWaiting
-                    if stateChanged && !keepsWaiting {
+                    // Idle between turns while its background tasks run: the
+                    // next one finishing wakes it (see `HookReducer`).
+                    if !agent.isAlive { session.backgroundTasks = [] }
+                    let waitsOnTasks = !session.backgroundTasks.isEmpty && agent.sessionStatus == .completed
+                    if stateChanged && !keepsWaiting && !waitsOnTasks {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
@@ -1610,6 +1614,7 @@ public final class AppModel {
             return
         }
         state.workspace.updateSession(sessionID) { session in
+            session.backgroundTasks = []
             if session.status == .working { session.status = .completed }
         }
         save()

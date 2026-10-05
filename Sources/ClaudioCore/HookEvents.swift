@@ -58,6 +58,11 @@ public struct HookEvent: Equatable, Sendable {
     public var error: String?
     /// PostToolUseFailure: the user stopped the tool (Esc), so it didn't fail.
     public var isInterrupt = false
+    /// Stop: the ids of the session's background tasks (shell commands,
+    /// Monitors, subagents) still running as the turn ended. Each one wakes
+    /// the session with a new turn when it finishes. Nil from a CLI that
+    /// doesn't report them (`background_tasks`, seen with 2.1.289).
+    public var backgroundTaskIDs: [String]?
 
     public init(appSessionID: UUID, name: HookEventName) {
         self.appSessionID = appSessionID
@@ -87,6 +92,9 @@ public enum HookEventParser {
         event.reason = json["reason"]?.stringValue
         event.error = json["error"]?.stringValue
         event.isInterrupt = json["is_interrupt"]?.boolValue ?? false
+        event.backgroundTaskIDs = json["background_tasks"]?.arrayValue?.compactMap { task in
+            (task["status"]?.stringValue ?? "running") == "running" ? task["id"]?.stringValue : nil
+        }
         return event
     }
 }
@@ -128,7 +136,8 @@ public struct HookEventTailer: Sendable {
 
 /// Maps hook events onto session status:
 /// prompt / tool use → Working; permission request → Awaiting Input;
-/// Stop → Completed, or Awaiting Input when Claude ended on a question.
+/// Stop → Completed, or Awaiting Input when Claude ended on a question, or
+/// still Working while background tasks it started are running.
 public enum HookReducer {
     public static let maxSummaryLength = 140
 
@@ -163,24 +172,28 @@ public enum HookReducer {
             if !text.isEmpty {
                 session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength)
             }
+            session.backgroundTasks = event.backgroundTaskIDs ?? []
             if text.hasSuffix("?") {
                 session.status = .awaitingInput
                 session.needsAction = session.summary
             } else {
-                session.status = .completed
+                // A task finishing starts a new turn, whose Stop reports again.
+                session.status = session.backgroundTasks.isEmpty ? .completed : .working
                 session.needsAction = nil
             }
             session.lastActivity = now
             session.lastTurnFailed = false
         case .stopFailure:
             // The turn ended (it comes instead of Stop), with an API error.
-            session.status = .completed
+            session.backgroundTasks = event.backgroundTaskIDs ?? []
+            session.status = session.backgroundTasks.isEmpty ? .completed : .working
             session.needsAction = nil
             session.lastTurnFailed = true
             let text = event.lastAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !text.isEmpty { session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength) }
             session.lastActivity = now
         case .sessionEnd:
+            session.backgroundTasks = []
             if session.status == .working { session.status = .completed }
         case .other:
             break

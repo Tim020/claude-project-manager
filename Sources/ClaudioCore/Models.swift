@@ -134,6 +134,9 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     /// Where its history had got to when you chose Not Now on an offer: it's
     /// offered again only once the history has grown past it.
     public var followUpDeclined: FollowUpMark?
+    /// Background tasks its last turn left running (from the Stop hook), so
+    /// it stays Working until they finish. Not saved: nothing runs at launch.
+    public var backgroundTasks: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction

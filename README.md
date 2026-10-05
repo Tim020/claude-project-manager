@@ -83,7 +83,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 - **Live status.** `claude agents --json --all` is polled every 3 seconds for liveness, state and titles. Claude Code hooks, passed with `--settings` to the sessions the app launches, give instant updates:
   - Prompts and tool use mark a session **Working**.
   - A permission request, or a reply that ends in a question, marks it **Awaiting Input**.
-  - A finished turn marks it **Completed**, and Claude's last message becomes the summary.
+  - A finished turn marks it **Completed**, and Claude's last message becomes the summary. A turn that leaves background work running (a backgrounded command, a Monitor, a subagent) keeps it **Working** until that work finishes and the turn it wakes ends with none left.
   - Your own hook settings are left untouched.
 - **Import Claude Code projects.** File → Import Claude Code Projects… (⇧⌘I) lists every project on this Mac that you've used Claude Code in and that isn't in the sidebar yet. It's offered automatically on first launch, and projects active in the last 30 days start out ticked. Folders listed in `~/.claude.json` are included even after Claude Code has cleaned up their history (after `cleanupPeriodDays`, 30 days by default); they show "No saved sessions". Projects whose folder no longer exists are hidden, and the sheet says how many.
 - **Imports existing sessions.** Adding a project reads `~/.claude/projects/<project>/*.jsonl`, so sessions you started in a terminal appear too, with their titles, summaries, PR links and history.
