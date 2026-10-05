@@ -354,10 +354,7 @@ public final class AppModel {
         }
         log.append(.info, "Claudio started", detail: errorMessage)
         pollStatusLines()
-        // Nothing is running at launch, whatever was saved.
-        for session in state.workspace.sessions where session.status == .working {
-            state.workspace.updateSession(session.id) { $0.status = .completed }
-        }
+        restoreBackgroundTasks()
         loadAssistantData()
         prepareAssistantFiles()
     }
@@ -1292,6 +1289,31 @@ public final class AppModel {
         if changed { save() }
     }
 
+    /// At launch, nothing is running except background agents, whatever was
+    /// saved. Their tasks may have finished, or new ones started, while
+    /// Claudio was closed (the hook log is read from its end), so an agent's
+    /// job state replaces the saved list. Without one, the saved list stands
+    /// until the agent list shows the agent gone (`apply(_:)`).
+    private func restoreBackgroundTasks() {
+        for session in state.workspace.sessions {
+            var tasks: [String] = []
+            if let agentID = session.agentID {
+                let url = BackgroundJobState.url(claudeHome: discovery.claudeHome, agentID: agentID)
+                tasks = (try? Data(contentsOf: url)).flatMap(BackgroundJobState.runningTaskIDs) ?? session.backgroundTasks
+            }
+            guard tasks != session.backgroundTasks || session.status == .working else { continue }
+            state.workspace.updateSession(session.id) { session in
+                session.backgroundTasks = tasks
+                if tasks.isEmpty {
+                    if session.status == .working { session.status = .completed }
+                } else if session.status != .awaitingInput {
+                    session.status = .working
+                    session.needsAction = nil
+                }
+            }
+        }
+    }
+
     func apply(_ listed: [BackgroundAgent]) {
         // A turn's Stop hook is written before its process goes idle: apply
         // it first, or an idle reading would end a turn that left
@@ -1358,9 +1380,17 @@ public final class AppModel {
             listedAgentStatuses[agent.id] = agent.sessionStatus
         }
         for session in workspace.sessions {
-            if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
+            guard let agentID = session.agentID, !listedIDs.contains(agentID) else { continue }
+            if agents[agentID] != nil {
                 // Removed outside the app (`claude rm`).
                 workspace.updateSession(session.id) { $0.agentID = nil }
+            }
+            if !session.backgroundTasks.isEmpty {
+                // Gone with its agent (tasks restored at launch, say).
+                workspace.updateSession(session.id) { session in
+                    session.backgroundTasks = []
+                    if session.status == .working { session.status = .completed }
+                }
             }
         }
         workspace.forgetDeletedAgents(notIn: listedIDs)

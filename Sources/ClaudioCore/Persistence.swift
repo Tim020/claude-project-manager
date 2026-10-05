@@ -293,5 +293,7 @@ extension Session {
         // Tolerant: a mark that can't be read is set again from the history.
         self.followUpMark = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpMark)) ?? nil
         self.followUpDeclined = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpDeclined)) ?? nil
+        // Tolerant: launch checks it against the agent's job state anyway.
+        self.backgroundTasks = ((try? c.decodeIfPresent([String].self, forKey: .backgroundTasks)) ?? nil) ?? []
     }
 }
