@@ -220,17 +220,34 @@ struct AssistantActivityLogView: View {
 
     var body: some View {
         let rows = model.assistantLog(forProject: projectID)
-        if rows.isEmpty {
-            Text("No Claude calls yet in this project.")
-                .font(DS.font(12.5)).foregroundStyle(DS.dim)
+        let skipped = model.unreadableLogLines(inProject: projectID)
+        if model.unreadableAssistantLogs.contains(projectID) {
+            Label("This project's Activity Log couldn't be read. The Activity Log (⌥⌘L) says why.",
+                  systemImage: "exclamationmark.triangle")
+                .font(DS.font(12)).foregroundStyle(DS.orange)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+        }
+        if rows.isEmpty {
+            if !model.unreadableAssistantLogs.contains(projectID) {
+                Text("No Claude calls yet in this project.")
+                    .font(DS.font(12.5)).foregroundStyle(DS.dim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+            }
             Spacer()
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(rows) { row in
                         AssistantLogRowView(row: row, projectID: projectID)
+                    }
+                    if skipped > 0 {
+                        Text("\(skipped) \(skipped == 1 ? "line" : "lines") couldn't be read, and \(skipped == 1 ? "is" : "are") left out.")
+                            .font(DS.font(11.5)).foregroundStyle(DS.orange)
+                            .padding(.top, 6)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -284,8 +301,8 @@ private struct AssistantLogRowView: View {
                 .foregroundStyle(DS.teal)
         case .waiting(let reason):
             Text("Waiting: \(reason)").foregroundStyle(DS.orange)
-        case .failed(let message):
-            Text("Failed: \(message)").foregroundStyle(DS.red)
+        case .failed(let message, _):
+            Text("Failed: " + message).foregroundStyle(DS.red)
         }
     }
 }
@@ -329,12 +346,13 @@ struct JobFailedView: View {
 
     /// For a Failed row from the Activity Log.
     static func forRow(_ row: AssistantLogRow, projectID: UUID, model: AppModel) -> JobFailedView {
-        let message: String = if case .failed(let text) = row.result { text } else { "" }
+        let message: String = if case .failed(let text, _) = row.result { text } else { "" }
         let time = row.at.formatted(date: .omitted, time: .shortened)
         return JobFailedView(title: "\(row.job) failed", message: message,
                              jobLine: [row.job, row.subject, row.model, time].joined(separator: " · "),
                              projectID: projectID,
-                             tryAgain: row.retry.map { retry in { model.retry(retry, projectID: projectID); model.closePlanItem() } })
+                             // Back to the list only when it started: otherwise its toast says why.
+                             tryAgain: row.retry.map { retry in { if model.retry(retry, projectID: projectID) { model.closePlanItem() } } })
     }
 }
 #endif

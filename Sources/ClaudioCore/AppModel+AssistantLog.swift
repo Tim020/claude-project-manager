@@ -11,7 +11,9 @@ public struct AssistantLogRow: Identifiable, Equatable, Sendable {
     public enum Result: Equatable, Sendable {
         case done(durationMS: Int?, costUSD: Double?)
         case waiting(reason: String)
-        case failed(message: String)
+        /// `retry`: what Try Again does, where it can (nil while the
+        /// assistant is off, or when what it was about has gone).
+        case failed(message: String, retry: AssistantRetry?)
     }
 
     public var id: UUID
@@ -22,17 +24,19 @@ public struct AssistantLogRow: Identifiable, Equatable, Sendable {
     public var subject: String
     public var model: String
     public var result: Result
-    /// What Try Again does, where it can.
-    public var retry: AssistantRetry?
 
-    public init(id: UUID, at: Date, job: String, subject: String, model: String, result: Result, retry: AssistantRetry?) {
+    public init(id: UUID, at: Date, job: String, subject: String, model: String, result: Result) {
         self.id = id
         self.at = at
         self.job = job
         self.subject = subject
         self.model = model
         self.result = result
-        self.retry = retry
+    }
+
+    public var retry: AssistantRetry? {
+        if case .failed(_, let retry) = result { return retry }
+        return nil
     }
 }
 
@@ -48,29 +52,52 @@ extension AppModel {
     /// How many of the newest log lines the view reads.
     public static let assistantLogLimit = 300
 
-    /// The rows for a project's Activity Log: waiting work first, then the
-    /// calls it has made, newest first. Read when the view opens (and kept
-    /// in `assistantLogRows`), not in a view's body.
+    /// Reads a project's Activity Log (kept in `assistantLogRows`): when the
+    /// view opens, and after each call once it has. Not from a view's body.
     public func refreshAssistantLog(projectID: UUID) {
-        let (entries, unreadable) = assistantStore.readAudit(projectID: projectID, limit: AppModel.assistantLogLimit)
-        if unreadable > 0, assistantLogUnreadable[projectID] != unreadable {
-            log.append(.error, "\(unreadable) of the assistant's log lines for \(workspace.project(projectID)?.name ?? "a project") couldn't be read",
+        let name = workspace.project(projectID)?.name ?? "a project"
+        let read: (entries: [AuditEntry], unreadable: Int)
+        do {
+            read = try assistantStore.readAudit(projectID: projectID, limit: AppModel.assistantLogLimit)
+            unreadableAssistantLogs.remove(projectID)
+        } catch {
+            if !unreadableAssistantLogs.contains(projectID) {
+                log.append(.error, "Couldn't read the assistant's log for \(name)", detail: AppModel.describe(error))
+            }
+            unreadableAssistantLogs.insert(projectID)
+            if assistantLogRows[projectID] == nil { assistantLogRows[projectID] = [] }
+            return
+        }
+        if read.unreadable > 0, assistantLogUnreadable[projectID] != read.unreadable {
+            log.append(.error, "\(read.unreadable) of the assistant's log lines for \(name) couldn't be read",
                        detail: "They're skipped in its Activity Log. They may be from a newer Claudio, or cut short.")
         }
-        assistantLogUnreadable[projectID] = unreadable
-        let rows = entries.compactMap { logRow(for: $0, projectID: projectID) }.reversed()
-        let updated = Array(rows)
-        if assistantLogRows[projectID] != updated { assistantLogRows[projectID] = updated }
+        if assistantLogUnreadable[projectID] != read.unreadable { assistantLogUnreadable[projectID] = read.unreadable }
+        let rows = Array(read.entries.compactMap { logRow(for: $0, projectID: projectID) }.reversed())
+        if assistantLogRows[projectID] != rows { assistantLogRows[projectID] = rows }
     }
 
     /// Waiting work, then the calls made (as last read), newest first.
     public func assistantLog(forProject projectID: UUID) -> [AssistantLogRow] {
         let waiting = heldJobs(inProject: projectID).reversed().map { job in
-            AssistantLogRow(id: job.id, at: job.heldAt, job: job.job, subject: job.subject,
-                            model: AssistantModels.displayName(assistantSettings(forProject: projectID).quickModel.rawValue),
-                            result: .waiting(reason: job.reason), retry: nil)
+            AssistantLogRow(id: job.id, at: job.heldAt, job: job.job, subject: job.subject, model: job.model,
+                            result: .waiting(reason: job.reason))
         }
-        return waiting + (assistantLogRows[projectID] ?? [])
+        // Retries depend on whether the assistant is on now, so the rows
+        // read earlier are checked again.
+        let on = isAssistantOn(inProject: projectID)
+        let past = (assistantLogRows[projectID] ?? []).map { row -> AssistantLogRow in
+            guard !on, case .failed(let message, _?) = row.result else { return row }
+            var row = row
+            row.result = .failed(message: message, retry: nil)
+            return row
+        }
+        return waiting + past
+    }
+
+    /// How many log lines couldn't be read, for the view to say so.
+    public func unreadableLogLines(inProject projectID: UUID) -> Int {
+        assistantLogUnreadable[projectID] ?? 0
     }
 
     /// A job entry as a row; other entries (note and item changes) aren't calls.
@@ -79,31 +106,49 @@ extension AppModel {
         let (subject, retry) = describe(subject: job.subject, job: job.name, projectID: projectID)
         let result: AssistantLogRow.Result = job.succeeded
             ? .done(durationMS: job.durationMS, costUSD: job.costUSD)
-            : .failed(message: job.failure ?? "It failed.")
-        return AssistantLogRow(id: entry.id, at: entry.at, job: job.name, subject: subject, model: job.model, result: result,
-                               retry: job.succeeded ? nil : retry)
+            : .failed(message: job.failure ?? "It failed.", retry: retry)
+        return AssistantLogRow(id: entry.id, at: entry.at, job: job.name, subject: subject, model: job.model, result: result)
     }
 
-    /// A job's subject (an id) in words, and how to try it again. Falls
-    /// back when what it was about has gone.
+    /// A job's subject (an id) in words, and how to try it again: nil while
+    /// the assistant is off, or when what it was about has gone.
     func describe(subject: String, job: String, projectID: UUID) -> (String, AssistantRetry?) {
         guard let id = UUID(uuidString: subject) else { return (subject, nil) }
+        let on = isAssistantOn(inProject: projectID)
         if job == PromoteCheck.job {
             guard let note = assistantData[projectID]?.notes.first(where: { $0.id == id }) else { return ("A note that's gone", nil) }
-            return (PlanTitle.from(note.text), note.itemID == nil ? .noteCheck(noteID: id) : nil)
+            return (PlanTitle.from(note.text), on && note.itemID == nil ? .noteCheck(noteID: id) : nil)
         }
         if job == FollowUpJob.job {
-            if let session = workspace.session(id) { return (session.name, .followUp(sessionID: id)) }
+            if let session = workspace.session(id) { return (session.name, on ? .followUp(sessionID: id) : nil) }
             return ("A session that's gone", nil)
         }
         return (subject, nil)
     }
 
-    /// Try Again on a failed call.
-    public func retry(_ retry: AssistantRetry, projectID: UUID) {
+    /// Try Again on a failed call. False, with a toast saying why, when it
+    /// can't run: the assistant is off, or what it was about has gone or
+    /// changed. A note check never promotes the note: it only checks it.
+    @discardableResult
+    public func retry(_ retry: AssistantRetry, projectID: UUID) -> Bool {
+        guard isAssistantOn(inProject: projectID) else {
+            showToast("The assistant is off for this project")
+            return false
+        }
         switch retry {
-        case .noteCheck(let noteID): recheckNote(noteID, projectID: projectID)
+        case .noteCheck(let noteID):
+            guard let note = assistantData[projectID]?.notes.first(where: { $0.id == noteID }), note.itemID == nil else {
+                showToast("That note has gone, or is in the plan now")
+                return false
+            }
+            cancelHeldJob(key: .noteCheck(noteID))
+            checkNote(note, projectID: projectID, askedFor: true)
+            return true
         case .followUp(let sessionID):
+            guard workspace.session(sessionID) != nil else {
+                showToast("That session has gone")
+                return false
+            }
             if let failed = needsYouData(inProject: projectID).followUps.last(where: {
                 guard $0.sessionID == sessionID, case .failed = $0.state else { return false }
                 return true
@@ -112,6 +157,7 @@ extension AppModel {
             } else {
                 reviewSession(sessionID)
             }
+            return true
         }
     }
 }

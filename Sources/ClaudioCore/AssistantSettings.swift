@@ -52,10 +52,22 @@ public struct ProjectAssistantSettings: Codable, Equatable, Sendable {
 
     public init() {}
 
+    /// For a settings file that can't be read: the defaults, but with
+    /// transcripts kept back, since that may be what it said.
+    public static let unreadableFallback: ProjectAssistantSettings = {
+        var settings = ProjectAssistantSettings()
+        settings.dontSendTranscripts = true
+        return settings
+    }()
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        // Tolerant: a model this build doesn't know falls back to the default.
-        dontSendTranscripts = ((try? c.decodeIfPresent(Bool.self, forKey: .dontSendTranscripts)) ?? nil) ?? false
+        // Privacy fails closed: a value that's there but can't be read means
+        // don't send. Otherwise tolerant: a model this build doesn't know
+        // falls back to the default.
+        if c.contains(.dontSendTranscripts) {
+            dontSendTranscripts = ((try? c.decode(Bool.self, forKey: .dontSendTranscripts)) ?? true)
+        }
         quickModel = ((try? c.decodeIfPresent(AssistantModel.self, forKey: .quickModel)) ?? nil) ?? .haiku
         deepModel = ((try? c.decodeIfPresent(AssistantModel.self, forKey: .deepModel)) ?? nil) ?? .sonnet
     }

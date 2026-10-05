@@ -317,17 +317,18 @@ final class AssistantJobTests: XCTestCase {
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .manual)
             f.model.setAssistantMode(.automatic, projectID: f.project)
         }
-        // The fixture: 5-hour 5%, weekly 42%.
+        // The fixture's weekly 42% raised to 55%; 5-hour stays at 5%.
         f.runner.base.usageOutput = try Fixtures.string("usage-stream.jsonl")
+            .replacingOccurrences(of: #""percent":42"#, with: #""percent":55"#)
         await f.model.refreshUsage()
         await MainActor.run {
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .run)
             XCTAssertNil(f.model.usageHighNote)
             var settings = f.model.settings
-            settings.assistant.pauseThreshold = 40
+            settings.assistant.pauseThreshold = 50        // the lowest Settings allows
             f.model.updateSettings(settings)
-            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Weekly usage 42%"))
-            XCTAssertEqual(f.model.usageHighNote, "Weekly usage is 42%. Things you start still run.")
+            XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .paused("Weekly usage 55%"))
+            XCTAssertEqual(f.model.usageHighNote, "Weekly usage is 55%. Things you start still run.")
         }
         f.runner.base.usageOutput = try Fixtures.string("usage-stream.jsonl").replacingOccurrences(of: #""percent":5"#, with: #""percent":84"#)
         await f.model.refreshUsage()
@@ -346,7 +347,8 @@ final class AssistantJobTests: XCTestCase {
             f.model.beginNoteCapture()
             f.model.updateNoteDraft("Flicker when maximised")
             let note = try XCTUnwrap(f.model.saveNoteCapture())
-            XCTAssertNil(f.model.noteSuggestions[note.id], "skipped, not queued: the note keeps Promote…")
+            XCTAssertNil(f.model.noteSuggestions[note.id], "not checked yet: the note keeps Check Against Plan…")
+            XCTAssertEqual(f.model.heldJobs(inProject: f.project).map(\.subject), ["Flicker when maximised"], "it waits (step 4b)")
             f.model.requestPromote(note.id, projectID: f.project)
             return note.id
         }

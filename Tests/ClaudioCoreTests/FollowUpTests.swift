@@ -762,6 +762,8 @@ final class FollowUpModelTests: XCTestCase {
         }
         await f.model.waitForAssistantJobs()
         XCTAssertEqual(f.runner.calls.count, AssistantAppSettings.defaultDailyJobLimit, "the 21st isn't made")
+        let held = await MainActor.run { f.model.heldJobs.map(\.subject) }
+        XCTAssertEqual(held, ["One too many"], "it waits for the next day")
         await MainActor.run {
             f.model.dailyJobs = DailyJobCount(day: "2026-09-28", count: AssistantAppSettings.defaultDailyJobLimit)
             XCTAssertEqual(f.model.backgroundGate(forProject: f.project), .run, "yesterday's count doesn't apply")

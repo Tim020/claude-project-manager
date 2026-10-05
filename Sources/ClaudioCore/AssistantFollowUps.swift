@@ -1,7 +1,8 @@
 import Foundation
 
 // Step 4 of the Project Assistant: follow-ups. When a session looks done
-// it's offered one; on Follow Up (or Review This Session), one Sonnet call
+// it's offered one; on Follow Up (or Review This Session), one Claude call
+// (Sonnet unless the project's Assistant Settings choose another)
 // reads a digest of what it did and suggests notes (saved straight away,
 // undoable) and plan changes (applied only when you choose Add to Plan).
 // Needs You lists what's waiting for you: offers, finished and failed
@@ -113,6 +114,8 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     /// It ran because you asked: Follow Up on an offer, or Review This
     /// Session. False only for an offer.
     public var askedFor: Bool
+    /// The model it ran on ("Sonnet"), for Job Failed.
+    public var model: String?
     /// Later, or ✕: the card leaves the session and waits in Needs You.
     public var isDeferred = false
 
@@ -127,7 +130,7 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred
+        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model
     }
 
     /// Tolerant: fields a later build adds, or leaves out, take defaults. A
@@ -143,6 +146,7 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
         askedFor = try c.decodeIfPresent(Bool.self, forKey: .askedFor) ?? true
         isDeferred = try c.decodeIfPresent(Bool.self, forKey: .isDeferred) ?? false
+        model = try c.decodeIfPresent(String.self, forKey: .model)
     }
 }
 
@@ -281,10 +285,6 @@ public struct DailyJobCount: Codable, Equatable, Sendable {
     }
 }
 
-extension AssistantModels {
-    /// Follow-ups, skill drafts and Ask.
-    public static let deep = "sonnet"
-}
 
 // MARK: - The follow-up call
 

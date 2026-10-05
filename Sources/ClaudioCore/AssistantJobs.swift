@@ -9,7 +9,7 @@ import Foundation
 public struct AssistantCall: Equatable, Sendable {
     /// The job, for the Activity Log: "Promote check".
     public var job: String
-    /// A model alias: "haiku" or "sonnet".
+    /// A model alias: "haiku", "sonnet" or "opus" (`AssistantModel`).
     public var model: String
     public var systemPrompt: String
     /// The reply's JSON schema.
@@ -46,9 +46,8 @@ public struct AssistantCall: Equatable, Sendable {
 }
 
 public enum AssistantModels {
-    /// Quick checks (Promote, issue triage).
-    public static let quick = "haiku"
-
+    /// "Haiku" from "haiku". Each project picks its models in Assistant
+    /// Settings (`ProjectAssistantSettings`).
     public static func displayName(_ alias: String) -> String {
         alias.prefix(1).uppercased() + alias.dropFirst()
     }

@@ -56,9 +56,10 @@ struct AssistantTool: View {
                 } else if let followUp = shownFollowUp {
                     if case .failed(let message) = followUp.state {
                         JobFailedView(title: "Couldn't follow up \(followUp.sessionName)", message: message,
-                                      jobLine: [FollowUpJob.job, followUp.sessionName,
-                                                AssistantModels.displayName(model.assistantSettings(forProject: projectID).deepModel.rawValue),
-                                                followUp.createdAt.formatted(date: .omitted, time: .shortened)].joined(separator: " · "),
+                                      // The model it ran on (older cards didn't record it).
+                                      jobLine: [FollowUpJob.job, followUp.sessionName, followUp.model,
+                                                followUp.createdAt.formatted(date: .omitted, time: .shortened)]
+                                          .compactMap { $0 }.joined(separator: " · "),
                                       projectID: projectID,
                                       tryAgain: { model.retryFollowUp(followUp.id, projectID: projectID) })
                             .id(followUp.id)

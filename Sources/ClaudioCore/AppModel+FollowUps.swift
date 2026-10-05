@@ -293,6 +293,7 @@ extension AppModel {
         let projectID = session.projectID
         var followUp = FollowUp(sessionID: sessionID, sessionName: session.name, state: .working, createdAt: now(),
                                 askedFor: askedFor)
+        followUp.model = AssistantModels.displayName(assistantSettings(forProject: projectID).deepModel.rawValue)
         if let followUpID { followUp.id = followUpID }
         dropStaleFailures(forSession: sessionID, projectID: projectID, except: followUpID)
         updateNeedsYou(projectID) { data in

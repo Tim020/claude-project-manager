@@ -12,7 +12,8 @@ public enum AssistantGate: Equatable, Sendable {
     case off
     /// Manual mode: only what you ask for.
     case manual
-    /// Over the usage threshold, or spending credits ("5-hour usage 84%").
+    /// Over the usage threshold, spending credits, or at the daily limit
+    /// ("5-hour usage 84%"): held-back work waits.
     case paused(String)
     /// A plan-usage reading is expected but hasn't come yet.
     case waitingForUsage
@@ -135,7 +136,7 @@ extension AppModel {
             return
         }
         // You asked: a check of it waiting for the gate isn't needed now.
-        cancelHeldJob(key: AppModel.noteCheckKey(noteID))
+        cancelHeldJob(key: .noteCheck(noteID))
         checkNote(note, projectID: projectID, askedFor: true)
     }
 
@@ -144,8 +145,9 @@ extension AppModel {
     /// once it opens (step 4b; step 2 skipped it). When it runs, the note
     /// must still be there, without a plan item or a suggestion.
     func checkCapturedNote(_ note: ProjectNote, projectID: UUID) {
-        runOrHoldBackground(key: AppModel.noteCheckKey(note.id), projectID: projectID, job: PromoteCheck.job,
-                            subject: PlanTitle.from(note.text)) { [weak self] in
+        let model = AssistantModels.displayName(assistantSettings(forProject: projectID).quickModel.rawValue)
+        runOrHoldBackground(key: .noteCheck(note.id), projectID: projectID, job: PromoteCheck.job,
+                            subject: PlanTitle.from(note.text), model: model) { [weak self] in
             guard let self,
                   let current = self.assistantData[projectID]?.notes.first(where: { $0.id == note.id }),
                   current.itemID == nil, self.noteSuggestions[note.id] == nil
@@ -155,7 +157,6 @@ extension AppModel {
         }
     }
 
-    static func noteCheckKey(_ noteID: UUID) -> String { "notecheck:\(noteID.uuidString.lowercased())" }
 
     /// Keep as Note: dismisses the suggestion.
     public func keepAsNote(_ noteID: UUID) {
@@ -169,7 +170,7 @@ extension AppModel {
         requestPromote(noteID, projectID: projectID)
     }
 
-    private func checkNote(_ note: ProjectNote, projectID: UUID, askedFor: Bool) {
+    func checkNote(_ note: ProjectNote, projectID: UUID, askedFor: Bool) {
         let previous = noteSuggestions[note.id]
         guard previous != .checking else { return }
         setNoteSuggestion(.checking, for: note.id)
@@ -195,8 +196,8 @@ extension AppModel {
             case .failure(let failure):
                 // A failed Check Again leaves the earlier answer in place.
                 self.setNoteSuggestion(previous, for: note.id)
-                // Only something you asked for says so (4b brings the Job
-                // Failed view for background failures).
+                // Only something you asked for says so; a background
+                // failure shows in the Activity Log, as Failed with Try Again.
                 if askedFor { self.report(failure.message) }
             }
         }

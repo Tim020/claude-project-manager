@@ -328,7 +328,11 @@ extension AppModel {
         guard assistantMode(ofProject: projectID) != mode else { return }
         // Not a change to notes or items, so it has no audit entry.
         guard change(projectID: projectID, recording: [], { $0.mode = mode }) else { return }
-        if mode == .automatic { releaseHeldJobs() } else { assistantStoppedBackgroundWork(inProject: projectID) }
+        if mode == .automatic {
+            releaseHeldJobs()
+        } else {
+            assistantStoppedBackgroundWork(inProject: projectID, because: mode == .off ? "set to Off" : "set to Manual")
+        }
     }
 
     // MARK: - Assistant Settings (per project)
@@ -339,6 +343,10 @@ extension AppModel {
 
     public func setAssistantSettings(_ settings: ProjectAssistantSettings, projectID: UUID) {
         guard assistantSettings(forProject: projectID) != settings, !isAssistantDataUnreadable(projectID) else { return }
+        guard !unreadableProjectSettings.contains(projectID) else {
+            report("This project's assistant settings couldn't be read, so they can't be changed. See the Activity Log.")
+            return
+        }
         do {
             try assistantStore.saveProjectSettings(settings, projectID: projectID)
             projectAssistantSettings[projectID] = settings

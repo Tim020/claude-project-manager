@@ -8,20 +8,35 @@ import Foundation
 // the job looks at its subject again when it runs. The list lives in
 // memory, so held jobs are lost on quit.
 
+/// What a held job is for, so a newer one for the same thing replaces it.
+/// Typed, so every place builds the same key.
+public enum HeldJobKey: Hashable, Sendable {
+    case noteCheck(UUID)
+    case followUp(UUID)
+}
+
 /// A background job waiting for the usage gate (design 9a: "Waiting").
 public struct HeldJob: Identifiable, Equatable, Sendable {
     public var id = UUID()
-    /// What it's about, so a newer job for the same thing replaces it
-    /// ("notecheck:<note id>").
-    public var key: String
+    public var key: HeldJobKey
     public var projectID: UUID
     /// "Promote check".
     public var job: String
     /// What it's about, in words ("Shell panel height resets…").
     public var subject: String
+    /// The model it will use ("Haiku"), for the Activity Log.
+    public var model: String
     public var heldAt: Date
     /// Why it's waiting ("5-hour usage 84%").
     public var reason: String
+}
+
+/// A held job and what it does when it runs: kept together, so they can't
+/// get out of step.
+struct HeldJobEntry {
+    var job: HeldJob
+    /// Looks at the subject again and starts the call; true if it called Claude.
+    var run: @MainActor () -> Bool
 }
 
 /// The Assistant panel's status line (design 9a): at most one shows.
@@ -37,6 +52,9 @@ public enum AssistantStatusLine: Equatable, Sendable {
 }
 
 extension AppModel {
+    /// The held jobs, oldest first.
+    public var heldJobs: [HeldJob] { heldJobEntries.map(\.job) }
+
     // MARK: - Holding and releasing
 
     /// Runs background work now if the gate allows (counting it against
@@ -44,16 +62,17 @@ extension AppModel {
     /// usage reading, and drops it when the project is Off or Manual.
     /// `start` looks at its subject again, and returns whether it called
     /// Claude (only then is it counted).
-    func runOrHoldBackground(key: String, projectID: UUID, job: String, subject: String,
+    func runOrHoldBackground(key: HeldJobKey, projectID: UUID, job: String, subject: String, model: String,
                              start: @escaping @MainActor () -> Bool) {
         switch backgroundGate(forProject: projectID) {
         case .run:
             cancelHeldJob(key: key)
             if start() { countBackgroundJob() }
         case .paused(let reason):
-            hold(HeldJob(key: key, projectID: projectID, job: job, subject: subject, heldAt: now(), reason: reason), start)
+            hold(HeldJob(key: key, projectID: projectID, job: job, subject: subject, model: model, heldAt: now(), reason: reason),
+                 start)
         case .waitingForUsage:
-            hold(HeldJob(key: key, projectID: projectID, job: job, subject: subject, heldAt: now(),
+            hold(HeldJob(key: key, projectID: projectID, job: job, subject: subject, model: model, heldAt: now(),
                          reason: "Waiting for a usage reading"), start)
         case .off, .manual:
             cancelHeldJob(key: key)
@@ -61,66 +80,82 @@ extension AppModel {
     }
 
     private func hold(_ job: HeldJob, _ start: @escaping @MainActor () -> Bool) {
-        var jobs = heldJobs
-        if let index = jobs.firstIndex(where: { $0.key == job.key }) {
+        var entries = heldJobEntries
+        if let index = entries.firstIndex(where: { $0.job.key == job.key }) {
             // The newer one takes its place, and its spot in the line.
-            heldJobRuns[jobs[index].id] = nil
             var replacement = job
-            replacement.heldAt = jobs[index].heldAt
-            jobs[index] = replacement
+            replacement.heldAt = entries[index].job.heldAt
+            entries[index] = HeldJobEntry(job: replacement, run: start)
         } else {
-            jobs.append(job)
+            entries.append(HeldJobEntry(job: job, run: start))
         }
-        heldJobRuns[job.id] = start
-        heldJobs = jobs
-        log.append(.info, "Assistant: \(job.job) waiting (\(job.reason))")
+        heldJobEntries = entries
+        log.append(.info, "Assistant: \(job.job) waiting (\(job.reason))", detail: job.subject)
     }
 
-    /// Runs held jobs whose project's gate has opened, oldest first, checking
-    /// the gate before each (so the daily limit can stop part-way); drops
-    /// those whose project is now Off or Manual; and updates the reason on
-    /// the rest. Called on each usage reading, settings change and 15 s tick.
+    /// Runs the oldest held job of each project whose gate has opened (one
+    /// per project per pass, so usage is read again before the next), drops
+    /// those whose project is now Off or Manual, and updates the reason on
+    /// the rest. Called on each usage reading, Settings › Assistant change
+    /// and 15 s tick. The gate is checked before each job, so the daily
+    /// limit can stop a release part-way.
     func releaseHeldJobs() {
-        guard !heldJobs.isEmpty else { return }
-        var remaining: [HeldJob] = []
-        for var job in heldJobs {
-            switch backgroundGate(forProject: job.projectID) {
+        guard !heldJobEntries.isEmpty else { return }
+        var remaining: [HeldJobEntry] = []
+        var released: [HeldJobEntry] = []
+        var releasedProjects = Set<UUID>()
+        var dropped = 0
+        for var entry in heldJobEntries {
+            switch backgroundGate(forProject: entry.job.projectID) {
+            case .run where !releasedProjects.contains(entry.job.projectID):
+                releasedProjects.insert(entry.job.projectID)
+                released.append(entry)
             case .run:
-                // Run now, so the next job's gate sees today's count.
-                if let start = heldJobRuns.removeValue(forKey: job.id) {
-                    heldJobs.removeAll { $0.id == job.id }
-                    if start() { countBackgroundJob() }
-                }
+                remaining.append(entry)
             case .paused(let reason):
-                job.reason = reason
-                remaining.append(job)
+                entry.job.reason = reason
+                remaining.append(entry)
             case .waitingForUsage:
-                job.reason = "Waiting for a usage reading"
-                remaining.append(job)
+                entry.job.reason = "Waiting for a usage reading"
+                remaining.append(entry)
             case .off, .manual:
-                heldJobRuns[job.id] = nil
+                dropped += 1
             }
         }
-        if remaining != heldJobs { heldJobs = remaining }
+        // Assigned before anything runs, so a job held meanwhile isn't lost.
+        if remaining.map(\.job) != heldJobs || remaining.count != heldJobEntries.count { heldJobEntries = remaining }
+        if dropped > 0 { log.append(.info, "Assistant: dropped \(dropped) waiting job\(dropped == 1 ? "" : "s") (turned off)") }
+        for entry in released {
+            if entry.run() {
+                countBackgroundJob()
+            } else {
+                log.append(.info, "Assistant: \(entry.job.job) skipped: no longer needed", detail: entry.job.subject)
+            }
+        }
     }
 
     /// Removes a held job (when what it's for has gone, or you started the
     /// same thing yourself).
-    func cancelHeldJob(key: String) {
-        guard let job = heldJobs.first(where: { $0.key == key }) else { return }
-        heldJobRuns[job.id] = nil
-        heldJobs.removeAll { $0.key == key }
+    func cancelHeldJob(key: HeldJobKey) {
+        guard heldJobEntries.contains(where: { $0.job.key == key }) else { return }
+        heldJobEntries.removeAll { $0.job.key == key }
     }
 
     /// Off or Manual (the project, or Settings › Assistant): held work is
     /// dropped and open follow-up offers are withdrawn.
-    func assistantStoppedBackgroundWork(inProject projectID: UUID) {
-        for job in heldJobs where job.projectID == projectID { heldJobRuns[job.id] = nil }
-        if heldJobs.contains(where: { $0.projectID == projectID }) { heldJobs.removeAll { $0.projectID == projectID } }
+    func assistantStoppedBackgroundWork(inProject projectID: UUID, because reason: String) {
+        let held = heldJobEntries.filter { $0.job.projectID == projectID }.count
+        if held > 0 { heldJobEntries.removeAll { $0.job.projectID == projectID } }
         let offers = needsYouData(inProject: projectID).followUps.filter { $0.state == .offered }
-        guard !offers.isEmpty else { return }
-        for offer in offers { pendingDigests[offer.id] = nil }
-        updateNeedsYou(projectID) { data in data.followUps.removeAll { $0.state == .offered } }
+        if !offers.isEmpty {
+            for offer in offers { pendingDigests[offer.id] = nil }
+            updateNeedsYou(projectID) { data in data.followUps.removeAll { $0.state == .offered } }
+        }
+        guard held > 0 || !offers.isEmpty else { return }
+        let name = workspace.project(projectID)?.name ?? "a project"
+        let parts = [held > 0 ? "\(held) waiting job\(held == 1 ? "" : "s")" : nil,
+                     offers.isEmpty ? nil : "\(offers.count) follow-up offer\(offers.count == 1 ? "" : "s")"].compactMap { $0 }
+        log.append(.info, "Assistant: dropped \(parts.joined(separator: " and ")) in \(name) (\(reason))")
     }
 
     /// After Settings › Assistant changes: turning it off stops background
@@ -129,7 +164,7 @@ extension AppModel {
     func assistantSettingsChanged(from old: AssistantAppSettings, to new: AssistantAppSettings) {
         guard old != new else { return }
         if old.isEnabled && !new.isEnabled {
-            for project in workspace.projects { assistantStoppedBackgroundWork(inProject: project.id) }
+            for project in workspace.projects { assistantStoppedBackgroundWork(inProject: project.id, because: "the assistant was turned off") }
         } else {
             releaseHeldJobs()
         }
