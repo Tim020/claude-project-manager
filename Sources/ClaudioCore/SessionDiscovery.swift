@@ -430,7 +430,8 @@ extension Workspace {
         guard project(projectID) != nil else { return 0 }
         var added = 0
         // Left behind by `/clear`: the session that ran them has moved on.
-        let replaced = Set(sessions.flatMap(\.replacedConversations))
+        // Not one that's still some session's own.
+        let replaced = Set(sessions.flatMap(\.replacedConversations)).subtracting(sessions.compactMap(\.claudeSessionID))
         for found in discovered where !isRemoved(claudeSessionID: found.claudeSessionID) && !replaced.contains(found.claudeSessionID) {
             if let existing = session(claudeSessionID: found.claudeSessionID) {
                 syncTitle(existing.id, claudeTitle: found.customTitle)

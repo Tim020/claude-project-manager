@@ -503,10 +503,17 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// Deletes a session for good (it's being deleted from Claude Code too).
     public mutating func deleteSession(_ id: UUID) {
         if let session = session(id) {
-            deletedClaudeSessionIDs.formUnion(session.conversations)
+            deletedClaudeSessionIDs.formUnion(ownedConversations(of: session))
             if let agentID = session.agentID { deletedAgentIDs.insert(agentID) }
         }
         removeSession(id)
+    }
+
+    /// Its conversations, less any replaced one another session has as its
+    /// own (a copy's `/clear` once landed on its original).
+    public func ownedConversations(of session: Session) -> [String] {
+        let others = Set(sessions.filter { $0.id != session.id }.compactMap(\.claudeSessionID))
+        return session.conversations.filter { $0 == session.claudeSessionID || !others.contains($0) }
     }
 
     /// Forgets deleted agents that `claude agents` no longer lists: `claude rm` has finished.

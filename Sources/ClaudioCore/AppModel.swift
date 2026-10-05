@@ -185,6 +185,10 @@ public final class AppModel {
     /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
     /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
     private var stopsRequested: Set<UUID> = []
+    /// The session whose conversation a `/clear` just ended, by the app id
+    /// its hooks carry (shared by an original and its copies), for the
+    /// SessionStart that follows.
+    @ObservationIgnored private var clearing: [UUID: UUID] = [:]
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -1107,7 +1111,7 @@ public final class AppModel {
             // After `claude rm`, so the agent can't write to them again. With
             // the conversations `/clear` left behind.
             let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
-            for claudeID in session.conversations {
+            for claudeID in state.workspace.ownedConversations(of: session) {
                 enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
             }
         }
@@ -1353,7 +1357,12 @@ public final class AppModel {
             if existing == nil, let match = workspace.session(claudeSessionID: agent.sessionID), !claimed.contains(match.id) {
                 existing = match
             }
-            if let existing { claimed.insert(existing.id) }
+            if let existing {
+                claimed.insert(existing.id)
+                if existing.claudeSessionID != agent.sessionID {
+                    absorbDuplicate(of: agent.sessionID, into: existing.id, in: &workspace)
+                }
+            }
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
@@ -1430,6 +1439,19 @@ public final class AppModel {
             state.workspace = workspace
             save()
         }
+    }
+
+    /// The agent's session is taking up a conversation (a `/clear` made while
+    /// Claudio was closed) that history discovery may already have imported
+    /// as a session of its own, if it ran first: that one goes, its pull
+    /// requests kept. Not one with an agent or a process of its own.
+    private func absorbDuplicate(of claudeSessionID: String, into sessionID: UUID, in workspace: inout Workspace) {
+        guard let duplicate = workspace.session(claudeSessionID: claudeSessionID), duplicate.id != sessionID,
+              duplicate.agentID == nil, !running.contains(duplicate.id) else { return }
+        workspace.updateSession(sessionID) { PullRequestLink.merge(duplicate.pullRequests, into: &$0.pullRequests) }
+        workspace.closeTab(duplicate.id)
+        workspace.removeSession(duplicate.id)
+        log.append(.info, "Merged “\(duplicate.name)” into the session whose agent `/clear` moved on to it")
     }
 
     /// For tests: links a session to an agent as a dispatch would.
@@ -1755,7 +1777,16 @@ public final class AppModel {
         guard let claudeID = event.claudeSessionID, !claudeID.isEmpty else {
             return workspace.session(event.appSessionID)?.id
         }
-        if let session = workspace.session(claudeSessionID: claudeID) { return session.id }
+        if let session = workspace.session(claudeSessionID: claudeID) {
+            // `/clear` ends this conversation and starts the next under the
+            // same app id: the start goes to whoever ended (a copy, maybe).
+            if event.name == .sessionEnd && event.reason == "clear" { clearing[event.appSessionID] = session.id }
+            return session.id
+        }
+        if event.name == .sessionStart && event.source == "clear",
+           let cleared = clearing.removeValue(forKey: event.appSessionID), workspace.session(cleared) != nil {
+            return cleared
+        }
         if let owner = workspace.session(event.appSessionID),
            owner.claudeSessionID == nil || (event.name == .sessionStart && event.source == "clear") {
             return owner.id

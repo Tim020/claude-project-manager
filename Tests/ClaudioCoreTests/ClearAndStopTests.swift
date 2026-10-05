@@ -19,17 +19,20 @@ final class ClearAndStopTests: XCTestCase {
     /// A background agent's session, with both conversations' history in the
     /// worktree's folder, as Claude Code leaves them after `/clear`.
     @MainActor
-    private func makeModel(workingDirectory: String? = nil) throws -> AppModel {
+    private func makeModel(workingDirectory: String? = nil, claudeSessionID: String? = nil, replaced: [String] = [],
+                           extra: (UUID) -> [Session] = { _ in [] }) throws -> AppModel {
         home = try makeTemporaryDirectory()
         hooks = try makeTemporaryDirectory().appendingPathComponent("hooks.log")
         try Data().write(to: hooks)
         var state = PersistedState()
         let p = state.workspace.addProject(path: repo)
-        var session = Session(id: appID, projectID: p, claudeSessionID: before, hasConversation: true,
+        var session = Session(id: appID, projectID: p, claudeSessionID: claudeSessionID ?? before, hasConversation: true,
                               name: "Personal Assistant Implementation", workingDirectory: workingDirectory ?? worktree,
                               status: .awaitingInput)
         session.agentID = "7d1da24e"
+        session.replacedConversations = replaced
         try state.workspace.addSession(session)
+        try extra(p).forEach { try state.workspace.addSession($0) }
         store.state = state
         try writeHistory(before, cwd: repo, text: "Before the clear")
         try writeHistory(after, cwd: worktree, text: "After the clear")
@@ -155,14 +158,15 @@ final class ClearAndStopTests: XCTestCase {
         await MainActor.run {
             model.resume(appID)
             XCTAssertNotNil(model.takePendingLaunch(appID))
-            // `claude stop` hasn't finished: the list still has it alive.
+            // What the list says once `claude stop` has run. Until then the
+            // model's last reading has it alive.
+            runner.agentsJSON = agentJSON(sessionID: before, alive: false)
             model.stop(appID)
             XCTAssertTrue(model.isStopping(appID))
             model.attachIfLive(appID)
             XCTAssertFalse(model.isRunning(appID))
             XCTAssertNil(model.takePendingLaunch(appID))
         }
-        runner.agentsJSON = agentJSON(sessionID: before, alive: false)
         await model.lastTask?.value
         await MainActor.run {
             XCTAssertTrue(runner.commands.contains(["stop", "7d1da24e"]))
@@ -180,5 +184,128 @@ final class ClearAndStopTests: XCTestCase {
             model.attachIfLive(appID)
             XCTAssertEqual(model.takePendingLaunch(appID)?.claudeArguments, ["attach", "7d1da24e"])
         }
+    }
+
+    /// A copy (started by the CLI) has its original's settings, so its hooks
+    /// carry the original's app id. Its `/clear` is its own.
+    func testACopysClearStaysWithTheCopy() async throws {
+        let original = "c1c1c1c1-0000-0000-0000-000000000000"
+        let copyID = UUID()
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel(claudeSessionID: original) { p in
+                var copy = Session(id: copyID, projectID: p, claudeSessionID: self.before, hasConversation: true,
+                                   name: "Personal Assistant Implementation (copy)", workingDirectory: self.worktree,
+                                   status: .awaitingInput)
+                copy.agentID = "4b4b4b4b"
+                return [copy]
+            }
+            try clearFromHooks(model)
+            XCTAssertEqual(model.workspace.session(copyID)?.claudeSessionID, after)
+            XCTAssertEqual(model.workspace.session(copyID)?.replacedConversations, [before])
+            XCTAssertEqual(model.workspace.session(appID)?.claudeSessionID, original, "the original is untouched")
+            XCTAssertEqual(model.workspace.session(appID)?.replacedConversations, [])
+            return model
+        }
+        await model.refreshAll()
+        await MainActor.run { XCTAssertEqual(model.workspace.sessions.count, 2) }
+    }
+
+    /// Should a replaced conversation be another session's own (as a copy's
+    /// `/clear` once made it), it's still that session's: synced from its
+    /// history, and not deleted with this one.
+    func testAReplacedConversationThatsAnothersOwnStaysTheirs() async throws {
+        let otherID = UUID()
+        let model = try await MainActor.run { () -> AppModel in
+            let model = try makeModel(claudeSessionID: before, replaced: [after]) { p in
+                [Session(id: otherID, projectID: p, claudeSessionID: self.after, hasConversation: true,
+                         name: "other", workingDirectory: self.worktree, status: .awaitingInput)]
+            }
+            XCTAssertEqual(model.workspace.ownedConversations(of: try XCTUnwrap(model.workspace.session(appID))), [before])
+            return model
+        }
+        await model.refreshAll()
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.sessions.count, 2)
+            model.deleteSession(appID, .everywhere)
+        }
+        await model.lastTask?.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyFile(after).path), "the other session's history stays")
+        await MainActor.run { XCTAssertFalse(model.workspace.deletedClaudeSessionIDs.contains(after)) }
+    }
+
+    /// At launch, history discovery may finish before the first agent list:
+    /// it imports the conversation a `/clear` (made while Claudio was
+    /// closed) moved to, and the agent's session then takes it over.
+    func testClearSeenByDiscoveryBeforeTheAgentList() async throws {
+        runner.agentsJSON = agentJSON(sessionID: after)
+        let model = try await MainActor.run { try makeModel() }
+        await model.refreshAll()
+        await MainActor.run { XCTAssertEqual(model.workspace.sessions.count, 2, "imported before the list was read") }
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertEqual(model.workspace.sessions.map(\.id), [appID])
+            XCTAssertEqual(model.workspace.session(appID)?.claudeSessionID, after)
+            XCTAssertEqual(model.workspace.session(appID)?.replacedConversations, [before])
+        }
+        await model.refreshAll()
+        await MainActor.run { XCTAssertEqual(model.workspace.sessions.map(\.id), [appID]) }
+    }
+
+    func testAFailedStopLetsTheTabAttachAgain() async throws {
+        runner.agentsJSON = agentJSON(sessionID: before)
+        runner.stopExit = 1
+        let model = try await MainActor.run { try makeModel() }
+        await model.refreshAgents()
+        await MainActor.run {
+            model.stop(appID)
+            XCTAssertTrue(model.isStopping(appID))
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertFalse(model.isStopping(appID))
+            model.attachIfLive(appID)
+            XCTAssertEqual(model.takePendingLaunch(appID)?.claudeArguments, ["attach", "7d1da24e"])
+        }
+    }
+
+    func testAdoptingAConversation() {
+        var s = Session(projectID: UUID(), name: "s", workingDirectory: repo)
+        s.adoptConversation("a")
+        XCTAssertEqual(s.claudeSessionID, "a")
+        XCTAssertEqual(s.replacedConversations, [], "nothing before it")
+        s.adoptConversation("")
+        XCTAssertEqual(s.claudeSessionID, "a", "an empty id is ignored")
+        s.adoptConversation("a")
+        XCTAssertEqual(s.replacedConversations, [])
+        s.adoptConversation("b")
+        s.adoptConversation("a")
+        XCTAssertEqual(s.claudeSessionID, "a")
+        XCTAssertEqual(s.replacedConversations, ["b"], "back to a: it's current, not replaced")
+        s.adoptConversation("b")
+        s.adoptConversation("a")
+        XCTAssertEqual(s.replacedConversations, ["b"], "no duplicates")
+        XCTAssertEqual(s.conversations, ["a", "b"])
+    }
+
+    /// The same conversation in the repository's folder and a worktree's:
+    /// the newer file wins.
+    func testTheNewestHistoryFileWins() throws {
+        home = try makeTemporaryDirectory()
+        try writeHistory(before, cwd: worktree, text: "in the worktree")
+        let inWorktree = historyFile(before)
+        let inRepo = home.appendingPathComponent("projects")
+            .appendingPathComponent(SessionDiscovery.directoryName(forProjectPath: repo))
+            .appendingPathComponent("\(before).jsonl")
+        try FileManager.default.createDirectory(at: inRepo.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{}\n".utf8).write(to: inRepo)
+        let discovery = SessionDiscovery(claudeHome: home)
+        let older = Date(timeIntervalSince1970: 1_790_000_000), newer = older.addingTimeInterval(60)
+        try FileManager.default.setAttributes([.modificationDate: older], ofItemAtPath: inRepo.path)
+        try FileManager.default.setAttributes([.modificationDate: newer], ofItemAtPath: inWorktree.path)
+        XCTAssertEqual(discovery.newestHistoryFile(projectPath: repo, workingDirectory: repo, claudeSessionID: before)?
+                           .deletingLastPathComponent().lastPathComponent, inWorktree.deletingLastPathComponent().lastPathComponent)
+        try FileManager.default.setAttributes([.modificationDate: newer.addingTimeInterval(60)], ofItemAtPath: inRepo.path)
+        XCTAssertEqual(discovery.newestHistoryFile(projectPath: repo, workingDirectory: repo, claudeSessionID: before)?
+                           .deletingLastPathComponent().lastPathComponent, inRepo.deletingLastPathComponent().lastPathComponent)
     }
 }
