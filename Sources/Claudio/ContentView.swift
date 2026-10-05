@@ -42,7 +42,11 @@ struct ContentView: View {
         let tools = model.toolWindows
         // Design 8c: left rail (projects) · its tool · the panes · the
         // selected session's tool · right rail, over the app's status bar.
+        // Above them, the title bar's own strip holds the window buttons:
+        // macOS sizes it, so nothing has to guess how big they are, and it
+        // goes in full screen.
         VStack(spacing: 0) {
+            HorizontalRule()
             HStack(spacing: 0) {
                 LeftRail()
                 VerticalRule()
@@ -73,8 +77,9 @@ struct ContentView: View {
             StatusBar()
         }
         .overlay(alignment: .bottom) { ToastOverlay() }
-        .background(DS.window)
-        .ignoresSafeArea(.container, edges: .top)
+        // The panes' colour stops at the title bar; the strip is the rails'.
+        .background(DS.window, ignoresSafeAreaEdges: [])
+        .background(DS.sidebar)
         .environment(\.presentNewSession, { group in
             if model.environment.canRunSessions {
                 commands.newSessionTarget = NewSessionTarget(group: group)

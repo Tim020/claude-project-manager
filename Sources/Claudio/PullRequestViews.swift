@@ -295,7 +295,7 @@ struct OverviewHeader: View {
                     .help("Open the repository's pull requests in your browser")
             }
         }
-        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.leading, 20)
         .padding(.trailing, 20)
         .frame(height: 52)
         .background(DS.sidebar)
@@ -332,7 +332,7 @@ struct OverviewHeader: View {
             Spacer(minLength: 10)
             if let projectID { PullRequestsFreshness(projectID: projectID) }
         }
-        .padding(.leading, 20 + ToolRail.headerInset(model))
+        .padding(.leading, 20)
         .padding(.trailing, 20)
         .frame(height: 52)
         .background(DS.sidebar)

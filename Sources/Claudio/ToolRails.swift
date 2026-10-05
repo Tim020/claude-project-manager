@@ -11,32 +11,20 @@ import SwiftUI
 
 enum ToolRail {
     static let width: CGFloat = 44
-    /// The rails' icons start below the window's traffic lights, level with
-    /// the headers' bottom edge.
-    static let topInset: CGFloat = 52
-    /// Room a header right of the left rail leaves for the traffic lights,
-    /// which are wider than the rail.
-    static let trafficLightInset: CGFloat = 34
+    /// A tool header's height.
+    static let headerHeight: CGFloat = 52
     static let rightPanelWidth: CGFloat = 320
-
-    /// With the left rail's tool hidden, the session and overview headers
-    /// start beside the rail, under the traffic lights, so they leave room.
-    @MainActor static func headerInset(_ model: AppModel) -> CGFloat {
-        model.toolWindows.visibleLeft == nil ? trafficLightInset : 0
-    }
 }
 
 /// A tool's title bar: "SESSIONS", with the tool's own buttons at the end.
 struct ToolHeader<Accessory: View>: View {
     let title: String
-    var leadingInset: CGFloat = 0
     /// A ‹ back button before the title, for a tool drilled into something.
     var onBack: (() -> Void)? = nil
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
         HStack(spacing: 8) {
-            Spacer().frame(width: leadingInset)
             if let onBack {
                 IconButton(systemName: "chevron.left", help: "Back", size: 13, action: onBack)
                     .padding(.leading, -6)
@@ -50,9 +38,9 @@ struct ToolHeader<Accessory: View>: View {
             Spacer(minLength: 4)
             accessory()
         }
-        .padding(.leading, 14)
+        .padding(.leading, 22)
         .padding(.trailing, 10)
-        .frame(height: ToolRail.topInset)
+        .frame(height: ToolRail.headerHeight)
     }
 }
 
@@ -102,7 +90,6 @@ struct LeftRail: View {
     var body: some View {
         let showing = model.toolWindows.visibleLeft
         VStack(spacing: 0) {
-            Spacer().frame(height: ToolRail.topInset)
             RailButton(systemName: "list.bullet.indent", help: help("Sessions", showing == .sessions, "⌘1"),
                        isActive: showing == .sessions) { model.toggleTool(.sessions) }
             RailButton(systemName: "arrow.triangle.pull", help: help("Pull Requests", showing == .pullRequests, "⌘2"),
@@ -143,7 +130,7 @@ struct LeftToolPanel: View {
                 SidebarView(width: width)
             case .pullRequests:
                 VStack(spacing: 0) {
-                    ToolHeader(title: "Pull Requests", leadingInset: ToolRail.trafficLightInset) {
+                    ToolHeader(title: "Pull Requests") {
                         IconButton(systemName: "arrow.clockwise", help: "Refresh Pull Requests", size: 13) {
                             Task { await model.refreshAllPullRequests(force: true) }
                         }
@@ -171,7 +158,6 @@ struct RightRail: View {
         let files = session.flatMap { model.currentChanges(for: $0.id)?.files.count } ?? 0
         let pullRequests = session.map { model.pullRequestLinks(ofSession: $0.id).count } ?? 0
         VStack(spacing: 0) {
-            Spacer().frame(height: ToolRail.topInset)
             RailButton(systemName: "plusminus", help: help("Changes", showing == .changes, "⌥⌘F"),
                        isActive: showing == .changes, badge: files) { model.toggleTool(.changes) }
             RailButton(systemName: "arrow.triangle.pull", help: help("Pull Request", showing == .pullRequest, "⌥⌘P"),

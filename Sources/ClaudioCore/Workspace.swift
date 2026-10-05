@@ -532,6 +532,10 @@ public struct Workspace: Codable, Equatable, Sendable {
         sessions.filter(\.isArchived).sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    public mutating func archive(_ id: UUID) {
+        updateSession(id) { $0.isArchived = true }
+    }
+
     public mutating func unarchive(_ id: UUID) {
         updateSession(id) { $0.isArchived = false }
     }

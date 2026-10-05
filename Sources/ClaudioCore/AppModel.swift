@@ -1129,6 +1129,18 @@ public final class AppModel {
         }
     }
 
+    /// Archives one session, whatever its status. One that's running is
+    /// stopped first (its menu item says so). It leaves the panes, and File ›
+    /// Removed & Archived Sessions brings it back.
+    public func archive(_ id: UUID) {
+        guard let session = state.workspace.session(id), !session.isArchived else { return }
+        if isRunning(id) || isAgentAlive(id) { stop(id) }
+        state.workspace.archive(id)
+        state.workspace.closeTab(id)
+        log.append(.info, "Archived “\(session.name)”")
+        save()
+    }
+
     public func unarchive(_ id: UUID) {
         guard let session = state.workspace.session(id), session.isArchived else { return }
         state.workspace.unarchive(id)

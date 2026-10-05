@@ -46,7 +46,7 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        ToolHeader(title: "Sessions", leadingInset: ToolRail.trafficLightInset) {
+        ToolHeader(title: "Sessions") {
             IconButton(systemName: "folder.badge.plus", help: "New Folder", size: 16) {
                 if let project = currentProjectID { model.createFolder(in: project) }
             }
@@ -575,7 +575,8 @@ struct SessionMenu: View {
         Button { model.reviewSession(session.id) } label: { Label("Review This Session", systemImage: "sparkles") }
             .disabled(!session.hasConversation)
         Divider()
-        if model.isRunning(session.id) || model.isAgentAlive(session.id) {
+        let isLive = model.isRunning(session.id) || model.isAgentAlive(session.id)
+        if isLive {
             Button("Stop Session") { model.stop(session.id) }
         } else {
             Button(session.hasConversation ? "Resume Session" : "Start Session") {
@@ -583,6 +584,7 @@ struct SessionMenu: View {
                 model.resume(session.id)
             }
         }
+        Button(isLive ? "Stop and Archive Session" : "Archive Session") { model.archive(session.id) }
         Button("Delete Session…", role: .destructive) { confirmDelete = true }
     }
 }
