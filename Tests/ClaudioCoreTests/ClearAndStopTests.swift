@@ -308,4 +308,52 @@ final class ClearAndStopTests: XCTestCase {
         XCTAssertEqual(discovery.newestHistoryFile(projectPath: repo, workingDirectory: repo, claudeSessionID: before)?
                            .deletingLastPathComponent().lastPathComponent, inRepo.deletingLastPathComponent().lastPathComponent)
     }
+
+    /// Only a session as discovery left it is merged away: one you've
+    /// renamed, archived or put in a folder stays beside the agent's.
+    func testAnOrganisedSessionWithTheConversationIsKept() async throws {
+        let organisers: [(inout Session) -> Void] = [
+            { $0.name = "Mine"; $0.hasCustomName = true },
+            { $0.isArchived = true },
+        ]
+        for organise in organisers + [nil] {
+            runner = FakeRunner()
+            runner.agentsJSON = agentJSON(sessionID: after)
+            let keptID = UUID()
+            let model = try await MainActor.run { () -> AppModel in
+                let model = try makeModel { p in
+                    var kept = Session(id: keptID, projectID: p, claudeSessionID: self.after, hasConversation: true,
+                                       name: "after", workingDirectory: self.worktree)
+                    organise?(&kept)
+                    return [kept]
+                }
+                // The third: put in a folder.
+                if organise == nil { XCTAssertNotNil(model.createFolder(in: model.workspace.projects[0].id, containing: keptID)) }
+                return model
+            }
+            await model.refreshAgents()
+            await MainActor.run {
+                XCTAssertNotNil(model.workspace.session(keptID))
+                XCTAssertEqual(model.workspace.session(appID)?.claudeSessionID, after)
+            }
+        }
+    }
+
+    /// A removed session's replaced conversation that's another's own (state
+    /// from before a copy's `/clear` was routed to it) doesn't stop that one
+    /// syncing.
+    func testARemovedSessionDoesntHideAnothersConversation() throws {
+        var workspace = Workspace()
+        let p = workspace.addProject(path: repo)
+        var removed = Session(projectID: p, claudeSessionID: "c1", name: "original", workingDirectory: repo)
+        removed.replacedConversations = [after]
+        let copy = Session(projectID: p, claudeSessionID: after, name: "copy", workingDirectory: repo)
+        try workspace.addSession(removed)
+        try workspace.addSession(copy)
+        workspace.removeFromClaudio(removed.id, at: Date())
+        XCTAssertTrue(workspace.isRemoved(claudeSessionID: "c1"))
+        XCTAssertFalse(workspace.isRemoved(claudeSessionID: after))
+        workspace.removeSession(copy.id)
+        XCTAssertTrue(workspace.isRemoved(claudeSessionID: after), "nobody else's now")
+    }
 }

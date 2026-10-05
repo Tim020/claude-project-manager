@@ -1444,10 +1444,14 @@ public final class AppModel {
     /// The agent's session is taking up a conversation (a `/clear` made while
     /// Claudio was closed) that history discovery may already have imported
     /// as a session of its own, if it ran first: that one goes, its pull
-    /// requests kept. Not one with an agent or a process of its own.
+    /// requests kept. Only one as discovery left it: no agent or process of
+    /// its own, not renamed (a title from Claude Code is fine), archived or
+    /// put in a folder. Otherwise both stay.
     private func absorbDuplicate(of claudeSessionID: String, into sessionID: UUID, in workspace: inout Workspace) {
         guard let duplicate = workspace.session(claudeSessionID: claudeSessionID), duplicate.id != sessionID,
-              duplicate.agentID == nil, !running.contains(duplicate.id) else { return }
+              duplicate.agentID == nil, !running.contains(duplicate.id), !duplicate.isArchived,
+              !duplicate.hasCustomName || duplicate.name == duplicate.claudeTitle else { return }
+        if case .folder? = workspace.group(of: duplicate.id) { return }
         workspace.updateSession(sessionID) { PullRequestLink.merge(duplicate.pullRequests, into: &$0.pullRequests) }
         workspace.closeTab(duplicate.id)
         workspace.removeSession(duplicate.id)

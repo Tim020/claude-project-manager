@@ -525,7 +525,9 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// session, so mustn't be imported again.
     public func isRemoved(claudeSessionID: String?, agentID: String? = nil) -> Bool {
         if let claudeSessionID, deletedClaudeSessionIDs.contains(claudeSessionID)
-            || removedSessions.contains(where: { $0.session.conversations.contains(claudeSessionID) }) {
+            || removedSessions.contains(where: { $0.session.claudeSessionID == claudeSessionID
+                // A replaced one that's now another session's own is theirs.
+                || ($0.session.replacedConversations.contains(claudeSessionID) && session(claudeSessionID: claudeSessionID) == nil) }) {
             return true
         }
         if let agentID, deletedAgentIDs.contains(agentID) || removedSessions.contains(where: { $0.session.agentID == agentID }) {
