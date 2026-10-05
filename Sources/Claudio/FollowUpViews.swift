@@ -36,6 +36,8 @@ struct NeedsYouSection: View {
                 SessionSuggestionCard(suggestion: suggestion, projectID: projectID)
             }
         }
+        // With no cards it would shrink to its text and sit centred.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
