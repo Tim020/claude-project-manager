@@ -330,6 +330,7 @@ extension AppModel {
         guard change(projectID: projectID, recording: [], { $0.mode = mode }) else { return }
         if mode == .automatic {
             releaseHeldJobs()
+            considerSkillCandidates(projectID: projectID)
         } else {
             assistantStoppedBackgroundWork(inProject: projectID, because: mode == .off ? "set to Off" : "set to Manual")
         }

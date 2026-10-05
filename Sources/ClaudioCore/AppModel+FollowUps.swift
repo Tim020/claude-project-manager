@@ -38,7 +38,9 @@ extension AppModel {
     public func needsYouCount(inProject projectID: UUID) -> Int {
         let data = needsYouData(inProject: projectID)
         guard isAssistantOn(inProject: projectID) else { return data.suggestions.count }
-        return data.followUps.filter { $0.state != .working }.count + data.suggestions.count
+        let skills = skillsData(inProject: projectID)
+        let offers = skills.candidates.filter { $0.state == .offered && !draftingCandidates.contains($0.id) }.count
+        return data.followUps.filter { $0.state != .working }.count + data.suggestions.count + offers + skills.proposals.count
     }
 
     // MARK: - Finding sessions ready for a follow-up
@@ -346,6 +348,7 @@ extension AppModel {
             }
             setFollowUpMark(sessionID, request.mark)
             pendingDigests[id] = nil
+            addLessons(FollowUpJob.lessons(from: reply.output, evidence: request.evidence), sessionID: sessionID, projectID: projectID)
             updateFollowUp(id, projectID: projectID) { followUp in
                 followUp.state = .ready
                 followUp.notes = kept

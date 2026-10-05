@@ -307,11 +307,12 @@ public enum FollowUpJob {
     You get a digest of what the session did since the last follow-up, the project's plan (items by ref), the plan item the session works on (if any), the notes the session already has, and the project's memory index.
     notes: things worth keeping that aren't in the code, the git history or the memory index: a decision and why, a gotcha found the hard way, a follow-up that's out of scope. One or two plain sentences each, understandable without the session. Don't repeat existing notes or summarise what the session did. Usually zero to two; never more than five.
     planChanges: only clear ones. "add" for new work the session found (title under 60 characters, status "planned" or "idea"). "done" when the digest shows an item's work finished (committed, or a PR opened or merged). "move" to change an item's status. Use the item's ref for done and move. Usually none.
+    lessons: something future sessions in this project should know, learned the hard way: a command that failed and what worked instead, or a way of working the user corrected. Not facts about the code. summary: one or two plain sentences, written as advice to a future session. evidence: the refs of the digest's failures (f1…) and corrections (c1…) it rests on; never invent one, and leave the lesson out if none fits. remember: true only when the user explicitly asked Claude to remember it, or to do it differently next time. Usually none; never more than three.
     reason: under 12 words, for the user.
     British English. When nothing is worth keeping, return empty lists. Reply only through the schema.
     """
 
-    static let schema = #"{"type":"object","properties":{"notes":{"type":"array","items":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}},"planChanges":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string","enum":["add","done","move"]},"ref":{"type":["string","null"]},"title":{"type":"string"},"status":{"type":"string","enum":["planned","idea","inSession","done"]},"reason":{"type":"string"}},"required":["kind","ref","title","status","reason"],"additionalProperties":false}}},"required":["notes","planChanges"],"additionalProperties":false}"#
+    static let schema = #"{"type":"object","properties":{"notes":{"type":"array","items":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}},"planChanges":{"type":"array","items":{"type":"object","properties":{"kind":{"type":"string","enum":["add","done","move"]},"ref":{"type":["string","null"]},"title":{"type":"string"},"status":{"type":"string","enum":["planned","idea","inSession","done"]},"reason":{"type":"string"}},"required":["kind","ref","title","status","reason"],"additionalProperties":false}},"lessons":{"type":"array","items":{"type":"object","properties":{"summary":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"remember":{"type":"boolean"}},"required":["summary","evidence","remember"],"additionalProperties":false}}},"required":["notes","planChanges","lessons"],"additionalProperties":false}"#
 
     public struct Request: Equatable, Sendable {
         public var call: AssistantCall
@@ -319,6 +320,9 @@ public enum FollowUpJob {
         public var refs: [String: UUID]
         /// The history lines the digest read: the session's new mark.
         public var mark: FollowUpMark
+        /// The digest's failures and corrections by ref, for its lessons
+        /// (empty when transcripts aren't sent: then there are none).
+        public var evidence: [String: SessionDigest.Evidence] = [:]
     }
 
     public static func request(digest: SessionDigest, mark: FollowUpMark, sessionName: String, items: [PlanItem],
@@ -352,7 +356,8 @@ public enum FollowUpJob {
         let call = AssistantCall(job: job, model: model.rawValue, systemPrompt: systemPrompt, schema: schema, input: text,
                                  maxBudgetUSD: budgetUSD * model.budgetFactor, timeout: timeout)
         return Request(call: call, refs: Dictionary(uniqueKeysWithValues: offered.map { ($0.ref, $0.item.id) }),
-                       mark: mark)
+                       mark: mark,
+                       evidence: withTranscripts ? Dictionary(digest.evidence.map { ($0.ref, $0) }) { first, _ in first } : [:])
     }
 
     /// Notes and plan changes from a reply. It's untrusted: refs are looked

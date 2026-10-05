@@ -19,15 +19,18 @@ public struct ApprovedSkill: Equatable, Sendable {
     public var text: String
     /// `metadata.claudio-version`: the approval it came from (step 5).
     public var version: Int?
+    /// `metadata.claudio-id`: the same through every version.
+    public var claudioID: UUID?
 
     public init(name: String, description: String = "", paths: [String] = [], folders: [String] = [], text: String = "",
-                version: Int? = nil) {
+                version: Int? = nil, claudioID: UUID? = nil) {
         self.name = name
         self.description = description
         self.paths = paths
         self.folders = folders
         self.text = text
         self.version = version
+        self.claudioID = claudioID
     }
 }
 
@@ -92,7 +95,8 @@ public enum SkillFiles {
                              paths: fields["paths"] ?? [],
                              folders: fields["metadata.claudio-folders"] ?? [],
                              text: text,
-                             version: fields["metadata.claudio-version"]?.first.flatMap { Int($0) })
+                             version: fields["metadata.claudio-version"]?.first.flatMap { Int($0) },
+                             claudioID: fields["metadata.claudio-id"]?.first.flatMap { UUID(uuidString: $0) })
     }
 
     static func lines(_ text: String) -> [String] {

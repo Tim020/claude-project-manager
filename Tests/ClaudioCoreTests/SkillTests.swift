@@ -305,4 +305,283 @@ final class SkillTests: XCTestCase {
             XCTAssertNil(f.model.noteCheckFailure(noteID, inProject: f.project))
         }
     }
+
+    // MARK: - Lessons to drafts
+
+    static let draftReply = #"{"action":"new","skill":null,"name":"linux-tests","description":"Run the tests on Linux before pushing.","whenToUse":"","paths":[],"body":"Run the Linux tests in Docker before you push.","why":"stops failing CI runs"}"#
+
+    /// Answers follow-ups with one lesson citing f1, and drafts with `draft`.
+    func answerFollowUpsAndDrafts(_ f: Fixture, draft: String = SkillTests.draftReply, remember: Bool = false) {
+        let followUp = #"{"notes":[],"planChanges":[],"lessons":[{"summary":"Run the Linux script, not swift test.","evidence":["f1","c1"],"remember":\#(remember)}]}"#
+        f.runner.answer = { args in
+            args.contains { $0.contains("\"lessons\"") } ? SkillRunner.reply(followUp) : SkillRunner.reply(draft, cost: 0.03)
+        }
+    }
+
+    /// What a session did: a failing `swift test` and a correction.
+    static func digest(remember: Bool = false) -> SessionDigest {
+        SessionDigest.build(lines: [
+            History.prompt("Fix the shell height"),
+            History.tool("t1", "Bash", ["command": "swift test --filter ShellPanelTests"]),
+            History.result("t1", "Exit code 1\nerror: 2 tests failed", error: true),
+            History.prompt(remember ? "No, remember to use the Linux script next time" : "No, use the Linux script instead"),
+        ], projectPath: "/code/app")
+    }
+
+    /// A second session in the project, for the lesson's second sighting.
+    @MainActor func addSession(_ f: Fixture, name: String = "Shell Width") -> UUID {
+        let session = Session(projectID: f.project, claudeSessionID: UUID().uuidString.lowercased(), hasConversation: true, name: name,
+                              workingDirectory: "/code/app", status: .completed)
+        f.model.applyTestSession(session)
+        return session.id
+    }
+
+    /// A follow-up for the session, run as if accepted.
+    func followUp(_ f: Fixture, session: UUID, remember: Bool = false) async {
+        await MainActor.run {
+            f.model.startFollowUp(session, digest: SkillTests.digest(remember: remember),
+                                  mark: FollowUpMark(conversationID: "c", offset: 0), askedFor: true)
+        }
+        await f.model.waitForSkillDrafts()
+    }
+
+    func testALessonSeenInTwoSessionsIsDraftedInTheBackground() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        try await MainActor.run {
+            let candidate = try XCTUnwrap(f.model.skillsData(inProject: f.project).candidates.first)
+            XCTAssertEqual(candidate.sessionCount, 1)
+            XCTAssertEqual(candidate.signature, "bash swift test | error: # tests failed")
+            XCTAssertEqual(candidate.evidence.map(\.kind), [.failure, .correction])
+            XCTAssertEqual(f.assistant.skillsData[f.project]?.candidates.count, 1, "saved")
+        }
+        XCTAssertEqual(f.runner.calls.count, 1, "seen once: no draft")
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        XCTAssertEqual(f.runner.calls.count, 3, "the second sighting drafts a skill")
+        XCTAssertTrue(f.runner.calls[2].containsSequence(["--model", "sonnet"]))
+        try await MainActor.run {
+            let proposal = try XCTUnwrap(f.model.skillProposals(inProject: f.project).first)
+            XCTAssertEqual(proposal.name, "linux-tests")
+            XCTAssertFalse(proposal.isChange)
+            XCTAssertEqual(proposal.why, "Stops failing CI runs.")
+            XCTAssertEqual(proposal.model, "Sonnet")
+            let skill = SkillFiles.skill(fromSkillFile: proposal.text, folderName: "x")
+            XCTAssertEqual(skill.version, 1)
+            XCTAssertNotNil(skill.claudioID)
+            XCTAssertTrue(proposal.text.contains("claudio-evidence: "), "the sessions it came from")
+            XCTAssertEqual(f.model.skillsData(inProject: f.project).candidates.first?.state, .proposed)
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 3, "two follow-ups and the new skill")
+            XCTAssertEqual(f.model.backgroundJobsToday, 1, "the draft counts as background work")
+            XCTAssertEqual(f.assistant.audit[f.project]?.last?.job?.name, SkillDraftJob.job)
+        }
+    }
+
+    func testManualModeOffersTheDraft() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            f.model.commandExistsOverride = { _ in true }
+            f.model.setAssistantMode(.manual, projectID: f.project)
+        }
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        XCTAssertEqual(f.runner.calls.count, 2, "no draft without asking")
+        let offer = try await MainActor.run { () -> LessonCandidate in
+            let offer = try XCTUnwrap(f.model.skillOffers(inProject: f.project).first)
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 3, "two follow-ups and the offer")
+            f.model.acceptSkillOffer(offer.id, projectID: f.project)
+            return offer
+        }
+        await f.model.waitForSkillDrafts()
+        XCTAssertEqual(f.runner.calls.count, 3)
+        await MainActor.run {
+            XCTAssertEqual(f.model.skillProposals(inProject: f.project).count, 1)
+            XCTAssertEqual(f.model.skillCandidate(offer.id, inProject: f.project)?.state, .proposed)
+            XCTAssertEqual(f.model.backgroundJobsToday, 0, "you asked for it")
+        }
+    }
+
+    func testNotNowOnAnOfferWaitsForTwoMoreSessions() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.setAssistantMode(.manual, projectID: f.project) }
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        try await MainActor.run {
+            let offer = try XCTUnwrap(f.model.skillOffers(inProject: f.project).first)
+            f.model.declineSkillOffer(offer.id, projectID: f.project)
+            XCTAssertTrue(f.model.skillOffers(inProject: f.project).isEmpty)
+            XCTAssertEqual(f.model.skillCandidate(offer.id, inProject: f.project)?.heldUntilSessions, 4)
+        }
+        let third = await MainActor.run { addSession(f, name: "Third") }
+        await followUp(f, session: third)
+        await MainActor.run { XCTAssertTrue(f.model.skillOffers(inProject: f.project).isEmpty, "three sessions: not yet") }
+        let fourth = await MainActor.run { addSession(f, name: "Fourth") }
+        await followUp(f, session: fourth)
+        await MainActor.run { XCTAssertEqual(f.model.skillOffers(inProject: f.project).count, 1, "offered again at four") }
+    }
+
+    func testRememberThisIsDraftedStraightAway() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            f.model.commandExistsOverride = { _ in true }
+            f.model.setAssistantMode(.manual, projectID: f.project)
+        }
+        answerFollowUpsAndDrafts(f, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        XCTAssertEqual(f.runner.calls.count, 2, "one session, but you said to remember it")
+        await MainActor.run {
+            XCTAssertEqual(f.model.skillProposals(inProject: f.project).count, 1)
+            XCTAssertEqual(f.model.skillsData(inProject: f.project).candidates.first?.remember, false, "drafted once")
+        }
+    }
+
+    func testTheModelCantClaimRememberThis() async throws {
+        let f = try await makeFixture()
+        answerFollowUpsAndDrafts(f, remember: true)
+        await followUp(f, session: f.session, remember: false)
+        XCTAssertEqual(f.runner.calls.count, 1, "no correction asked for it, so it waits for a second session")
+    }
+
+    func testAHeldDraftBecomesAnOfferInManualAndGoesInOff() async throws {
+        let f = try await makeFixture()
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        await MainActor.run {
+            f.model.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: SkillTests.now), count: f.model.settings.assistant.dailyJobLimit)
+        }
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.map(\.job), [SkillDraftJob.job], "held at the daily limit")
+            XCTAssertTrue(f.model.heldJobs[0].reason.hasPrefix("Daily limit"))
+            XCTAssertFalse(f.model.log.entries.contains { ($0.detail ?? "").contains("Linux script") }, "logged by id, not words")
+            f.model.setAssistantMode(.manual, projectID: f.project)
+            XCTAssertTrue(f.model.heldJobs.isEmpty)
+            XCTAssertEqual(f.model.skillOffers(inProject: f.project).count, 1, "held work becomes an offer in Manual")
+            f.model.setAssistantMode(.off, projectID: f.project)
+            XCTAssertTrue(f.model.skillOffers(inProject: f.project).isEmpty, "Off withdraws it")
+            XCTAssertEqual(f.model.skillsData(inProject: f.project).candidates.first?.state, .collecting, "the lesson is kept")
+        }
+        XCTAssertEqual(f.runner.calls.count, 2)
+    }
+
+    func testTranscriptsKeptBackStopADraftWhenItRuns() async throws {
+        let f = try await makeFixture()
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        await MainActor.run {
+            f.model.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: SkillTests.now), count: f.model.settings.assistant.dailyJobLimit)
+        }
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.count, 1)
+            var settings = ProjectAssistantSettings()
+            settings.dontSendTranscripts = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+            f.model.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: SkillTests.now), count: 0)
+            f.model.releaseHeldJobs()
+            XCTAssertTrue(f.model.heldJobs.isEmpty)
+        }
+        await f.model.waitForSkillDrafts()
+        XCTAssertEqual(f.runner.calls.count, 2, "the setting is checked when the draft runs, not when it was queued")
+    }
+
+    func testADraftThatFailsItsChecksIsDroppedWithoutItsText() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        let leaky = #"{"action":"new","skill":null,"name":"deploy","description":"Deploy.","whenToUse":"","paths":[],"body":"Use ghp_abcdefghijklmnopqrstuvwxyz0123456789 to push.","why":"x"}"#
+        answerFollowUpsAndDrafts(f, draft: leaky, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty, "never shown")
+            let entry = f.model.log.entries.last { $0.title.contains("dropped a skill draft") }
+            XCTAssertEqual(entry?.title, "Assistant: dropped a skill draft (deploy) that failed its checks")
+            XCTAssertEqual(entry?.detail, "it looks like it holds a secret (a GitHub token)")
+            XCTAssertFalse(f.model.log.entries.contains { ($0.detail ?? "").contains("ghp_") || $0.title.contains("ghp_") })
+            let candidate = f.model.skillsData(inProject: f.project).candidates.first
+            XCTAssertEqual(candidate?.state, .collecting)
+            XCTAssertEqual(candidate?.heldUntilSessions, 2, "drafted again once one more session shows it")
+        }
+    }
+
+    func testCommandsOffThePathFailTheChecks() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { $0 != "frobnicate" } }
+        let draft = #"{"action":"new","skill":null,"name":"frob","description":"Frob.","whenToUse":"","paths":[],"body":"```bash\nfrobnicate --all\n```","why":"x"}"#
+        answerFollowUpsAndDrafts(f, draft: draft, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
+            XCTAssertEqual(f.model.log.entries.last { $0.title.contains("dropped a skill draft") }?.detail,
+                           "it runs frobnicate, which isn't on the PATH")
+        }
+    }
+
+    func testNothingWorthASkillHoldsTheLessonBack() async throws {
+        let f = try await makeFixture()
+        answerFollowUpsAndDrafts(f, draft: #"{"action":"none","skill":null,"name":"","description":"","whenToUse":"","paths":[],"body":"","why":""}"#,
+                                 remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
+            XCTAssertEqual(f.model.skillsData(inProject: f.project).candidates.first?.heldUntilSessions, 3)
+        }
+    }
+
+    func testAPatchIsDraftedAgainstTheApprovedSkill() async throws {
+        let f = try await makeFixture()
+        let approved = SkillText.compose(name: "linux-tests", description: "Old.", whenToUse: "", paths: [], body: "Old body.",
+                                         metadata: [("claudio-id", "6f9619ff-8b86-d011-b42d-00c04fc964ff"), ("claudio-version", "2")])
+        await MainActor.run {
+            f.model.commandExistsOverride = { _ in true }
+            f.assistant.skills[f.project] = [SkillFiles.skill(fromSkillFile: approved, folderName: "linux-tests")]
+            f.model.refreshApprovedSkills(projectID: f.project)
+        }
+        let patch = #"{"action":"patch","skill":"linux-tests","name":"linux-tests","description":"New.","whenToUse":"","paths":[],"body":"New body.","why":"x"}"#
+        answerFollowUpsAndDrafts(f, draft: patch, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        try await MainActor.run {
+            let proposal = try XCTUnwrap(f.model.skillProposals(inProject: f.project).first)
+            XCTAssertTrue(proposal.isChange)
+            XCTAssertEqual(proposal.previousText, approved)
+            let skill = SkillFiles.skill(fromSkillFile: proposal.text, folderName: "x")
+            XCTAssertEqual(skill.version, 3)
+            XCTAssertEqual(skill.claudioID, UUID(uuidString: "6f9619ff-8b86-d011-b42d-00c04fc964ff"), "the same skill")
+        }
+        let call = try XCTUnwrap(f.runner.calls.last)
+        XCTAssertTrue(call.contains { $0.contains("Old body.") }, "the draft sees the approved skills")
+    }
+
+    func testAFailedBackgroundDraftCanBeTriedAgain() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        let followUp = #"{"notes":[],"planChanges":[],"lessons":[{"summary":"Run the Linux script.","evidence":["f1"],"remember":false}]}"#
+        f.runner.answer = { args in
+            args.contains { $0.contains("\"lessons\"") } ? SkillRunner.reply(followUp)
+                : CommandResult(exitCode: 1, output: (try? Fixtures.string("assistant-signed-out.json")) ?? "", errorOutput: "")
+        }
+        await self.followUp(f, session: f.session)
+        let second = await MainActor.run { addSession(f) }
+        await self.followUp(f, session: second)
+        let row = try await MainActor.run { () -> AssistantLogRow in
+            XCTAssertNil(f.model.errorMessage, "a background failure isn't an alert")
+            f.model.refreshAssistantLog(projectID: f.project)
+            let row = try XCTUnwrap(f.model.assistantLog(forProject: f.project).first { $0.job == SkillDraftJob.job })
+            XCTAssertEqual(row.subject, "Run the Linux script")
+            return row
+        }
+        let candidate = try await MainActor.run { try XCTUnwrap(f.model.skillsData(inProject: f.project).candidates.first) }
+        XCTAssertEqual(row.retry, .skillDraft(candidateID: candidate.id))
+        answerFollowUpsAndDrafts(f)
+        await MainActor.run { XCTAssertTrue(f.model.retry(.skillDraft(candidateID: candidate.id), projectID: f.project)) }
+        await f.model.waitForSkillDrafts()
+        await MainActor.run { XCTAssertEqual(f.model.skillProposals(inProject: f.project).count, 1) }
+    }
 }

@@ -81,6 +81,33 @@ public enum HistorySlice {
 }
 
 public struct SessionDigest: Equatable, Sendable {
+    /// A failure or a correction a lesson can point at (step 5). The call
+    /// sees each by its ref ("f1", "c2"); a lesson must cite refs, which are
+    /// resolved in code, so its signature comes from what happened, never
+    /// from the model's wording.
+    public struct Evidence: Codable, Equatable, Sendable {
+        public enum Kind: String, Codable, Sendable { case failure, correction }
+        public var ref: String
+        public var kind: Kind
+        /// The tool that failed ("Bash", "Edit").
+        public var tool: String?
+        /// A failed Bash call's command.
+        public var command: String?
+        /// The file a failed tool call worked on, relative to the project.
+        public var file: String?
+        /// The error, or your words.
+        public var text: String
+
+        public init(ref: String, kind: Kind, tool: String? = nil, command: String? = nil, file: String? = nil, text: String) {
+            self.ref = ref
+            self.kind = kind
+            self.tool = tool
+            self.command = command
+            self.file = file
+            self.text = text
+        }
+    }
+
     /// Your prompts since the mark, oldest first (each cut short).
     public var prompts: [String] = []
     /// Prompts that read like a correction ("no, …", "don't …").
@@ -96,6 +123,9 @@ public struct SessionDigest: Equatable, Sendable {
     public var pullRequestCommands: [String] = []
     /// Its last message.
     public var finalMessage: String = ""
+    /// The failures, then the corrections, with refs (in the same order as
+    /// `failures` and `corrections`).
+    public var evidence: [Evidence] = []
 
     public init() {}
 
@@ -130,6 +160,9 @@ public struct SessionDigest: Equatable, Sendable {
     public static func build(lines: [String], projectPath: String) -> SessionDigest {
         var digest = SessionDigest()
         var toolNames: [String: String] = [:]
+        var toolInputs: [String: [String: JSONValue]] = [:]
+        var failures: [Evidence] = []
+        var corrections: [Evidence] = []
         for line in lines {
             guard let event = StreamEventParser.parse(line) else { continue }
             switch event {
@@ -142,11 +175,20 @@ public struct SessionDigest: Equatable, Sendable {
                         guard !prompt.isEmpty, !prompt.hasPrefix("<") else { continue }
                         let short = ToolSummary.truncate(prompt, to: maxPrompt)
                         digest.prompts.append(short)
-                        if isCorrection(prompt) { digest.corrections.append(short) }
+                        if isCorrection(prompt) {
+                            digest.corrections.append(short)
+                            corrections.append(Evidence(ref: "", kind: .correction, text: short))
+                        }
                     case .toolResult(let id, let content, true):
                         let tool = toolNames[id].map { "\($0): " } ?? ""
-                        digest.failures.append(tool + ToolSummary.truncate(content.trimmingCharacters(in: .whitespacesAndNewlines),
-                                                                           to: maxFailure))
+                        let error = ToolSummary.truncate(content.trimmingCharacters(in: .whitespacesAndNewlines), to: maxFailure)
+                        digest.failures.append(tool + error)
+                        let input = toolInputs[id] ?? [:]
+                        let path = input["file_path"]?.stringValue ?? input["notebook_path"]?.stringValue
+                        failures.append(Evidence(ref: "", kind: .failure, tool: toolNames[id],
+                                                 command: input["command"]?.stringValue.map { ToolSummary.truncate($0, to: maxCommand) },
+                                                 file: path.map { SkillChips.relativePath($0, projectPath: projectPath) ?? $0 },
+                                                 text: error))
                     default:
                         continue
                     }
@@ -159,6 +201,7 @@ public struct SessionDigest: Equatable, Sendable {
                         if !trimmed.isEmpty { digest.finalMessage = trimmed }
                     case .toolUse(let id, let name, let input):
                         toolNames[id] = name
+                        toolInputs[id] = input
                         switch name {
                         case "Bash":
                             let command = input["command"]?.stringValue ?? ""
@@ -186,6 +229,15 @@ public struct SessionDigest: Equatable, Sendable {
         digest.corrections = Array(digest.corrections.suffix(maxPrompts))
         digest.commands = Array(digest.commands.suffix(maxCommands))
         digest.failures = Array(digest.failures.suffix(maxFailures))
+        digest.evidence = failures.suffix(maxFailures).enumerated().map { index, item in
+            var item = item
+            item.ref = "f\(index + 1)"
+            return item
+        } + corrections.suffix(maxPrompts).enumerated().map { index, item in
+            var item = item
+            item.ref = "c\(index + 1)"
+            return item
+        }
         digest.filesChanged = Array(digest.filesChanged.prefix(maxFiles))
         digest.finalMessage = ToolSummary.truncate(digest.finalMessage, to: maxFinal)
         return digest
@@ -197,10 +249,16 @@ public struct SessionDigest: Equatable, Sendable {
         func strings(_ values: [String]) -> JSONValue { .array(values.map(JSONValue.string)) }
         var object: [String: JSONValue] = ["filesChanged": strings(filesChanged), "finalMessage": .string(finalMessage)]
         if withTranscripts {
+            // Failures and corrections carry their refs, for lessons to cite.
+            func cited(_ kind: Evidence.Kind, _ texts: [String]) -> JSONValue {
+                let items = evidence.filter { $0.kind == kind }
+                guard items.count == texts.count else { return strings(texts) }
+                return .array(zip(items, texts).map { .object(["ref": .string($0.ref), "text": .string($1)]) })
+            }
             object["prompts"] = strings(prompts)
-            object["corrections"] = strings(corrections)
+            object["corrections"] = cited(.correction, corrections)
             object["commands"] = strings(commands)
-            object["failures"] = strings(failures)
+            object["failures"] = cited(.failure, failures)
             object["commits"] = strings(commits)
             object["pullRequestCommands"] = strings(pullRequestCommands)
         }

@@ -28,8 +28,8 @@ extension AppModel {
                 let data = try assistantStore.loadSkillsData(projectID: project.id)
                 savedSkillsData[project.id] = data
                 if !data.isEmpty { skillsData[project.id] = data }
-                if !data.unreadableUsage.isEmpty {
-                    log.append(.error, "\(data.unreadableUsage.count) of the skill usage entries for \(project.name) couldn't be read",
+                if data.unreadableCount > 0 {
+                    log.append(.error, "\(data.unreadableCount) of the assistant's skill entries for \(project.name) couldn't be read",
                                detail: "They're kept as they were.")
                 }
             } catch {

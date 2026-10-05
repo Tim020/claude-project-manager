@@ -309,6 +309,15 @@ public final class AppModel {
     /// as Check Failed, which opens Job Failed. Kept until the note is
     /// checked again (in memory: the Activity Log keeps the record).
     public internal(set) var noteCheckFailures: [UUID: NoteCheckFailure] = [:]
+    /// Lessons a skill is being drafted from now (see AppModel+SkillDrafts).
+    public internal(set) var draftingCandidates = Set<UUID>()
+    /// The login shell's PATH, read once for the drafts' command check
+    /// (empty: it couldn't be read, so that check is skipped).
+    @ObservationIgnored var loginShellPATH: [String]?
+    /// Replaces the command check's PATH lookup (for tests).
+    @ObservationIgnored var commandExistsOverride: ((String) -> Bool)?
+    /// Drafts whose reply is being checked (the PATH may be read first).
+    @ObservationIgnored var skillDraftTasks: [UUID: Task<Void, Never>] = [:]
     /// Where Claudio's plugin for sessions is (nil: it couldn't be set up).
     @ObservationIgnored var assistantPluginPath: String?
     /// The `index.tsv` text last written.

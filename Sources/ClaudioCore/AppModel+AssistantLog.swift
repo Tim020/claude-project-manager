@@ -46,6 +46,8 @@ public enum AssistantRetry: Equatable, Sendable {
     case noteCheck(noteID: UUID)
     /// Review the session again.
     case followUp(sessionID: UUID)
+    /// Draft a skill from the lesson again.
+    case skillDraft(candidateID: UUID)
 }
 
 extension AppModel {
@@ -123,6 +125,10 @@ extension AppModel {
             if let session = workspace.session(id) { return (session.name, on ? .followUp(sessionID: id) : nil) }
             return ("A session that's gone", nil)
         }
+        if job == SkillDraftJob.job {
+            guard let candidate = skillCandidate(id, inProject: projectID) else { return ("A lesson that's gone", nil) }
+            return (PlanTitle.from(candidate.summary), on && candidate.state != .proposed ? .skillDraft(candidateID: id) : nil)
+        }
         return (subject, nil)
     }
 
@@ -156,6 +162,18 @@ extension AppModel {
                 retryFollowUp(failed.id, projectID: projectID)
             } else {
                 reviewSession(sessionID)
+            }
+            return true
+        case .skillDraft(let candidateID):
+            guard skillCandidate(candidateID, inProject: projectID) != nil else {
+                showToast("That lesson has gone")
+                return false
+            }
+            guard startSkillDraft(candidateID, projectID: projectID, askedFor: true) else {
+                if !draftingCandidates.contains(candidateID), !assistantSettings(forProject: projectID).dontSendTranscripts {
+                    showToast("That lesson already has a draft waiting")
+                }
+                return false
             }
             return true
         }
