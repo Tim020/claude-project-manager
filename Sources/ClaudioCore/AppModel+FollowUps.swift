@@ -34,11 +34,13 @@ extension AppModel {
 
     /// The rail badge and the section's count: what's waiting for you.
     /// Jobs still running don't count. With the assistant off, only plan
-    /// changes sessions suggested (`claudio suggest` told them you'd see them).
-    public func needsYouCount(inProject projectID: UUID) -> Int {
+    /// changes sessions suggested (`claudio suggest` told them you'd see them)
+    /// and long-running background tasks, which aren't the assistant's.
+    public func needsYouCount(inProject projectID: UUID, now: Date? = nil) -> Int {
         let data = needsYouData(inProject: projectID)
-        guard isAssistantOn(inProject: projectID) else { return data.suggestions.count }
-        return data.followUps.filter { $0.state != .working }.count + data.suggestions.count
+        let others = data.suggestions.count + longRunningSessions(inProject: projectID, now: now).count
+        guard isAssistantOn(inProject: projectID) else { return others }
+        return data.followUps.filter { $0.state != .working }.count + others
     }
 
     // MARK: - Finding sessions ready for a follow-up

@@ -1,0 +1,14 @@
+{
+  "state": "blocked",
+  "tempo": "active",
+  "inFlight": {"tasks": 1, "queued": 0, "kinds": ["local_bash"], "drainableMonitors": 0},
+  "fan": [
+    {"id": "b293u3m3a", "kind": "monitor", "label": "PR #36 CI checks", "startedAt": 1791211724883, "doneAt": 1791212008172},
+    {"id": "bo84wji32", "kind": "shell", "label": "sleep 240; echo done", "startedAt": 1791212707893}
+  ],
+  "sessionId": "b78cdee4-ed51-4d61-9546-05683644b041",
+  "daemonShort": "b78cdee4",
+  "cliVersion": "2.1.289",
+  "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+  "backend": "daemon"
+}

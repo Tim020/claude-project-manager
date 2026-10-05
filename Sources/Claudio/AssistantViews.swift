@@ -98,11 +98,16 @@ struct AssistantTool: View {
                             .padding(.horizontal, 10)
                             .padding(.bottom, 10)
                     }
-                    // Hidden with the assistant off, unless a session suggested something.
-                    if model.isAssistantOn(inProject: projectID) || !model.needsYouData(inProject: projectID).suggestions.isEmpty {
-                        NeedsYouSection(projectID: projectID)
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 10)
+                    // Hidden with the assistant off, unless a session suggested
+                    // something or has been running background tasks a long
+                    // time, which it can become with no other change.
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        if model.isAssistantOn(inProject: projectID) || !model.needsYouData(inProject: projectID).suggestions.isEmpty
+                            || !model.longRunningSessions(inProject: projectID, now: context.date).isEmpty {
+                            NeedsYouSection(projectID: projectID)
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 10)
+                        }
                     }
                     ListModeSwitch(projectID: projectID)
                         .padding(.horizontal, 10)

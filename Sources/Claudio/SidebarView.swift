@@ -506,6 +506,9 @@ private struct SessionRow: View {
                     .foregroundStyle(DS.dim)
                     .help(indicator.help)
             }
+            if !session.backgroundTasks.isEmpty {
+                BackgroundTasksPill(session: session, now: now)
+            }
             Text(RelativeAge.string(from: session.lastActivity, now: now))
                 .font(DS.font(11))
                 .foregroundStyle(DS.muted)
@@ -545,6 +548,27 @@ private struct SessionRow: View {
     }
 }
 
+/// How many background tasks keep a session Working, orange once they've run
+/// long enough to show in Needs You.
+private struct BackgroundTasksPill: View {
+    let session: Session
+    let now: Date
+
+    var body: some View {
+        let color = BackgroundTasks.isLongRunning(session, now: now) ? DS.orange : DS.blue
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 8.5, weight: .bold))
+            Text("\(session.backgroundTasks.count)").font(DS.font(10.5, .bold)).monospacedDigit()
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .frame(minHeight: 16)
+        .background(Capsule().fill(color.opacity(0.22)))
+        .fixedSize()
+        .help(BackgroundTasks.help(session.backgroundTasks, now: now))
+    }
+}
+
 /// Actions for a session, shared by the sidebar row and the detail header.
 struct SessionMenu: View {
     @Environment(AppModel.self) private var model
@@ -575,6 +599,10 @@ struct SessionMenu: View {
         Button { model.reviewSession(session.id) } label: { Label("Review This Session", systemImage: "sparkles") }
             .disabled(!session.hasConversation)
         Divider()
+        if !session.backgroundTasks.isEmpty {
+            Button("Mark Background Tasks Finished") { model.markBackgroundTasksFinished(session.id) }
+                .help("Stop waiting on them: the session counts as finished, though they may still run.")
+        }
         let isLive = model.isRunning(session.id) || model.isAgentAlive(session.id)
         if isLive {
             Button("Stop Session") { model.stop(session.id) }
