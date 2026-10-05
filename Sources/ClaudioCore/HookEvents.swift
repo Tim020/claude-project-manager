@@ -154,6 +154,9 @@ public enum HookReducer {
             if event.name == .userPromptSubmit {
                 session.hasConversation = true
                 session.lastTurnFailed = false
+                // Woken by a task ending: it's gone, whatever ends this turn.
+                let ended = TaskNotification.endedTaskIDs(in: event.prompt ?? "")
+                if !ended.isEmpty { session.backgroundTasks.removeAll { ended.contains($0.id) } }
             }
             session.status = .working
             session.needsAction = nil
@@ -188,9 +191,15 @@ public enum HookReducer {
             session.lastTurnFailed = false
         case .stopFailure:
             // The turn ended (it comes instead of Stop), with an API error.
-            // It doesn't list background tasks (2.1.289), so the last Stop's
-            // stand: they're still running.
-            if let tasks = event.backgroundTasks { session.setBackgroundTasks(tasks, now: now) }
+            // It doesn't list background tasks (2.1.289). The last Stop's may
+            // have ended during the turn with no hook, so they're dropped:
+            // one still running wakes it later, and that Stop lists it again.
+            // Marks stay, so a task marked finished still doesn't count then.
+            if let tasks = event.backgroundTasks {
+                session.setBackgroundTasks(tasks, now: now)
+            } else {
+                session.backgroundTasks = []
+            }
             session.status = session.backgroundTasks.isEmpty ? .completed : .working
             session.needsAction = nil
             session.lastTurnFailed = true

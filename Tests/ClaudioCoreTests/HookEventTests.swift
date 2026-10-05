@@ -213,9 +213,10 @@ final class HookReducerTests: XCTestCase {
     }
 
     /// StopFailure doesn't list background tasks (recorded with 2.1.289, an
-    /// invalid API key in a container), so the last Stop's still run, and
-    /// tasks marked finished stay marked.
-    func testAFailedTurnKeepsItsBackgroundTasks() throws {
+    /// invalid API key in a container). The last Stop's may have ended
+    /// during the turn, so they're dropped and it completes; tasks marked
+    /// finished stay marked, for the Stop that lists one still running.
+    func testAFailedTurnDropsItsTasksButKeepsMarks() throws {
         let failure = try XCTUnwrap(Fixtures.lines("hook-stop-failure-2.1.289.log").compactMap(HookEventParser.parse).first)
         XCTAssertEqual(failure.name, .stopFailure)
         XCTAssertNil(failure.backgroundTasks)
@@ -224,14 +225,52 @@ final class HookReducerTests: XCTestCase {
         s.backgroundTasks = ["b1"]
         s.finishedBackgroundTasks = ["b2"]
         HookReducer.apply(failure, to: &s, now: now)
-        XCTAssertEqual(s.status, .working)
+        XCTAssertEqual(s.status, .completed)
         XCTAssertTrue(s.lastTurnFailed)
-        XCTAssertEqual(s.backgroundTasks.map(\.id), ["b1"])
+        XCTAssertEqual(s.backgroundTasks, [])
         XCTAssertEqual(s.finishedBackgroundTasks, ["b2"])
 
-        var idle = session(.working)
-        HookReducer.apply(failure, to: &idle, now: now)
-        XCTAssertEqual(idle.status, .completed)
+        HookReducer.apply(event(.stop) {
+            $0.backgroundTasks = [BackgroundTaskReport(id: "b1"), BackgroundTaskReport(id: "b2")]
+        }, to: &s, now: now)
+        XCTAssertEqual(s.status, .working, "b1 woke it, still running")
+        XCTAssertEqual(s.backgroundTasks.map(\.id), ["b1"], "b2 still marked")
+    }
+
+    /// The case that kept it Working: a task ends, waking it, and that turn
+    /// fails.
+    func testATurnWokenByATaskThatFailsCompletes() throws {
+        let events = try Fixtures.lines("hook-background-tasks.log").compactMap(HookEventParser.parse)
+        let failure = try XCTUnwrap(Fixtures.lines("hook-stop-failure-2.1.289.log").compactMap(HookEventParser.parse).first)
+        var s = session(.working)
+        HookReducer.apply(event(.stop) { $0.backgroundTasks = [BackgroundTaskReport(id: "a606f86decd4c31f8")] }, to: &s, now: now)
+        XCTAssertEqual(s.status, .working)
+        HookReducer.apply(events[1], to: &s, now: now)   // its <task-notification>
+        XCTAssertEqual(s.backgroundTasks, [], "dropped as soon as it notifies")
+        HookReducer.apply(failure, to: &s, now: now)
+        XCTAssertEqual(s.status, .completed)
+    }
+
+    func testReadsEndedTasksFromNotifications() throws {
+        let events = try Fixtures.lines("hook-background-tasks.log").compactMap(HookEventParser.parse)
+        XCTAssertEqual(TaskNotification.endedTaskIDs(in: events[1].prompt ?? ""), ["a606f86decd4c31f8"])
+        let batch = """
+            <task-notification>
+            <task-id>b1</task-id>
+            <status>completed</status>
+            </task-notification>
+            <task-notification>
+            <task-id>m2</task-id>
+            <summary>Monitor event: "CI"</summary>
+            <event>CI: pass</event>
+            </task-notification>
+            <task-notification>
+            <task-id>b3</task-id>
+            <status>failed</status>
+            </task-notification>
+            """
+        XCTAssertEqual(TaskNotification.endedTaskIDs(in: batch), ["b1", "b3"], "a Monitor's event isn't its end")
+        XCTAssertEqual(TaskNotification.endedTaskIDs(in: "Fix the <task-id>x</task-id> parser"), [])
     }
 
     func testStopWithoutTheFieldCompletes() {

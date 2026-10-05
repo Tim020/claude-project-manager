@@ -84,6 +84,28 @@ public enum BackgroundTasks {
     }
 }
 
+/// The `<task-notification>` prompt a finishing task wakes its session with.
+public enum TaskNotification {
+    private static let block = try! NSRegularExpression(pattern: #"<task-notification>(.*?)</task-notification>"#, options: [.dotMatchesLineSeparators])
+    private static let taskID = try! NSRegularExpression(pattern: #"<task-id>([^<]+)</task-id>"#)
+
+    /// The tasks the prompt says have ended: notifications with a
+    /// `<status>` (completed, failed…). A Monitor's events have none, and
+    /// its task goes on. A subagent may notify again if it's resumed.
+    public static func endedTaskIDs(in prompt: String) -> [String] {
+        guard prompt.contains("<task-notification>") else { return [] }
+        let range = NSRange(prompt.startIndex..., in: prompt)
+        return block.matches(in: prompt, range: range).compactMap { match in
+            guard let r = Range(match.range(at: 1), in: prompt) else { return nil }
+            let body = String(prompt[r])
+            guard body.contains("<status>"),
+                  let id = taskID.firstMatch(in: body, range: NSRange(body.startIndex..., in: body)),
+                  let idRange = Range(id.range(at: 1), in: body) else { return nil }
+            return String(body[idRange])
+        }
+    }
+}
+
 extension Session {
     /// Its process has gone, and its tasks with it.
     mutating func forgetBackgroundTasks() {
