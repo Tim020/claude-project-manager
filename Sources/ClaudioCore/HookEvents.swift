@@ -145,7 +145,7 @@ public enum HookReducer {
     public static let maxSummaryLength = 140
 
     public static func apply(_ event: HookEvent, to session: inout Session, now: Date) {
-        if let id = event.claudeSessionID, !id.isEmpty { session.claudeSessionID = id }
+        if let id = event.claudeSessionID { session.adoptConversation(id) }
 
         switch event.name {
         case .sessionStart:

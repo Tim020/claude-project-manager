@@ -104,12 +104,9 @@ extension AppModel {
         }
         // The newest, when a conversation has files in both the repository's
         // folder and a worktree's.
-        let files = discovery.historyItems(projectPath: project.path, workingDirectory: session.workingDirectory,
-                                           claudeSessionID: conversationID).filter { $0.pathExtension == "jsonl" }
-        func modified(_ url: URL) -> Date {
-            (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
-        }
-        guard let url = files.max(by: { modified($0) < modified($1) }), let bytes = size(url) else {
+        guard let url = discovery.newestHistoryFile(projectPath: project.path, workingDirectory: session.workingDirectory,
+                                                    claudeSessionID: conversationID),
+              let bytes = size(url) else {
             followUpHistoryMissing[session.id] = conversationID
             return nil
         }

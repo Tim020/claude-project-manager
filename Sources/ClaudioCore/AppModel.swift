@@ -184,7 +184,11 @@ public final class AppModel {
     /// Sessions you stopped, until their agent is seen gone: they get no
     /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
     /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
-    @ObservationIgnored private var stopsRequested: Set<UUID> = []
+    private var stopsRequested: Set<UUID> = []
+    /// The session whose conversation a `/clear` just ended, by the app id
+    /// its hooks carry (shared by an original and its copies), for the
+    /// SessionStart that follows.
+    @ObservationIgnored private var clearing: [UUID: UUID] = [:]
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -505,9 +509,11 @@ public final class AppModel {
         }
         let discovery = self.discovery
         let directory = session.workingDirectory
+        let projectPath = state.workspace.project(session.projectID)?.path ?? directory
         let lines = await Task.detached(priority: .userInitiated) { () -> [TranscriptLine] in
             var builder = TranscriptBuilder(workingDirectory: directory)
-            (try? discovery.loadHistory(projectPath: directory, claudeSessionID: claudeID))?.forEach { builder.apply($0) }
+            let file = discovery.newestHistoryFile(projectPath: projectPath, workingDirectory: directory, claudeSessionID: claudeID)
+            (file.flatMap { try? discovery.loadHistory(file: $0) })?.forEach { builder.apply($0) }
             return builder.lines
         }.value
         if historyLines[sessionID] != lines { historyLines[sessionID] = lines }
@@ -1102,9 +1108,10 @@ public final class AppModel {
             if let agentID = session.agentID {
                 runAgentCommand { $0.remove(agentID: agentID) }
             }
-            // After `claude rm`, so the agent can't write to them again.
-            if let claudeID = session.claudeSessionID {
-                let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            // After `claude rm`, so the agent can't write to them again. With
+            // the conversations `/clear` left behind.
+            let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            for claudeID in state.workspace.ownedConversations(of: session) {
                 enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
             }
         }
@@ -1208,6 +1215,21 @@ public final class AppModel {
     }
 
     // MARK: - Background agents
+
+    /// A live agent's tab was shown without a terminal: attach to it, unless
+    /// it's being stopped. Stopping closes the terminal before the agent has
+    /// gone, and attaching then would bring it back.
+    public func attachIfLive(_ sessionID: UUID) {
+        guard isAgentAlive(sessionID), !isStopping(sessionID) else { return }
+        resume(sessionID)
+    }
+
+    /// Whether a stop was asked for and its agent hasn't been seen gone yet.
+    /// (`stopsRequested` itself lasts until the notification check has seen
+    /// it go.)
+    public func isStopping(_ sessionID: UUID) -> Bool {
+        stopsRequested.contains(sessionID) && isAgentAlive(sessionID)
+    }
 
     /// Opens a session: reattaches a live agent, resumes a stopped one in the
     /// background, or (without an agent) starts `claude` directly. A message,
@@ -1335,7 +1357,12 @@ public final class AppModel {
             if existing == nil, let match = workspace.session(claudeSessionID: agent.sessionID), !claimed.contains(match.id) {
                 existing = match
             }
-            if let existing { claimed.insert(existing.id) }
+            if let existing {
+                claimed.insert(existing.id)
+                if existing.claudeSessionID != agent.sessionID {
+                    absorbDuplicate(of: agent.sessionID, into: existing.id, in: &workspace)
+                }
+            }
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
@@ -1345,7 +1372,8 @@ public final class AppModel {
                 let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
-                    session.claudeSessionID = agent.sessionID
+                    // Changes with `/clear`, which may have run while Claudio was closed.
+                    session.adoptConversation(agent.sessionID)
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
@@ -1411,6 +1439,23 @@ public final class AppModel {
             state.workspace = workspace
             save()
         }
+    }
+
+    /// The agent's session is taking up a conversation (a `/clear` made while
+    /// Claudio was closed) that history discovery may already have imported
+    /// as a session of its own, if it ran first: that one goes, its pull
+    /// requests kept. Only one as discovery left it: no agent or process of
+    /// its own, not renamed (a title from Claude Code is fine), archived or
+    /// put in a folder. Otherwise both stay.
+    private func absorbDuplicate(of claudeSessionID: String, into sessionID: UUID, in workspace: inout Workspace) {
+        guard let duplicate = workspace.session(claudeSessionID: claudeSessionID), duplicate.id != sessionID,
+              duplicate.agentID == nil, !running.contains(duplicate.id), !duplicate.isArchived,
+              !duplicate.hasCustomName || duplicate.name == duplicate.claudeTitle else { return }
+        if case .folder? = workspace.group(of: duplicate.id) { return }
+        workspace.updateSession(sessionID) { PullRequestLink.merge(duplicate.pullRequests, into: &$0.pullRequests) }
+        workspace.closeTab(duplicate.id)
+        workspace.removeSession(duplicate.id)
+        log.append(.info, "Merged “\(duplicate.name)” into the session whose agent `/clear` moved on to it")
     }
 
     /// For tests: links a session to an agent as a dispatch would.
@@ -1736,7 +1781,16 @@ public final class AppModel {
         guard let claudeID = event.claudeSessionID, !claudeID.isEmpty else {
             return workspace.session(event.appSessionID)?.id
         }
-        if let session = workspace.session(claudeSessionID: claudeID) { return session.id }
+        if let session = workspace.session(claudeSessionID: claudeID) {
+            // `/clear` ends this conversation and starts the next under the
+            // same app id: the start goes to whoever ended (a copy, maybe).
+            if event.name == .sessionEnd && event.reason == "clear" { clearing[event.appSessionID] = session.id }
+            return session.id
+        }
+        if event.name == .sessionStart && event.source == "clear",
+           let cleared = clearing.removeValue(forKey: event.appSessionID), workspace.session(cleared) != nil {
+            return cleared
+        }
         if let owner = workspace.session(event.appSessionID),
            owner.claudeSessionID == nil || (event.name == .sessionStart && event.source == "clear") {
             return owner.id

@@ -141,11 +141,15 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     /// Tasks you marked finished while they still ran (a dev server, say):
     /// they don't keep it Working. Kept while Claude Code still reports them.
     public var finishedBackgroundTasks: [String] = []
+    /// Conversations this session has moved on from (`/clear` starts a new
+    /// one in the same process). Their history files stay behind, and are
+    /// this session's, not new sessions to import.
+    public var replacedConversations: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
-        case backgroundTasks, finishedBackgroundTasks
+        case backgroundTasks, finishedBackgroundTasks, replacedConversations
     }
 
     public init(
@@ -183,6 +187,23 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         self.createdAt = createdAt
         self.lastActivity = lastActivity ?? createdAt
         self.isArchived = isArchived
+    }
+}
+
+extension Session {
+    /// Points the session at a conversation (from a hook or the agent list).
+    /// One it had before is kept in `replacedConversations`.
+    mutating func adoptConversation(_ id: String) {
+        guard !id.isEmpty, id != claudeSessionID else { return }
+        if let old = claudeSessionID, !replacedConversations.contains(old) { replacedConversations.append(old) }
+        replacedConversations.removeAll { $0 == id }
+        claudeSessionID = id
+    }
+
+    /// Every conversation that belongs to it: the current one and those
+    /// `/clear` replaced.
+    public var conversations: [String] {
+        (claudeSessionID.map { [$0] } ?? []) + replacedConversations
     }
 }
 
