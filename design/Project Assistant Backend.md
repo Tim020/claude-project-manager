@@ -455,6 +455,7 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
        - Off: nothing.
      - **Code-only checks.** The drift check runs in every mode, since sessions can still edit skills. Unused Skill cards cover only Claudio's own skills: Claudio can't see a repository skill used outside it, and retiring one would move a file in the repository.
      - **The skill set per session:** probe first, build it if symlinks work, drop it if not. They work (2.1.169 and 2.1.289), so it's built in 5b.
+     - **Which sessions get a set (Tim, 2026-10-05, option A):** only sessions started from a plan item. Such a session's `--add-dir` root is `assistant/<project>/sessions/<session id>/`, whose `.claude/skills/` holds links to just its chipped skills, so a removed chip means the session doesn't have that skill. Every other way of starting (New Session, resuming a session that has no set, imported sessions) keeps the shared root, unchanged. A skill approved later reaches shared-root sessions only. Resuming a plan-item session keeps its own root. The item's view gets add and remove for its session's skills, which change the links live (no restart). Deleting the session deletes its root; retiring a skill removes its links; Save to Repository drops them (the repository copy loads by itself). The sheet's hint becomes "Only these skills are loaded in this session."
      - Already settled, so not asked again: real probes on Tim's account are fine (step 4); drafts use the project's "Follow-ups, skills and Ask" model (`deepModel`, step 4b); a skill unused for 30 days gets an Unused Skill card (Decisions §4).
    - **Carried into step 5 (every one is built here):**
      - From step 3: chip scoring's usage term (`PreToolUse` Skill events); its touched files from the linked sessions' history, not `sessionChanges`; logging `SKILL.md` files that can't be read or have no closing `---`.
@@ -506,7 +507,7 @@ Decided at the start of step 5 (2026-10-05): see Build order › 5 for the detai
 - **Two PRs** (5a, then 5b).
 - **Drafts:** behind the gate in Automatic, offered in Manual, straight away for "remember this", none in Off.
 - **Drift in every mode; Unused Skill cards only for Claudio's own skills.**
-- **A skill set per session:** built in 5b (symlinks verified).
+- **A skill set per session:** built in 5b (symlinks verified), for sessions started from a plan item only.
 
 Decided in step 4a (2026-09-30):
 - **No baseline when Automatic is turned back on** (Tim's call, PR #28 review round 1). Sessions made while a project was Manual or Off, or while the assistant switch was off, keep their unread start. So turning Automatic on can bring a one-off batch of offers for sessions finished meanwhile. Offers cost nothing, and Review This Session covers anything skipped.
