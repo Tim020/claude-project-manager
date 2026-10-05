@@ -256,4 +256,34 @@ final class SkillDraftTests: XCTestCase {
         XCTAssertEqual(call.maxBudgetUSD, SkillDraftJob.budgetUSD * AssistantModel.sonnet.budgetFactor, accuracy: 0.0001)
         XCTAssertTrue(call.input.contains("\"approvedSkills\""))
     }
+
+    // MARK: - Recorded Sonnet replies (2.1.289)
+
+    func testARecordedFollowUpsLessonIsRead() throws {
+        let result = CommandResult(exitCode: 0, output: try Fixtures.string("assistant-followup-lessons.json"), errorOutput: "")
+        guard case .success(let reply) = AssistantReplyParser.parse(result, timeout: 120) else { return XCTFail("expected a reply") }
+        let correction = "No, don't run swift test on this Mac for the Linux checks, remember to use ./scripts/test-linux.sh next time"
+        let evidence = ["c1": SessionDigest.Evidence(ref: "c1", kind: .correction, text: correction),
+                        "f1": SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: "swift test", text: "boom")]
+        let lessons = FollowUpJob.lessons(from: reply.output, evidence: evidence)
+        XCTAssertEqual(lessons.count, 1)
+        XCTAssertTrue(lessons[0].remember, "it cited the correction that says remember")
+        XCTAssertEqual(lessons[0].signature, "correction run swift test on this mac")
+        XCTAssertEqual(reply.costUSD ?? 0, 0.010222, accuracy: 0.000001)
+    }
+
+    func testARecordedDraftPassesTheChecks() throws {
+        let result = CommandResult(exitCode: 0, output: try Fixtures.string("assistant-skill-draft.json"), errorOutput: "")
+        guard case .success(let reply) = AssistantReplyParser.parse(result, timeout: 120) else { return XCTFail("expected a reply") }
+        let draft = try XCTUnwrap(SkillDraftJob.draft(from: reply.output, skills: [ApprovedSkill(name: "worktree-setup")]))
+        XCTAssertEqual(draft.action, .new)
+        XCTAssertEqual(draft.name, "linux-test-checks")
+        let text = SkillText.compose(name: draft.name, description: draft.description, whenToUse: draft.whenToUse, paths: draft.paths,
+                                     body: draft.body, metadata: [("claudio-version", "1")])
+        let context = SkillCheck.Context(projectPath: "/code/app", existingNames: ["worktree-setup"], patching: nil,
+                                         commandExists: { _ in true }, fileExists: { $0 == "/code/app/scripts/test-linux.sh" })
+        XCTAssertEqual(SkillCheck.problems(text, context: context), [])
+        XCTAssertEqual(SkillFiles.skill(fromSkillFile: text, folderName: "x").paths, ["Tests/**/*.swift", "scripts/test-linux.sh"])
+        XCTAssertEqual(reply.durationMS, 5232)
+    }
 }
