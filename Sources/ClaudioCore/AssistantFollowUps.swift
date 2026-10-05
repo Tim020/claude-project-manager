@@ -1,7 +1,8 @@
 import Foundation
 
 // Step 4 of the Project Assistant: follow-ups. When a session looks done
-// it's offered one; on Follow Up (or Review This Session), one Sonnet call
+// it's offered one; on Follow Up (or Review This Session), one Claude call
+// (Sonnet unless the project's Assistant Settings choose another)
 // reads a digest of what it did and suggests notes (saved straight away,
 // undoable) and plan changes (applied only when you choose Add to Plan).
 // Needs You lists what's waiting for you: offers, finished and failed
@@ -113,6 +114,8 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     /// It ran because you asked: Follow Up on an offer, or Review This
     /// Session. False only for an offer.
     public var askedFor: Bool
+    /// The model it ran on ("Sonnet"), for Job Failed.
+    public var model: String?
     /// Later, or ✕: the card leaves the session and waits in Needs You.
     public var isDeferred = false
 
@@ -127,7 +130,7 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred
+        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model
     }
 
     /// Tolerant: fields a later build adds, or leaves out, take defaults. A
@@ -143,6 +146,7 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
         askedFor = try c.decodeIfPresent(Bool.self, forKey: .askedFor) ?? true
         isDeferred = try c.decodeIfPresent(Bool.self, forKey: .isDeferred) ?? false
+        model = try c.decodeIfPresent(String.self, forKey: .model)
     }
 }
 
@@ -281,18 +285,15 @@ public struct DailyJobCount: Codable, Equatable, Sendable {
     }
 }
 
-extension AssistantModels {
-    /// Follow-ups, skill drafts and Ask.
-    public static let deep = "sonnet"
-}
 
 // MARK: - The follow-up call
 
 public enum FollowUpJob {
     public static let job = "Follow-up"
     /// A follow-up measured about $0.01 and 2 s on Sonnet (2.1.285, short
-    /// digests); this stops one that runs away.
-    public static let budgetUSD = 0.30
+    /// digests). The cap stops one that runs away: $0.10 on Haiku, scaled by
+    /// model ($0.30 on Sonnet, an estimated $1.50 on Opus).
+    public static let budgetUSD = 0.10
     public static let timeout = 120
     /// The whole input, in characters. It goes on the command line, so it's
     /// capped well below any limit; the digest's own caps keep it far under.
@@ -322,7 +323,7 @@ public enum FollowUpJob {
 
     public static func request(digest: SessionDigest, mark: FollowUpMark, sessionName: String, items: [PlanItem],
                                sessionItem: PlanItem?, sessionNotes: [ProjectNote], memoryIndex: String?,
-                               withTranscripts: Bool = true, model: String = AssistantModels.deep) -> Request {
+                               withTranscripts: Bool = true, model: AssistantModel = .sonnet) -> Request {
         let offered = PromoteCheck.refs(for: items)
         let refByItem = Dictionary(uniqueKeysWithValues: offered.map { ($0.item.id, $0.ref) })
         let plan: [JSONValue] = offered.map {
@@ -348,8 +349,8 @@ public enum FollowUpJob {
                 text = (try? encoder.encode(JSONValue.object(input))).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
             }
         }
-        let call = AssistantCall(job: job, model: model, systemPrompt: systemPrompt, schema: schema, input: text,
-                                 maxBudgetUSD: budgetUSD, timeout: timeout)
+        let call = AssistantCall(job: job, model: model.rawValue, systemPrompt: systemPrompt, schema: schema, input: text,
+                                 maxBudgetUSD: budgetUSD * model.budgetFactor, timeout: timeout)
         return Request(call: call, refs: Dictionary(uniqueKeysWithValues: offered.map { ($0.ref, $0.item.id) }),
                        mark: mark)
     }

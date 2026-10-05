@@ -35,6 +35,19 @@ extension AppModel {
                            : "\nNew sessions get the copy already there."))
         }
         for project in workspace.projects {
+            do {
+                let settings = try assistantStore.loadProjectSettings(projectID: project.id)
+                if settings != ProjectAssistantSettings() { projectAssistantSettings[project.id] = settings }
+            } catch {
+                // Fail closed on privacy, and leave the file as it is.
+                unreadableProjectSettings.insert(project.id)
+                projectAssistantSettings[project.id] = .unreadableFallback
+                let place = assistantStore.location(projectID: project.id)
+                    .map { ($0 as NSString).deletingLastPathComponent + "/settings.json: " } ?? ""
+                log.append(.error, "Couldn't read the assistant's settings for \(project.name)",
+                           detail: place + AppModel.describe(error)
+                               + "\nTranscripts aren't sent until it can be read, and it isn't changed meanwhile.")
+            }
             prepareSkillsRoot(projectID: project.id)
             writePlanSnapshot(projectID: project.id)
             refreshApprovedSkills(projectID: project.id)

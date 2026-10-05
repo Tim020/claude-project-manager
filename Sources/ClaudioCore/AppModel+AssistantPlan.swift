@@ -15,6 +15,12 @@ public enum AssistantPanelView: Equatable, Sendable {
     case item(projectID: UUID, itemID: UUID)
     /// A follow-up from Needs You.
     case followUp(projectID: UUID, id: UUID)
+    /// The project's Assistant Settings (⋯).
+    case settings(projectID: UUID)
+    /// The project's Activity Log (⋯, or from Job Failed).
+    case activityLog(projectID: UUID)
+    /// A failed call, from the Activity Log.
+    case jobFailed(projectID: UUID, row: AssistantLogRow)
 }
 
 /// What the assistant suggests for a note, shown on it until you answer.
@@ -171,6 +177,30 @@ extension AppModel {
         assistantPanel = .followUp(projectID: projectID, id: id)
     }
 
+    public func openAssistantSettings(projectID: UUID) {
+        assistantPanel = .settings(projectID: projectID)
+    }
+
+    public func openAssistantLog(projectID: UUID) {
+        refreshAssistantLog(projectID: projectID)
+        assistantPanel = .activityLog(projectID: projectID)
+    }
+
+    public func openJobFailed(_ row: AssistantLogRow, projectID: UUID) {
+        assistantPanel = .jobFailed(projectID: projectID, row: row)
+    }
+
+    /// Assistant Settings, the Activity Log or Job Failed, when the panel is
+    /// drilled into one for the project it's showing.
+    public var shownAssistantPanel: AssistantPanelView? {
+        switch assistantPanel {
+        case .settings(let projectID), .activityLog(let projectID), .jobFailed(let projectID, _):
+            return projectID == assistantProjectID ? assistantPanel : nil
+        default:
+            return nil
+        }
+    }
+
     /// The follow-up the panel is drilled into, while it's still in Needs You.
     public var shownFollowUp: FollowUp? {
         guard case .followUp(let projectID, let id) = assistantPanel, projectID == assistantProjectID else { return nil }
@@ -297,7 +327,32 @@ extension AppModel {
     public func setAssistantMode(_ mode: AssistantMode, projectID: UUID) {
         guard assistantMode(ofProject: projectID) != mode else { return }
         // Not a change to notes or items, so it has no audit entry.
-        _ = change(projectID: projectID, recording: []) { $0.mode = mode }
+        guard change(projectID: projectID, recording: [], { $0.mode = mode }) else { return }
+        if mode == .automatic {
+            releaseHeldJobs()
+        } else {
+            assistantStoppedBackgroundWork(inProject: projectID, because: mode == .off ? "set to Off" : "set to Manual")
+        }
+    }
+
+    // MARK: - Assistant Settings (per project)
+
+    public func assistantSettings(forProject projectID: UUID) -> ProjectAssistantSettings {
+        projectAssistantSettings[projectID] ?? ProjectAssistantSettings()
+    }
+
+    public func setAssistantSettings(_ settings: ProjectAssistantSettings, projectID: UUID) {
+        guard assistantSettings(forProject: projectID) != settings, !isAssistantDataUnreadable(projectID) else { return }
+        guard !unreadableProjectSettings.contains(projectID) else {
+            report("This project's assistant settings couldn't be read, so they can't be changed. See the Activity Log.")
+            return
+        }
+        do {
+            try assistantStore.saveProjectSettings(settings, projectID: projectID)
+            projectAssistantSettings[projectID] = settings
+        } catch {
+            report("Couldn't save the assistant's settings: \(AppModel.describe(error))")
+        }
     }
 
     /// Removes what the assistant suggested for a note (after Promote or

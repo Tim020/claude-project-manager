@@ -349,6 +349,15 @@ public protocol AssistantStoring: AnyObject {
     func saveDailyJobs(_ count: DailyJobCount) throws
     /// Whether a count file exists (to tell "none yet" from "unreadable").
     func hasDailyJobsFile() -> Bool
+    // Step 4b: Assistant Settings (tolerant, no version) and the audit log's reader.
+    /// The defaults when there's no file yet; throws for one that's there
+    /// but can't be read.
+    func loadProjectSettings(projectID: UUID) throws -> ProjectAssistantSettings
+    func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws
+    /// The newest lines of `audit.jsonl` that read, oldest first, and how
+    /// many didn't (from a later build, or a line cut short). Empty for no
+    /// log yet; throws for one that's there but can't be read.
+    func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int)
 }
 
 extension AssistantStoring {
@@ -368,6 +377,9 @@ extension AssistantStoring {
     public func loadDailyJobs() -> DailyJobCount? { nil }
     public func saveDailyJobs(_ count: DailyJobCount) throws {}
     public func hasDailyJobsFile() -> Bool { false }
+    public func loadProjectSettings(projectID: UUID) throws -> ProjectAssistantSettings { ProjectAssistantSettings() }
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {}
+    public func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int) { ([], 0) }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -413,6 +425,22 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func loadDailyJobs() -> DailyJobCount? { dailyJobs }
     public func saveDailyJobs(_ count: DailyJobCount) throws { dailyJobs = count }
     public func hasDailyJobsFile() -> Bool { dailyJobs != nil }
+    public var projectSettings: [UUID: ProjectAssistantSettings] = [:]
+    /// Makes `loadProjectSettings` throw, as an unreadable file does.
+    public var projectSettingsError: Error?
+    /// Makes `readAudit` throw, as an unreadable log does.
+    public var auditReadError: Error?
+    public func loadProjectSettings(projectID: UUID) throws -> ProjectAssistantSettings {
+        if let projectSettingsError { throw projectSettingsError }
+        return projectSettings[projectID] ?? ProjectAssistantSettings()
+    }
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {
+        projectSettings[projectID] = settings
+    }
+    public func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int) {
+        if let auditReadError { throw auditReadError }
+        return (Array((audit[projectID] ?? []).suffix(max(0, limit))), 0)
+    }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -539,6 +567,55 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func hasDailyJobsFile() -> Bool {
         FileManager.default.fileExists(atPath: root.appendingPathComponent("daily-jobs.json").path)
+    }
+
+    /// `settings.json`: the defaults when there's none yet; an error for
+    /// one that's there but can't be read (so the caller can fail closed).
+    public func loadProjectSettings(projectID: UUID) throws -> ProjectAssistantSettings {
+        let url = directory(projectID: projectID).appendingPathComponent("settings.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return ProjectAssistantSettings() }
+        return try JSONDecoder().decode(ProjectAssistantSettings.self, from: Data(contentsOf: url))
+    }
+
+    public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {
+        let directory = directory(projectID: projectID)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(settings).write(to: directory.appendingPathComponent("settings.json"), options: .atomic)
+    }
+
+    /// Reads from the end, at most `limit` lines (and at most 4 MB), so a
+    /// long log stays quick. Lines that don't decode are skipped and counted.
+    /// When the 4 MB starts part-way through a line, that part isn't counted.
+    public func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int) {
+        let url = directory(projectID: projectID).appendingPathComponent("audit.jsonl")
+        guard FileManager.default.fileExists(atPath: url.path) else { return ([], 0) }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let maxBytes: UInt64 = 4 * 1024 * 1024
+        let size = try handle.seekToEnd()
+        let start = size > maxBytes ? size - maxBytes : 0
+        // One byte before, to tell whether `start` is at a line's start.
+        try handle.seek(toOffset: start > 0 ? start - 1 : 0)
+        var data = try handle.readToEnd() ?? Data()
+        var atLineStart = true
+        if start > 0, let first = data.first {
+            atLineStart = first == 0x0A
+            data = data.dropFirst()
+        }
+        var lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
+        if !atLineStart, !lines.isEmpty { lines.removeFirst() }
+        var entries: [AuditEntry] = []
+        var unreadable = 0
+        for line in lines.suffix(max(0, limit)) {
+            if let entry = try? JSONFileStore.decoder.decode(AuditEntry.self, from: Data(line.utf8)) {
+                entries.append(entry)
+            } else {
+                unreadable += 1
+            }
+        }
+        return (entries, unreadable)
     }
 
     public func saveDailyJobs(_ count: DailyJobCount) throws {

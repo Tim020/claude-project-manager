@@ -15,14 +15,18 @@ struct AssistantTool: View {
     var body: some View {
         let shownItem = model.shownPlanItem
         let shownFollowUp = model.shownFollowUp
-        let drilledIn = shownItem != nil || shownFollowUp != nil
+        let shownPanel = model.shownAssistantPanel
+        let drilledIn = shownItem != nil || shownFollowUp != nil || shownPanel != nil
         VStack(spacing: 0) {
-            ToolHeader(title: shownItem != nil ? "Plan Item" : shownFollowUp != nil ? "Follow-up" : "Assistant",
+            ToolHeader(title: headerTitle(item: shownItem, followUp: shownFollowUp, panel: shownPanel),
                        onBack: drilledIn ? { model.closePlanItem() } : nil) {
                 IconButton(systemName: "square.and.pencil", help: "New Note (⇧⌘N)", size: 15) {
                     model.beginNoteCapture()
                 }
                 .disabled(model.assistantProjectID.map(model.isAssistantDataUnreadable) ?? true)
+                if let projectID = model.assistantProjectID, !model.isAssistantDataUnreadable(projectID) {
+                    AssistantHeaderMenu(projectID: projectID)
+                }
             }
             if let projectID = model.assistantProjectID, let project = model.workspace.project(projectID) {
                 Text(project.name.uppercased())
@@ -50,12 +54,30 @@ struct AssistantTool: View {
                     PlanItemView(item: item, projectID: projectID)
                         .id(item.id)
                 } else if let followUp = shownFollowUp {
-                    ScrollView {
-                        FollowUpBody(followUp: followUp, projectID: projectID, placement: .panel)
-                            .padding(.horizontal, 14)
-                            .padding(.bottom, 14)
+                    if case .failed(let message) = followUp.state {
+                        JobFailedView(title: "Couldn't follow up \(followUp.sessionName)", message: message,
+                                      // The model it ran on (older cards didn't record it).
+                                      jobLine: [FollowUpJob.job, followUp.sessionName, followUp.model,
+                                                followUp.createdAt.formatted(date: .omitted, time: .shortened)]
+                                          .compactMap { $0 }.joined(separator: " · "),
+                                      projectID: projectID,
+                                      tryAgain: { model.retryFollowUp(followUp.id, projectID: projectID) })
+                            .id(followUp.id)
+                    } else {
+                        ScrollView {
+                            FollowUpBody(followUp: followUp, projectID: projectID, placement: .panel)
+                                .padding(.horizontal, 14)
+                                .padding(.bottom, 14)
+                        }
+                        .id(followUp.id)
                     }
-                    .id(followUp.id)
+                } else if let panel = shownPanel {
+                    switch panel {
+                    case .settings: AssistantSettingsView(projectID: projectID)
+                    case .activityLog: AssistantActivityLogView(projectID: projectID)
+                    case .jobFailed(_, let row): JobFailedView.forRow(row, projectID: projectID, model: model).id(row.id)
+                    default: EmptyView()
+                    }
                 } else {
                     let unreadable = model.unreadableEntryCount(inProject: projectID)
                     if unreadable > 0 {
@@ -68,6 +90,9 @@ struct AssistantTool: View {
                             .padding(.bottom, 8)
                             .help("A note or plan item in this project's file couldn't be read. Claudio leaves it untouched.")
                     }
+                    AssistantStatusLineView(projectID: projectID)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
                     if model.isNoteCaptureShowing {
                         NoteCaptureBox()
                             .padding(.horizontal, 10)
@@ -97,6 +122,22 @@ struct AssistantTool: View {
             }
         }
         .frame(width: width)
+    }
+}
+
+extension AssistantTool {
+    private func headerTitle(item: PlanItem?, followUp: FollowUp?, panel: AssistantPanelView?) -> String {
+        if item != nil { return "Plan Item" }
+        if let followUp {
+            if case .failed = followUp.state { return "Job Failed" }
+            return "Follow-up"
+        }
+        switch panel {
+        case .settings?: return "Assistant Settings"
+        case .activityLog?: return "Activity Log"
+        case .jobFailed?: return "Job Failed"
+        default: return "Assistant"
+        }
     }
 }
 

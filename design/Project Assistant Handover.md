@@ -14,10 +14,10 @@ Builds on the shipped two-rail layout: `ToolRails.swift`, `ToolWindows.swift`, `
 1. **Header:**
    - the title: ASSISTANT, or the view name when drilled in, with a ‹ back button
    - New Note (⌘⇧N)
-   - a ⋯ menu holding Import Issues…, Skills (with a count), Activity Log and Assistant Settings…
+   - a ⋯ menu holding Import Issues…, Skills (with a count), Activity Log and Assistant Settings… *(4b: Activity Log and Assistant Settings… only; Import Issues… and Skills join it with the steps that build them.)*
 2. **Status line** (only one shows at a time):
    - **Off:** a card reading "The assistant is off for this project…" or "…turned off in Settings…", with Turn On.
-   - **Paused** (Automatic mode, over the usage threshold): "Background work paused · 5-hour usage 84% · 2 waiting", in quiet muted text, with a Limits… link. The count is the number of held-back jobs.
+   - **Paused** (Automatic mode, over the usage threshold): "Background work paused · 5-hour usage 84% · 2 waiting", in quiet muted text, with a Limits… link. The count is the number of held-back jobs. *(4b: the reason can also be "Using credits", "Waiting for a usage reading" or "Daily limit of 20 reached"; "· n waiting" is left out when nothing waits.)*
    - **Manual:** "Manual: it only works when you ask."
 3. **Capture box:** shown while capturing. It has a text field, "Linked to <session>", and Cancel and Save Note buttons. *(Added in the build, not in the Claude Design file: an × beside "Linked to <session>" removes the link for a note that isn't about that session, which then reads "Not linked to a session".)*
 4. **Needs You · n:** one card per item. When there's nothing, it shows "Nothing needs you." When the assistant is off, the section is hidden. Card kinds:
@@ -104,10 +104,10 @@ What happens in other modes:
     - Manual: only when you ask (Promote, Review This Session, Import Issues and Ask).
     - Off: notes and the plan by hand. No Claude calls.
   - **PRIVACY:** a "Don't send transcripts" toggle. Follow-ups then use only the final message and the files changed.
-  - **MODELS:** "Quick checks" (Haiku) and "Follow-ups, skills and Ask" (Sonnet). Each opens a picker.
+  - **MODELS:** "Quick checks" (Haiku) and "Follow-ups, skills and Ask" (Sonnet). Each opens a picker. *(4b: each picker offers Haiku, Sonnet and Opus, with a short relative cost hint under it.)*
   - **STORAGE:** read-only: "Skills are stored by Claudio, not in the repository."
   - A link to the app-wide Settings › Assistant.
-- **Activity Log** (⋯, and from Job Failed): every Claude call, newest first. Each row shows the time, the job, what it was about, the model, and the result: Done (teal), Waiting (amber, for example "Waiting: 5-hour usage 84%") or Failed (red, with the reason). A Waiting row changes to Done or Failed once the job runs.
+- **Activity Log** (⋯, and from Job Failed): every Claude call, newest first. Each row shows the time, the job, what it was about, the model, and the result: Done (teal), Waiting (amber, for example "Waiting: 5-hour usage 84%") or Failed (red, with the reason). A Waiting row changes to Done or Failed once the job runs. *(4b: Done rows also show the time taken and the cost. Clicking a Failed row opens Job Failed. Waiting rows sit at the top; held work is kept in memory, so it's gone after a quit.)*
 - **Job Failed:**
   - the title and a plain explanation, for example:
     - "Claude Code is installed but not signed in. Run claude in a Shell and sign in, then try again."
@@ -143,6 +143,7 @@ What happens in other modes:
 - **Settings window › Assistant** (app-wide; opened from Assistant Settings, the Limits… link, or the status-bar usage figures):
   - "Use the assistant": the global switch. "Off turns it off in every project. Notes and plans stay."
   - "Pause background work at [80]% of the 5-hour or weekly limit": an editable number from 50 to 100, with the current usage under it.
+  - *(Added in 4b: "Background calls a day" (default 20, 1–200), for an API key, Bedrock or Vertex, which have no plan usage to pause at. Held-back work waits until the next day.)*
   - "Allow background work while using credits": off by default.
   - A note: "Things you start yourself always run: Ask, Promote, Review This Session and Import Issues."
 - **Toast** (teal, bottom centre, about 2.6s): confirms saves, approvals, exports and repository saves.

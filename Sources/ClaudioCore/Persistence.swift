@@ -118,23 +118,44 @@ public struct AssistantAppSettings: Codable, Equatable, Sendable {
     /// plans stay, and Promote… makes an Idea without calling Claude.
     public var isEnabled = true
     /// Background work pauses when the 5-hour or weekly window reaches this
-    /// percentage. Things you start yourself always run.
-    public var pauseThreshold = AssistantAppSettings.defaultPauseThreshold
+    /// percentage. Things you start yourself always run. Kept in range here,
+    /// not only by the Settings control.
+    public var pauseThreshold = AssistantAppSettings.defaultPauseThreshold {
+        didSet { pauseThreshold = AssistantAppSettings.clamp(pauseThreshold, to: AssistantAppSettings.pauseThresholdRange) }
+    }
     /// Whether background work may run while usage credits are being spent.
     public var allowWhileUsingCredits = false
+    /// Background calls a day for sign-ins without a plan-usage reading
+    /// (API key, Bedrock, Vertex), where the usage threshold can't apply.
+    public var dailyJobLimit = AssistantAppSettings.defaultDailyJobLimit {
+        didSet { dailyJobLimit = AssistantAppSettings.clamp(dailyJobLimit, to: AssistantAppSettings.dailyJobLimitRange) }
+    }
 
     public static let defaultPauseThreshold = 80
     public static let pauseThresholdRange = 50...100
+    public static let defaultDailyJobLimit = 20
+    public static let dailyJobLimitRange = 1...200
 
     public init() {}
 
+    static func clamp(_ value: Int, to range: ClosedRange<Int>) -> Int {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+
+    /// Each field on its own: one that can't be read takes its default
+    /// without resetting the others (so the switch stays off if it was).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        let threshold = try c.decodeIfPresent(Int.self, forKey: .pauseThreshold) ?? AssistantAppSettings.defaultPauseThreshold
-        pauseThreshold = min(max(threshold, AssistantAppSettings.pauseThresholdRange.lowerBound),
-                             AssistantAppSettings.pauseThresholdRange.upperBound)
-        allowWhileUsingCredits = try c.decodeIfPresent(Bool.self, forKey: .allowWhileUsingCredits) ?? false
+        // The switch fails closed: a value that's there but can't be read
+        // keeps the assistant off. Only a missing one means on.
+        if c.contains(.isEnabled) {
+            isEnabled = (try? c.decode(Bool.self, forKey: .isEnabled)) ?? false
+        }
+        let threshold = ((try? c.decodeIfPresent(Int.self, forKey: .pauseThreshold)) ?? nil) ?? AssistantAppSettings.defaultPauseThreshold
+        pauseThreshold = AssistantAppSettings.clamp(threshold, to: AssistantAppSettings.pauseThresholdRange)
+        allowWhileUsingCredits = ((try? c.decodeIfPresent(Bool.self, forKey: .allowWhileUsingCredits)) ?? nil) ?? false
+        let limit = ((try? c.decodeIfPresent(Int.self, forKey: .dailyJobLimit)) ?? nil) ?? AssistantAppSettings.defaultDailyJobLimit
+        dailyJobLimit = AssistantAppSettings.clamp(limit, to: AssistantAppSettings.dailyJobLimitRange)
     }
 }
 
