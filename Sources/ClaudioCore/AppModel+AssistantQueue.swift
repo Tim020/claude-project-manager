@@ -194,6 +194,10 @@ extension AppModel {
             for project in workspace.projects { assistantStoppedBackgroundWork(inProject: project.id, because: "the assistant was turned off") }
         } else {
             releaseHeldJobs()
+            // Back on: lessons whose offers were withdrawn are offered (or drafted) again.
+            if !old.isEnabled && new.isEnabled {
+                for project in workspace.projects { considerSkillCandidates(projectID: project.id) }
+            }
         }
     }
 

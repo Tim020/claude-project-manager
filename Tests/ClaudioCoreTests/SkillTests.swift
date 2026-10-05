@@ -737,4 +737,46 @@ final class SkillTests: XCTestCase {
         try "not json".write(to: file, atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try store.loadSkillsData(projectID: project))
     }
+
+    // MARK: - Remember this asks once
+
+    func testAFailedRememberDraftIsntAskedAgainOnYourBehalf() async throws {
+        let f = try await makeFixture()
+        let followUp = #"{"notes":[],"planChanges":[],"lessons":[{"summary":"Use the script.","evidence":["f1","c1"],"remember":true}]}"#
+        f.runner.answer = { args in
+            args.contains { $0.contains("\"lessons\"") } ? SkillRunner.reply(followUp)
+                : CommandResult(exitCode: 1, output: (try? Fixtures.string("assistant-signed-out.json")) ?? "", errorOutput: "")
+        }
+        await self.followUp(f, session: f.session, remember: true)
+        XCTAssertEqual(f.runner.calls.count, 2, "drafted straight away, and it failed")
+        await MainActor.run {
+            XCTAssertEqual(f.model.errorMessage, AssistantFailure.signedOut.message, "you asked, so you're told")
+            f.model.errorMessage = nil
+            XCTAssertEqual(f.model.skillsData(inProject: f.project).candidates.first?.remember, false)
+            f.model.setAssistantMode(.manual, projectID: f.project)
+            f.model.setAssistantMode(.automatic, projectID: f.project)
+        }
+        await f.model.waitForSkillDrafts()
+        XCTAssertEqual(f.runner.calls.count, 2, "a mode change doesn't ask again")
+        await MainActor.run { XCTAssertNil(f.model.errorMessage) }
+    }
+
+    func testTurningTheAssistantBackOnOffersDraftsAgain() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.setAssistantMode(.manual, projectID: f.project) }
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        let second = await MainActor.run { addSession(f) }
+        await followUp(f, session: second)
+        await MainActor.run {
+            XCTAssertEqual(f.model.skillOffers(inProject: f.project).count, 1)
+            var settings = f.model.settings
+            settings.assistant.isEnabled = false
+            f.model.updateSettings(settings)
+            XCTAssertTrue(f.model.skillOffers(inProject: f.project).isEmpty, "withdrawn")
+            settings.assistant.isEnabled = true
+            f.model.updateSettings(settings)
+            XCTAssertEqual(f.model.skillOffers(inProject: f.project).count, 1, "offered again")
+        }
+    }
 }

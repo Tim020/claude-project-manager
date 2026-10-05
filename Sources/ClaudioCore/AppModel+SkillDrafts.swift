@@ -97,6 +97,11 @@ extension AppModel {
               candidate.state != .proposed, !draftingCandidates.contains(id),
               let project = workspace.project(projectID) else { return false }
         let settings = assistantSettings(forProject: projectID)
+        // "Remember this" asks for one draft, now: whatever happens to it
+        // (skipped, failed, dropped), the lesson then follows the usual
+        // rules, so a later follow-up or mode change doesn't ask again on
+        // your behalf. Try Again in the Activity Log still can.
+        if candidate.remember { updateSkillCandidate(id, projectID: projectID) { $0.remember = false } }
         guard !settings.dontSendTranscripts else {
             if askedFor { showToast("This project keeps transcripts back, so no skill is drafted from them") }
             log.append(.info, "Assistant: skill draft skipped: transcripts are kept back", detail: "lesson \(id.uuidString.lowercased())")

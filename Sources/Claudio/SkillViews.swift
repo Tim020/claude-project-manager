@@ -321,10 +321,11 @@ struct SkillDetailView: View {
     let name: String
     let projectID: UUID
     @State private var shownVersion: Int?
+    /// Read from disk once the view opens, not on every redraw.
+    @State private var history: [SkillVersion] = []
 
     var body: some View {
         let skill = (model.approvedSkills[projectID] ?? []).first { $0.name == name }
-        let history = model.skillHistory(name, projectID: projectID)
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -373,6 +374,7 @@ struct SkillDetailView: View {
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task(id: skill?.version) { history = model.skillHistory(name, projectID: projectID) }
     }
 }
 #endif
