@@ -146,7 +146,11 @@ public struct AssistantAppSettings: Codable, Equatable, Sendable {
     /// without resetting the others (so the switch stays off if it was).
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        isEnabled = ((try? c.decodeIfPresent(Bool.self, forKey: .isEnabled)) ?? nil) ?? true
+        // The switch fails closed: a value that's there but can't be read
+        // keeps the assistant off. Only a missing one means on.
+        if c.contains(.isEnabled) {
+            isEnabled = (try? c.decode(Bool.self, forKey: .isEnabled)) ?? false
+        }
         let threshold = ((try? c.decodeIfPresent(Int.self, forKey: .pauseThreshold)) ?? nil) ?? AssistantAppSettings.defaultPauseThreshold
         pauseThreshold = AssistantAppSettings.clamp(threshold, to: AssistantAppSettings.pauseThresholdRange)
         allowWhileUsingCredits = ((try? c.decodeIfPresent(Bool.self, forKey: .allowWhileUsingCredits)) ?? nil) ?? false

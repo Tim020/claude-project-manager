@@ -13,6 +13,15 @@ import Foundation
 public enum HeldJobKey: Hashable, Sendable {
     case noteCheck(UUID)
     case followUp(UUID)
+
+    /// For the app's Activity Log: an id, never the note's or session's
+    /// words (step 2 keeps note text out of that log).
+    var logDetail: String {
+        switch self {
+        case .noteCheck(let id): return "note \(id.uuidString.lowercased())"
+        case .followUp(let id): return "session \(id.uuidString.lowercased())"
+        }
+    }
 }
 
 /// A background job waiting for the usage gate (design 9a: "Waiting").
@@ -90,15 +99,16 @@ extension AppModel {
             entries.append(HeldJobEntry(job: job, run: start))
         }
         heldJobEntries = entries
-        log.append(.info, "Assistant: \(job.job) waiting (\(job.reason))", detail: job.subject)
+        log.append(.info, "Assistant: \(job.job) waiting (\(job.reason))", detail: job.key.logDetail)
     }
 
     /// Runs the oldest held job of each project whose gate has opened (one
     /// per project per pass, so usage is read again before the next), drops
     /// those whose project is now Off or Manual, and updates the reason on
     /// the rest. Called on each usage reading, Settings › Assistant change
-    /// and 15 s tick. The gate is checked before each job, so the daily
-    /// limit can stop a release part-way.
+    /// and 15 s tick. The gate is checked again just before each released
+    /// job runs, since the daily limit is app-wide: one that's no longer
+    /// allowed goes back to its place in the line.
     func releaseHeldJobs() {
         guard !heldJobEntries.isEmpty else { return }
         var remaining: [HeldJobEntry] = []
@@ -126,10 +136,18 @@ extension AppModel {
         if remaining.map(\.job) != heldJobs || remaining.count != heldJobEntries.count { heldJobEntries = remaining }
         if dropped > 0 { log.append(.info, "Assistant: dropped \(dropped) waiting job\(dropped == 1 ? "" : "s") (turned off)") }
         for entry in released {
+            guard backgroundGate(forProject: entry.job.projectID) == .run else {
+                // Another project's job used up what was left of today.
+                var entries = heldJobEntries
+                let index = entries.firstIndex { $0.job.heldAt > entry.job.heldAt } ?? entries.endIndex
+                entries.insert(entry, at: index)
+                heldJobEntries = entries
+                continue
+            }
             if entry.run() {
                 countBackgroundJob()
             } else {
-                log.append(.info, "Assistant: \(entry.job.job) skipped: no longer needed", detail: entry.job.subject)
+                log.append(.info, "Assistant: \(entry.job.job) skipped: no longer needed", detail: entry.job.key.logDetail)
             }
         }
     }

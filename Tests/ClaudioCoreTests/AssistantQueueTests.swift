@@ -372,6 +372,9 @@ extension AssistantQueueTests {
     func testAppSettingsDecodeFieldByField() throws {
         let app = try JSONDecoder().decode(AssistantAppSettings.self, from: Data(#"{"isEnabled":false,"dailyJobLimit":"x","pauseThreshold":5}"#.utf8))
         XCTAssertFalse(app.isEnabled, "the switch stays off")
+        let mistyped = try JSONDecoder().decode(AssistantAppSettings.self, from: Data(#"{"isEnabled":"no"}"#.utf8))
+        XCTAssertFalse(mistyped.isEnabled, "a switch value that can't be read keeps it off")
+        XCTAssertTrue(try JSONDecoder().decode(AssistantAppSettings.self, from: Data("{}".utf8)).isEnabled, "missing means on")
         XCTAssertEqual(app.dailyJobLimit, 20)
         XCTAssertEqual(app.pauseThreshold, 50, "clamped")
         var edited = app
@@ -436,6 +439,39 @@ extension AssistantQueueTests {
         XCTAssertEqual(runner.calls.count, 1, "released by the reading")
         let held = await MainActor.run { model.heldJobs }
         XCTAssertTrue(held.isEmpty)
+    }
+
+    /// Two projects, one call left today: only one runs, and the other
+    /// keeps its place (the daily limit is app-wide).
+    func testTheDailyLimitHoldsAcrossProjects() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            let other = f.model.addProject(path: "/code/other")
+            atDailyLimit(f)
+            _ = try capture(f, "First")
+            let second = try XCTUnwrap(f.model.addNote("Second", author: .user, projectID: other, sessionID: nil))
+            f.model.checkCapturedNote(second, projectID: other)
+            XCTAssertEqual(f.model.heldJobs.count, 2)
+            f.model.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: AssistantQueueTests.now),
+                                              count: f.model.settings.assistant.dailyJobLimit - 1)
+            f.model.releaseHeldJobs()
+            XCTAssertEqual(f.model.heldJobs.map(\.subject), ["Second"], "the other project's job waits")
+            XCTAssertEqual(f.model.backgroundJobsToday, f.model.settings.assistant.dailyJobLimit, "not over the limit")
+        }
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1)
+    }
+
+    /// Held and skipped jobs are logged by id, not by the note's words.
+    func testHeldWorkLogsNoNoteText() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            atDailyLimit(f)
+            let note = try capture(f, "Private thought about the shell")
+            let entry = try XCTUnwrap(f.model.log.entries.last { $0.title.hasPrefix("Assistant: Promote check waiting") })
+            XCTAssertEqual(entry.detail, "note \(note.id.uuidString.lowercased())")
+            XCTAssertFalse(f.model.log.entries.contains { ($0.detail ?? "").contains("Private thought") })
+        }
     }
 
     /// The gate is checked before each release, and one job per project
