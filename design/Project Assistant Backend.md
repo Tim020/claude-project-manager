@@ -93,7 +93,7 @@ Why `--add-dir` rather than the other homes:
 
 | Home | Reaches worktree agents | Live reload | Outside-Claudio sessions | Touches user's files | Verdict |
 |---|---|---|---|---|---|
-| `--add-dir <claudio>/skills` | yes (verified) | yes (docs; not tested) | no | no | **default** |
+| `--add-dir <claudio>/skills` | yes (verified) | yes, a few seconds after the change (verified in step 5) | no | no | **default** |
 | `<repo>/.claude/skills` | yes: found by walking up from `.claude/worktrees/w` (verified) | yes | yes | untracked files in the checkout; in-place agents may commit them | **opt-in per skill: "Save to Repository"** |
 | Bundled plugin `skills/` | yes | no, needs `/reload-plugins` | no | no | only for Claudio's own `note` skill |
 | `~/.claude/skills` | yes | yes | yes, in *every* project | yes, global | no |
@@ -230,7 +230,7 @@ Add the two events to `HookSettings.events`. *(Step 4: real payloads are recorde
 
   Show at most 3. This matches the design's "Picked from the files this item touches."
 - **What a chip means.** Every approved skill is visible to every Claudio session in the project by its description. That's how native skills load, and `paths` already limits auto-activation to matching files. So a chip means "**named in the opening prompt**": the prompt says "Use the /worktree-setup and /shell-panel-code-map skills". Removing a chip leaves the skill out of the prompt, but Claude can still use it if it matches. The sheet's hint should say so, for example "Named in the opening prompt."
-- **Later, if needed: a skill set per session.** Give each session its own `--add-dir` root containing only its chosen skills. **Not verified:** that the skill loader follows symlinks. Without symlinks, it means copying skills per session.
+- ~~**Later, if needed: a skill set per session.**~~ *Decided at the start of step 5 (Tim, 2026-10-05): probe, and build it if the loader follows symlinks. It does (see What was verified), so it's built in 5b:* each session gets its own `--add-dir` root holding links to only its chosen skills. Without symlinks it would have meant copying skills per session, and it would have been dropped.
 
 ### 6. GitHub
 
@@ -446,6 +446,22 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
    - **Left for later (from review round 1, PR #35):** a background note check that fails shows only in the Activity Log, as Failed with Try Again. A Failed marker on the note itself, opening Job Failed, would lead there. *Do it with step 5, which adds more background jobs that can fail.*
    - **Carried over from step 1's review (PR #21), moved here from step 2:** tolerant reading of `audit.jsonl`. *(Done in 4b: see above. Job entries change no data, so there's nothing to check against the data before showing them.)* `AuditEntry` still uses the synthesized, strict `Codable`. The Activity Log view, the log's first reader, must skip or tolerate lines it can't decode (from a newer version, or cut short), and check each entry against the data before showing it as done (see Audit and Undo).
 5. **Skills.** Lesson candidates, the drafting job, checks, approval, history, drift, retirement, and Save to Repository.
+   - **Decided at the start of step 5 (Tim, 2026-10-05):**
+     - **Two PRs, both step 5.** 5a: lessons, candidates, the drafting job, checks, approval, history, the Skills list, the carried-over chip terms, the Failed marker and the `SKILL.md` logging. 5b: drift, Edited Outside Claudio, retirement, Save to Repository, and the skill set per session. 5b follows 5a straight away; nothing is left for later.
+     - **When a draft runs.** Since 4a, lessons only come from follow-ups you accept, so the two-session threshold fills more slowly than the design first assumed. Once a candidate qualifies:
+       - Automatic: a background job behind the usage gate and the held-back queue (`HeldJobKey.skillDraft`).
+       - Manual: a Needs You offer to draft it; the draft runs when you accept.
+       - "Remember this" in a follow-up you accepted: drafted straight away, as something you asked for.
+       - Off: nothing.
+     - **Code-only checks.** The drift check runs in every mode, since sessions can still edit skills. Unused Skill cards cover only Claudio's own skills: Claudio can't see a repository skill used outside it, and retiring one would move a file in the repository.
+     - **The skill set per session:** probe first, build it if symlinks work, drop it if not. They work (2.1.169 and 2.1.289), so it's built in 5b.
+     - Already settled, so not asked again: real probes on Tim's account are fine (step 4); drafts use the project's "Follow-ups, skills and Ask" model (`deepModel`, step 4b); a skill unused for 30 days gets an Unused Skill card (Decisions §4).
+   - **Carried into step 5 (every one is built here):**
+     - From step 3: chip scoring's usage term (`PreToolUse` Skill events); its touched files from the linked sessions' history, not `sessionChanges`; logging `SKILL.md` files that can't be read or have no closing `---`.
+     - From 4a: the `lessons` field in the follow-up schema.
+     - From 4b (PR #35 review round 1): a Failed marker on a note whose background check failed, opening Job Failed.
+     - From the handover: Skills (with a count) in the Assistant ⋯ menu.
+     - From What was verified: live reload of `--add-dir` skills, and whether the loader follows symlinks (both now verified).
 6. **GitHub.** Polling, triage, export, and status suggestions.
 7. **Ask.**
 
@@ -471,9 +487,10 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | Assistant calls from `assistant/runs` with `--no-session-persistence` don't show up as a project | After the probe calls: no `…-runs` folder in `~/.claude/projects`, no entry in `~/.claude.json`. (Calls that loaded user settings left an empty `memory/` folder, which import ignores: it needs a `.jsonl`.) |
 | A failed `-p` call still reports `"subtype": "success"`; `is_error`, `terminal_reason: "api_error"` and exit 1 tell | A signed-out container, and one with a rejected API key (2.1.284). The rejected key took 190 s of retries, so the 60 s timeout matters. Recorded in `Fixtures/assistant-*.json`. |
 
-**Assumed, and to check at the build step that needs it:**
-- live reload of `--add-dir` skills (step 5)
-- whether the skill loader follows symlinks (only for skill sets per session)
+| Skills under an `--add-dir` root reload live: a skill added, a skill linked in, and an edit to a skill's text all reach a running session | One `claude -p --input-format stream-json` process (Haiku, 2.1.289, step 5), three turns. With 3 s between the change and the next turn, the new skills weren't there yet; with 12 s they were, and were invoked. An edit to `SKILL.md` was followed on the next call. So a change takes a few seconds to arrive. |
+| The skill loader follows symlinks, both a linked skill folder and a linked `SKILL.md` | The same probe (2.1.289): both listed in the init event's `skills` and invoked, returning their text. A signed-out 2.1.169 container listed both in its init event too. |
+
+**Assumed, and to check at the build step that needs it:** none.
 
 ## Decisions
 
@@ -481,9 +498,15 @@ Decided (2026-09-28):
 - **Where skills live:** Claudio's folder via `--add-dir`. Save to Repository stays as a per-skill action.
 - **Usage threshold:** app-level, user-configurable, default 80%.
 - **Session notes:** allowed, and tagged with the session as author.
-- **Skill chips:** a chip means "named in the opening prompt", and the sheet's hint says so. There are no skill sets per session.
+- **Skill chips:** a chip means "named in the opening prompt", and the sheet's hint says so. ~~There are no skill sets per session.~~ *(Changed at the start of step 5: built in 5b, since the loader follows symlinks.)*
 - **Default mode:** Automatic. Background work is checked in code first, and Claude is called only for judgement (see Runtime).
 - **Plan in git:** no. There's no `PLAN.md` export.
+
+Decided at the start of step 5 (2026-10-05): see Build order › 5 for the details.
+- **Two PRs** (5a, then 5b).
+- **Drafts:** behind the gate in Automatic, offered in Manual, straight away for "remember this", none in Off.
+- **Drift in every mode; Unused Skill cards only for Claudio's own skills.**
+- **A skill set per session:** built in 5b (symlinks verified).
 
 Decided in step 4a (2026-09-30):
 - **No baseline when Automatic is turned back on** (Tim's call, PR #28 review round 1). Sessions made while a project was Manual or Off, or while the assistant switch was off, keep their unread start. So turning Automatic on can bring a one-off batch of offers for sessions finished meanwhile. Offers cost nothing, and Review This Session covers anything skipped.
