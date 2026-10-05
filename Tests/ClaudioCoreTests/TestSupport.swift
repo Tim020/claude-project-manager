@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import ClaudioCore
 
 enum Fixtures {
     static func url(_ name: String) throws -> URL {
@@ -20,4 +21,11 @@ func makeTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudioTests-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+/// `["b1"]` for a list of background tasks first seen long ago.
+extension BackgroundTask: ExpressibleByStringLiteral {
+    public init(stringLiteral id: String) {
+        self.init(id: id, since: .distantPast)
+    }
 }

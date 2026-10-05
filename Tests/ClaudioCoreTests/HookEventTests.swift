@@ -41,12 +41,12 @@ final class HookEventParserTests: XCTestCase {
     func testParsesBackgroundTasksFromStop() throws {
         let events = try Fixtures.lines("hook-background-tasks.log").compactMap(HookEventParser.parse)
         XCTAssertEqual(events.map(\.name), [.stop, .userPromptSubmit, .stop])
-        XCTAssertEqual(events[0].backgroundTaskIDs, ["ad27390be441d920f", "aeaf4288ef73ac620", "b725tsd1i"])
-        XCTAssertNil(events[1].backgroundTaskIDs)
-        XCTAssertEqual(events[2].backgroundTaskIDs, [])
+        XCTAssertEqual(events[0].backgroundTasks?.map(\.id), ["ad27390be441d920f", "aeaf4288ef73ac620", "b725tsd1i"])
+        XCTAssertNil(events[1].backgroundTasks)
+        XCTAssertEqual(events[2].backgroundTasks?.map(\.id), [])
 
         let finished = HookEventParser.parse("\(appID.uuidString)\t" + #"{"hook_event_name":"Stop","background_tasks":[{"id":"b1","status":"completed"},{"id":"b2","status":"running"},{"id":"b3"}]}"#)
-        XCTAssertEqual(finished?.backgroundTaskIDs, ["b2", "b3"], "only running ones, and an entry without a status counts")
+        XCTAssertEqual(finished?.backgroundTasks?.map(\.id), ["b2", "b3"], "only running ones, and an entry without a status counts")
     }
 
     func testToolOutputFallsBackToStringResponse() {
@@ -195,22 +195,22 @@ final class HookReducerTests: XCTestCase {
         XCTAssertEqual(s.status, .working)
         HookReducer.apply(events[2], to: &s, now: now)
         XCTAssertEqual(s.status, .completed)
-        XCTAssertEqual(s.backgroundTasks, [])
+        XCTAssertEqual(s.backgroundTasks.map(\.id), [])
     }
 
     func testAQuestionStillWaitsWithBackgroundTasks() {
         var s = session(.working)
         HookReducer.apply(event(.stop) {
             $0.lastAssistantMessage = "Shall I merge it?"
-            $0.backgroundTaskIDs = ["b1"]
+            $0.backgroundTasks = [BackgroundTaskReport(id: "b1")]
         }, to: &s, now: now)
         XCTAssertEqual(s.status, .awaitingInput)
-        XCTAssertEqual(s.backgroundTasks, ["b1"])
+        XCTAssertEqual(s.backgroundTasks.map(\.id), ["b1"])
     }
 
     func testAFailedTurnWithBackgroundTasksKeepsWorking() {
         var s = session(.working)
-        HookReducer.apply(event(.stopFailure) { $0.backgroundTaskIDs = ["b1"] }, to: &s, now: now)
+        HookReducer.apply(event(.stopFailure) { $0.backgroundTasks = [BackgroundTaskReport(id: "b1")] }, to: &s, now: now)
         XCTAssertEqual(s.status, .working)
         XCTAssertTrue(s.lastTurnFailed)
     }
@@ -220,7 +220,7 @@ final class HookReducerTests: XCTestCase {
         s.backgroundTasks = ["b1"]
         HookReducer.apply(event(.stop), to: &s, now: now)
         XCTAssertEqual(s.status, .completed, "an older CLI doesn't report background tasks")
-        XCTAssertEqual(s.backgroundTasks, [])
+        XCTAssertEqual(s.backgroundTasks.map(\.id), [])
     }
 
     func testSessionEndForgetsBackgroundTasks() {
@@ -228,7 +228,7 @@ final class HookReducerTests: XCTestCase {
         s.backgroundTasks = ["b1"]
         HookReducer.apply(event(.sessionEnd), to: &s, now: now)
         XCTAssertEqual(s.status, .completed)
-        XCTAssertEqual(s.backgroundTasks, [])
+        XCTAssertEqual(s.backgroundTasks.map(\.id), [])
     }
 
     func testSessionEndWhileWorkingCompletes() {

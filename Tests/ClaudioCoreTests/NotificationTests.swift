@@ -217,6 +217,54 @@ final class NotificationTests: XCTestCase {
         }
     }
 
+    /// A session with no agent (a direct tab, or a terminal elsewhere): an
+    /// idle interactive listing doesn't end it while its tasks run.
+    func testBackgroundTasksKeepAnIdleTerminalSessionWorking() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            try Data().write(to: hooks)
+            model.applyTerminalSessions([InteractiveSession(sessionID: "a", pid: 5, cwd: "/code/DigiScript", status: "busy")])
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.applyTerminalSessions([InteractiveSession(sessionID: "a", pid: 5, cwd: "/code/DigiScript", status: "idle")])
+            model.checkNotifications()
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+            XCTAssertTrue(notifier.posted.isEmpty)
+
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[]}"#)
+            model.checkNotifications()
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertEqual(notifier.posted.map(\.kind), [.finished])
+        }
+    }
+
+    /// A direct tab's tasks end with its process.
+    func testBackgroundTasksEndWhenTheTerminalExits() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel()
+            try Data().write(to: hooks)
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.terminalExited(a, exitCode: 0)
+            XCTAssertEqual(model.workspace.session(a)?.status, .completed)
+            XCTAssertEqual(model.workspace.session(a)?.backgroundTasks.map(\.id), [])
+        }
+    }
+
+    /// Resumed directly in a tab, with a stopped agent's id kept: that agent
+    /// having no process doesn't end the tab's own tasks.
+    func testADeadAgentDoesntEndTasksOfASessionRunningDirectly() throws {
+        try MainActor.assumeIsolated {
+            let (model, a, _) = try makeModel(runner: FakeRunner())
+            try Data().write(to: hooks)
+            let stopped = BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "stopped", waitingFor: nil, startedAt: nil)
+            model.apply([stopped])
+            XCTAssertTrue(model.start(a))
+            try hook(model, #"{"session_id":"a","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"running"}]}"#)
+            model.apply([stopped])
+            XCTAssertEqual(model.workspace.session(a)?.status, .working)
+            XCTAssertEqual(model.workspace.session(a)?.backgroundTasks.map(\.id), ["b1"])
+        }
+    }
+
     /// Its background tasks end with its process.
     func testBackgroundTasksEndWhenTheAgentExits() throws {
         try MainActor.assumeIsolated {
@@ -227,7 +275,7 @@ final class NotificationTests: XCTestCase {
             XCTAssertEqual(model.workspace.session(a)?.status, .working)
             model.apply([BackgroundAgent(id: "a1", sessionID: "a", cwd: "/code/DigiScript", name: nil, pid: nil, status: nil, state: "stopped", waitingFor: nil, startedAt: nil)])
             XCTAssertEqual(model.workspace.session(a)?.status, .completed)
-            XCTAssertEqual(model.workspace.session(a)?.backgroundTasks, [])
+            XCTAssertEqual(model.workspace.session(a)?.backgroundTasks.map(\.id), [])
         }
     }
 

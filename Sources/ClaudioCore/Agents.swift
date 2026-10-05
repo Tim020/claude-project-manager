@@ -64,12 +64,17 @@ public enum BackgroundJobState {
         claudeHome.appendingPathComponent("jobs").appendingPathComponent(agentID).appendingPathComponent("state.json")
     }
 
-    /// The ids of the tasks still running, or nil when the file has no task
-    /// list (a CLI that doesn't keep one) or can't be read.
-    public static func runningTaskIDs(_ data: Data) -> [String]? {
+    /// The tasks still running, or nil when the file has no task list (a CLI
+    /// that doesn't keep one) or can't be read. `startedAt` is in
+    /// milliseconds; without it a task counts from `now`.
+    public static func runningTasks(_ data: Data, now: Date) -> [BackgroundTask]? {
         guard let value = try? JSONDecoder().decode(JSONValue.self, from: data),
               let fan = value["fan"]?.arrayValue else { return nil }
-        return fan.compactMap { task in (task["doneAt"] ?? .null) == .null ? task["id"]?.stringValue : nil }
+        return fan.compactMap { task in
+            guard (task["doneAt"] ?? .null) == .null, let id = task["id"]?.stringValue else { return nil }
+            let since: Date = if case .number(let ms) = task["startedAt"] { Date(timeIntervalSince1970: ms / 1000) } else { now }
+            return BackgroundTask(id: id, kind: task["kind"]?.stringValue, description: task["label"]?.stringValue, since: since)
+        }
     }
 }
 

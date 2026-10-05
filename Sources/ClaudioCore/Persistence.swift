@@ -294,6 +294,7 @@ extension Session {
         self.followUpMark = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpMark)) ?? nil
         self.followUpDeclined = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpDeclined)) ?? nil
         // Tolerant: launch checks it against the agent's job state anyway.
-        self.backgroundTasks = ((try? c.decodeIfPresent([String].self, forKey: .backgroundTasks)) ?? nil) ?? []
+        self.backgroundTasks = ((try? c.decodeIfPresent([BackgroundTask].self, forKey: .backgroundTasks)) ?? nil) ?? []
+        self.finishedBackgroundTasks = ((try? c.decodeIfPresent([String].self, forKey: .finishedBackgroundTasks)) ?? nil) ?? []
     }
 }

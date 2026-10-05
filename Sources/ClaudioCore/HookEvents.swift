@@ -58,11 +58,11 @@ public struct HookEvent: Equatable, Sendable {
     public var error: String?
     /// PostToolUseFailure: the user stopped the tool (Esc), so it didn't fail.
     public var isInterrupt = false
-    /// Stop: the ids of the session's background tasks (shell commands,
-    /// Monitors, subagents) still running as the turn ended. Each one wakes
-    /// the session with a new turn when it finishes. Nil from a CLI that
-    /// doesn't report them (`background_tasks`, seen with 2.1.289).
-    public var backgroundTaskIDs: [String]?
+    /// Stop: the session's background tasks (shell commands, Monitors,
+    /// subagents) still running as the turn ended. Each one wakes the
+    /// session with a new turn when it finishes. Nil from a CLI that doesn't
+    /// report them (`background_tasks`, seen with 2.1.289).
+    public var backgroundTasks: [BackgroundTaskReport]?
 
     public init(appSessionID: UUID, name: HookEventName) {
         self.appSessionID = appSessionID
@@ -92,8 +92,11 @@ public enum HookEventParser {
         event.reason = json["reason"]?.stringValue
         event.error = json["error"]?.stringValue
         event.isInterrupt = json["is_interrupt"]?.boolValue ?? false
-        event.backgroundTaskIDs = json["background_tasks"]?.arrayValue?.compactMap { task in
-            (task["status"]?.stringValue ?? "running") == "running" ? task["id"]?.stringValue : nil
+        // Only "running" has been seen (2.1.289). A task in any other status
+        // counts as over, so a later CLI's "queued", say, would need adding.
+        event.backgroundTasks = json["background_tasks"]?.arrayValue?.compactMap { task in
+            guard (task["status"]?.stringValue ?? "running") == "running", let id = task["id"]?.stringValue else { return nil }
+            return BackgroundTaskReport(id: id, kind: task["type"]?.stringValue, description: task["description"]?.stringValue)
         }
         return event
     }
@@ -172,7 +175,7 @@ public enum HookReducer {
             if !text.isEmpty {
                 session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength)
             }
-            session.backgroundTasks = event.backgroundTaskIDs ?? []
+            session.setBackgroundTasks(event.backgroundTasks ?? [], now: now)
             if text.hasSuffix("?") {
                 session.status = .awaitingInput
                 session.needsAction = session.summary
@@ -185,7 +188,7 @@ public enum HookReducer {
             session.lastTurnFailed = false
         case .stopFailure:
             // The turn ended (it comes instead of Stop), with an API error.
-            session.backgroundTasks = event.backgroundTaskIDs ?? []
+            session.setBackgroundTasks(event.backgroundTasks ?? [], now: now)
             session.status = session.backgroundTasks.isEmpty ? .completed : .working
             session.needsAction = nil
             session.lastTurnFailed = true
@@ -193,7 +196,7 @@ public enum HookReducer {
             if !text.isEmpty { session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength) }
             session.lastActivity = now
         case .sessionEnd:
-            session.backgroundTasks = []
+            session.forgetBackgroundTasks()
             if session.status == .working { session.status = .completed }
         case .other:
             break
