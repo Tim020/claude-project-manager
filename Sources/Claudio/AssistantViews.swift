@@ -76,6 +76,12 @@ struct AssistantTool: View {
                     case .settings: AssistantSettingsView(projectID: projectID)
                     case .activityLog: AssistantActivityLogView(projectID: projectID)
                     case .jobFailed(_, let row): JobFailedView.forRow(row, projectID: projectID, model: model).id(row.id)
+                    case .skills: SkillsListView(projectID: projectID)
+                    case .skill(_, let name): SkillDetailView(name: name, projectID: projectID).id(name)
+                    case .skillProposal(_, let id):
+                        if let proposal = model.skillProposal(id, inProject: projectID) {
+                            SkillProposalView(proposal: proposal, projectID: projectID).id(proposal.id)
+                        }
                     default: EmptyView()
                     }
                 } else {
@@ -136,6 +142,10 @@ extension AssistantTool {
         case .settings?: return "Assistant Settings"
         case .activityLog?: return "Activity Log"
         case .jobFailed?: return "Job Failed"
+        case .skills?: return "Skills"
+        case .skill?: return "Skill"
+        case .skillProposal(let projectID, let id)?:
+            return model.skillProposal(id, inProject: projectID)?.isChange == true ? "Changed Skill" : "New Skill"
         default: return "Assistant"
         }
     }

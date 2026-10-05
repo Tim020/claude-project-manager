@@ -28,6 +28,8 @@ struct AssistantHeaderMenu: View {
 
     var body: some View {
         Menu {
+            let skills = model.approvedSkills[projectID]?.count ?? 0
+            Button(skills == 0 ? "Skills" : "Skills (\(skills))") { model.openSkills(projectID: projectID) }
             Button("Activity Log") { model.openAssistantLog(projectID: projectID) }
             Button("Assistant Settings…") { model.openAssistantSettings(projectID: projectID) }
         } label: {

@@ -223,4 +223,135 @@ extension AppModel {
     public func skillProposal(_ id: UUID, inProject projectID: UUID) -> SkillProposal? {
         skillsData(inProject: projectID).proposals.first { $0.id == id }
     }
+
+    /// The checks now, with the PATH as already read (none read yet: the
+    /// command check is skipped; the draft was checked with it).
+    func skillProblemsNow(_ text: String, projectID: UUID, patching: String?) -> [String] {
+        guard let project = workspace.project(projectID) else { return ["the project has gone"] }
+        var names = Set((approvedSkills[projectID] ?? []).map(\.name))
+        let repository = (project.path as NSString).appendingPathComponent(".claude/skills")
+        names.formUnion((try? FileManager.default.contentsOfDirectory(atPath: repository))?.filter { !$0.hasPrefix(".") } ?? [])
+        var exists = commandExistsOverride
+        if exists == nil, let directories = loginShellPATH, !directories.isEmpty {
+            exists = { name in directories.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") } }
+        }
+        return SkillCheck.problems(text, context: SkillCheck.Context(projectPath: project.path, existingNames: names,
+                                                                     patching: patching, commandExists: exists))
+    }
+
+    /// Edit on New Skill or Changed Skill: the new text, if it passes the
+    /// checks (and keeps the name). Returns what's wrong; empty when saved.
+    @discardableResult
+    public func editSkillProposal(_ id: UUID, text: String, projectID: UUID) -> [String] {
+        guard let proposal = skillProposal(id, inProject: projectID) else { return ["the draft has gone"] }
+        var problems = skillProblemsNow(text, projectID: projectID, patching: proposal.isChange ? proposal.name : nil)
+        let name = SkillFiles.skill(fromSkillFile: text, folderName: "").name
+        if name != proposal.name { problems.insert("the name can't change while editing (it's \(proposal.name))", at: 0) }
+        guard problems.isEmpty else { return problems }
+        updateSkillsData(projectID) { data in
+            if let index = data.proposals.firstIndex(where: { $0.id == id }) { data.proposals[index].text = text }
+        }
+        return []
+    }
+
+    /// Approve: writes the skill where sessions load it (they pick it up
+    /// within a few seconds), keeps the version in its history, and records
+    /// it. Refused, saying why, when a change's skill was edited since it
+    /// was drafted, a new skill's name has been taken, or it fails the checks.
+    @discardableResult
+    public func approveSkillProposal(_ id: UUID, projectID: UUID) -> Bool {
+        guard let proposal = skillProposal(id, inProject: projectID) else { return false }
+        guard !unreadableSkillsData.contains(projectID) else {
+            report("This project's skills file couldn't be read, so skills can't be approved. See the Activity Log.")
+            return false
+        }
+        refreshApprovedSkills(projectID: projectID)
+        let current = (approvedSkills[projectID] ?? []).first { $0.name == proposal.name }
+        if let previous = proposal.previousText {
+            guard let current, current.text == previous else {
+                showToast("\(proposal.name) changed after this was drafted, so it wasn't approved. Not Now drops this draft.")
+                return false
+            }
+        } else if current != nil {
+            showToast("A skill named \(proposal.name) exists now, so this wasn't approved. Not Now drops this draft.")
+            return false
+        }
+        let problems = skillProblemsNow(proposal.text, projectID: projectID, patching: proposal.isChange ? proposal.name : nil)
+        guard problems.isEmpty else {
+            log.append(.error, "Assistant: \(proposal.name) wasn't approved: it fails Claudio's checks", detail: problems.joined(separator: "\n"))
+            showToast("It doesn't pass Claudio's checks now, so it wasn't approved. See the Activity Log.")
+            return false
+        }
+        let record = skillsData(inProject: projectID).records.first { $0.name == proposal.name }
+        let version = max(record?.version ?? 0, current?.version ?? 0) + 1
+        let skillID = record?.id ?? current?.claudioID ?? SkillFiles.skill(fromSkillFile: proposal.text, folderName: "").claudioID ?? UUID()
+        let text = SkillText.settingMetadata(proposal.text, [("claudio-id", skillID.uuidString.lowercased()),
+                                                             ("claudio-version", String(version))])
+        do {
+            try assistantStore.writeSkillHistory(name: proposal.name, version: version, text: text, projectID: projectID)
+            try assistantStore.writeApprovedSkill(name: proposal.name, text: text, projectID: projectID)
+        } catch {
+            report("Couldn't save the skill \(proposal.name): \(AppModel.describe(error))")
+            return false
+        }
+        let date = now()
+        updateSkillsData(projectID) { data in
+            data.proposals.removeAll { $0.id == id }
+            if let candidateID = proposal.candidateID { data.candidates.removeAll { $0.id == candidateID } }
+            data.records.removeAll { $0.name == proposal.name }
+            data.records.append(SkillRecord(id: skillID, name: proposal.name, version: version, approvedAt: date,
+                                            contentHash: SkillText.hash(text)))
+            // Approving counts as a use, so it isn't unused from day one.
+            var usage = data.usage[proposal.name] ?? SkillUsage()
+            if usage.lastUsed.map({ $0 < date }) ?? true { usage.lastUsed = date }
+            data.usage[proposal.name] = usage
+        }
+        refreshApprovedSkills(projectID: projectID)
+        log.append(.info, "Approved the skill \(proposal.name) (version \(version))")
+        showToast("Approved \(proposal.name). Sessions pick it up within a few seconds.")
+        return true
+    }
+
+    /// Not Now on New Skill or Changed Skill: the draft goes, and its
+    /// lesson waits for two more sessions before it's drafted again.
+    public func dismissSkillProposal(_ id: UUID, projectID: UUID) {
+        guard let proposal = skillProposal(id, inProject: projectID) else { return }
+        updateSkillsData(projectID) { data in
+            data.proposals.removeAll { $0.id == id }
+            if let index = data.candidates.firstIndex(where: { $0.id == proposal.candidateID }) {
+                data.candidates[index].holdBack(more: 2)
+            }
+        }
+    }
+
+    /// A skill's approved versions, newest first.
+    public func skillHistory(_ name: String, projectID: UUID) -> [SkillVersion] {
+        assistantStore.skillHistory(name: name, projectID: projectID)
+    }
+}
+
+/// A row of Skills (⋯): an approved skill, with how many sessions used it
+/// and when it last changed.
+public struct SkillListRow: Identifiable, Equatable, Sendable {
+    public var id: String { name }
+    public var name: String
+    public var description: String
+    public var version: Int?
+    public var usedBy: Int
+    public var lastUsed: Date?
+    /// When its current version was approved (nil: Claudio has no record,
+    /// such as a skill put there by hand).
+    public var changedAt: Date?
+}
+
+extension AppModel {
+    public func skillRows(inProject projectID: UUID) -> [SkillListRow] {
+        let data = skillsData(inProject: projectID)
+        return (approvedSkills[projectID] ?? []).map { skill in
+            let usage = data.usage[skill.name]
+            return SkillListRow(name: skill.name, description: skill.description, version: skill.version,
+                                usedBy: usage?.sessions.count ?? 0, lastUsed: usage?.lastUsed,
+                                changedAt: data.records.first { $0.name == skill.name }?.approvedAt)
+        }
+    }
 }

@@ -365,6 +365,25 @@ public protocol AssistantStoring: AnyObject {
     /// there but can't be read (it's then left alone).
     func loadSkillsData(projectID: UUID) throws -> SkillsData
     func saveSkillsData(_ data: SkillsData, projectID: UUID) throws
+    /// Writes an approved skill's `SKILL.md` (sessions load it live).
+    func writeApprovedSkill(name: String, text: String, projectID: UUID) throws
+    /// `history/<name>/<version>.md`, one per approval.
+    func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws
+    /// A skill's approved versions, newest first.
+    func skillHistory(name: String, projectID: UUID) -> [SkillVersion]
+}
+
+/// One approved version of a skill, from its history.
+public struct SkillVersion: Equatable, Sendable {
+    public var version: Int
+    public var text: String
+    public var approvedAt: Date?
+
+    public init(version: Int, text: String, approvedAt: Date?) {
+        self.version = version
+        self.text = text
+        self.approvedAt = approvedAt
+    }
 }
 
 extension AssistantStoring {
@@ -390,6 +409,9 @@ extension AssistantStoring {
     public func scanSkills(projectID: UUID) -> SkillScan { SkillScan(skills: approvedSkills(projectID: projectID)) }
     public func loadSkillsData(projectID: UUID) throws -> SkillsData { SkillsData() }
     public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {}
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {}
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {}
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] { [] }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -466,6 +488,24 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {
         if let saveError { throw saveError }
         skillsData[projectID] = data
+    }
+    /// Approved versions written, by project and skill name.
+    public var skillVersions: [UUID: [String: [SkillVersion]]] = [:]
+    /// Makes writing a skill throw.
+    public var skillWriteError: Error?
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        var list = skills[projectID] ?? []
+        list.removeAll { $0.name == name }
+        list.append(SkillFiles.skill(fromSkillFile: text, folderName: name))
+        skills[projectID] = list.sorted { $0.name < $1.name }
+    }
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        skillVersions[projectID, default: [:]][name, default: []].append(SkillVersion(version: version, text: text, approvedAt: nil))
+    }
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
+        (skillVersions[projectID]?[name] ?? []).sorted { $0.version > $1.version }
     }
 }
 
@@ -564,6 +604,30 @@ public final class AssistantFileStore: AssistantStoring {
         let url = directory(projectID: projectID).appendingPathComponent("skills.json")
         guard FileManager.default.fileExists(atPath: url.path) else { return SkillsData() }
         return try JSONFileStore.decoder.decode(SkillsData.self, from: Data(contentsOf: url))
+    }
+
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
+        let folder = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try text.write(to: folder.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    }
+
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {
+        let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try text.write(to: folder.appendingPathComponent("\(version).md"), atomically: true, encoding: .utf8)
+    }
+
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
+        let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return files.compactMap { file -> SkillVersion? in
+            guard file.hasSuffix(".md"), let version = Int(file.dropLast(3)) else { return nil }
+            let url = folder.appendingPathComponent(file)
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            let date = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+            return SkillVersion(version: version, text: text, approvedAt: date)
+        }.sorted { $0.version > $1.version }
     }
 
     public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {

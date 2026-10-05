@@ -21,7 +21,10 @@ struct NeedsYouSection: View {
                 .kerning(0.66)
                 .foregroundStyle(DS.muted)
                 .padding(.horizontal, 4)
-            if data.followUps.isEmpty && data.suggestions.isEmpty {
+            let skills = model.skillsData(inProject: projectID)
+            let hasSkillCards = model.isAssistantOn(inProject: projectID)
+                && (!skills.proposals.isEmpty || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
+            if data.followUps.isEmpty && data.suggestions.isEmpty && !hasSkillCards {
                 Text("Nothing needs you.")
                     .font(DS.font(12.5))
                     .foregroundStyle(DS.dim)
@@ -31,6 +34,7 @@ struct NeedsYouSection: View {
                 ForEach(data.followUps.reversed()) { followUp in
                     NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
                 }
+                SkillNeedsYouCards(projectID: projectID)
             }
             ForEach(data.suggestions.reversed()) { suggestion in
                 SessionSuggestionCard(suggestion: suggestion, projectID: projectID)

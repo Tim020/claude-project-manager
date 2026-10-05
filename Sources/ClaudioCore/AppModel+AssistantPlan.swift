@@ -21,6 +21,12 @@ public enum AssistantPanelView: Equatable, Sendable {
     case activityLog(projectID: UUID)
     /// A failed call, from the Activity Log.
     case jobFailed(projectID: UUID, row: AssistantLogRow)
+    /// The project's skills (⋯ › Skills).
+    case skills(projectID: UUID)
+    /// One approved skill, from Skills.
+    case skill(projectID: UUID, name: String)
+    /// New Skill or Changed Skill, from Needs You.
+    case skillProposal(projectID: UUID, id: UUID)
 }
 
 /// What the assistant suggests for a note, shown on it until you answer.
@@ -190,12 +196,30 @@ extension AppModel {
         assistantPanel = .jobFailed(projectID: projectID, row: row)
     }
 
-    /// Assistant Settings, the Activity Log or Job Failed, when the panel is
-    /// drilled into one for the project it's showing.
+    public func openSkills(projectID: UUID) {
+        refreshApprovedSkills(projectID: projectID)
+        assistantPanel = .skills(projectID: projectID)
+    }
+
+    public func openSkill(_ name: String, projectID: UUID) {
+        assistantPanel = .skill(projectID: projectID, name: name)
+    }
+
+    public func openSkillProposal(_ id: UUID, projectID: UUID) {
+        refreshApprovedSkills(projectID: projectID)
+        assistantPanel = .skillProposal(projectID: projectID, id: id)
+    }
+
+    /// Assistant Settings, the Activity Log, Job Failed or a skills view,
+    /// when the panel is drilled into one for the project it's showing (a
+    /// proposal only while it's still waiting).
     public var shownAssistantPanel: AssistantPanelView? {
         switch assistantPanel {
-        case .settings(let projectID), .activityLog(let projectID), .jobFailed(let projectID, _):
+        case .settings(let projectID), .activityLog(let projectID), .jobFailed(let projectID, _), .skills(let projectID),
+             .skill(let projectID, _):
             return projectID == assistantProjectID ? assistantPanel : nil
+        case .skillProposal(let projectID, let id):
+            return projectID == assistantProjectID && skillProposal(id, inProject: projectID) != nil ? assistantPanel : nil
         default:
             return nil
         }

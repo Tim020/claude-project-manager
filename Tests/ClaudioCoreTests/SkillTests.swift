@@ -584,4 +584,157 @@ final class SkillTests: XCTestCase {
         await f.model.waitForSkillDrafts()
         await MainActor.run { XCTAssertEqual(f.model.skillProposals(inProject: f.project).count, 1) }
     }
+
+    // MARK: - Approval
+
+    static let skillID = "6f9619ff-8b86-d011-b42d-00c04fc964ff"
+
+    static func skillText(_ body: String, version: Int = 1, description: String = "Run the tests on Linux.") -> String {
+        SkillText.compose(name: "linux-tests", description: description, whenToUse: "", paths: [], body: body,
+                          metadata: [("claudio-id", skillID), ("claudio-version", String(version))])
+    }
+
+    /// A proposal waiting in Needs You, from a candidate.
+    @MainActor func propose(_ f: Fixture, text: String, previous: String? = nil) -> SkillProposal {
+        var candidate = LessonCandidate(signature: "s", summary: "Use the script.", evidence: [], remember: false, at: SkillTests.now)
+        candidate.state = .proposed
+        let proposal = SkillProposal(candidateID: candidate.id, name: "linux-tests", text: text, previousText: previous, why: "Stops failures.",
+                                     createdAt: SkillTests.now, model: "Sonnet")
+        f.model.updateSkillsData(f.project) { data in
+            data.candidates.append(candidate)
+            data.proposals.append(proposal)
+        }
+        f.model.commandExistsOverride = { _ in true }
+        return proposal
+    }
+
+    func testApprovingANewSkillWritesItAndItsHistory() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it in Docker."))
+            f.model.openSkillProposal(proposal.id, projectID: f.project)
+            XCTAssertNotNil(f.model.shownAssistantPanel)
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            let skill = try XCTUnwrap(f.model.approvedSkills[f.project]?.first)
+            XCTAssertEqual(skill.name, "linux-tests")
+            XCTAssertEqual(skill.version, 1)
+            XCTAssertEqual(f.assistant.skillHistory(name: "linux-tests", projectID: f.project).map(\.version), [1])
+            let data = f.model.skillsData(inProject: f.project)
+            XCTAssertTrue(data.proposals.isEmpty)
+            XCTAssertTrue(data.candidates.isEmpty, "its lesson is done with")
+            XCTAssertEqual(data.records.first?.version, 1)
+            XCTAssertEqual(data.records.first?.contentHash, SkillText.hash(skill.text), "for 5b's check for outside edits")
+            XCTAssertEqual(data.usage["linux-tests"]?.lastUsed, SkillTests.now, "approving counts as a use")
+            XCTAssertEqual(data.usage["linux-tests"]?.sessions, [], "but no session used it")
+            XCTAssertNil(f.model.shownAssistantPanel, "the proposal has gone")
+            XCTAssertEqual(f.model.toast?.text, "Approved linux-tests. Sessions pick it up within a few seconds.")
+            XCTAssertEqual(f.model.skillRows(inProject: f.project).map(\.name), ["linux-tests"])
+            XCTAssertEqual(f.model.skillRows(inProject: f.project).first?.changedAt, SkillTests.now)
+        }
+    }
+
+    func testApprovingAChangeBumpsTheVersion() async throws {
+        let f = try await makeFixture()
+        let old = SkillTests.skillText("Old.", version: 2)
+        await MainActor.run {
+            f.assistant.skills[f.project] = [SkillFiles.skill(fromSkillFile: old, folderName: "linux-tests")]
+            f.model.refreshApprovedSkills(projectID: f.project)
+            let proposal = propose(f, text: SkillTests.skillText("New.", version: 3), previous: old)
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            let skill = f.model.approvedSkills[f.project]?.first
+            XCTAssertEqual(skill?.version, 3)
+            XCTAssertEqual(skill?.claudioID, UUID(uuidString: SkillTests.skillID))
+            XCTAssertEqual(SkillText.body(of: skill?.text ?? ""), "New.")
+        }
+    }
+
+    func testAChangeToASkillEditedSinceIsRefused() async throws {
+        let f = try await makeFixture()
+        let old = SkillTests.skillText("Old.", version: 2)
+        await MainActor.run {
+            f.assistant.skills[f.project] = [SkillFiles.skill(fromSkillFile: SkillTests.skillText("Edited by hand.", version: 2),
+                                                              folderName: "linux-tests")]
+            let proposal = propose(f, text: SkillTests.skillText("New.", version: 3), previous: old)
+            XCTAssertFalse(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            XCTAssertEqual(f.model.toast?.text, "linux-tests changed after this was drafted, so it wasn't approved. Not Now drops this draft.")
+            XCTAssertEqual(SkillText.body(of: f.model.approvedSkills[f.project]?.first?.text ?? ""), "Edited by hand.", "left as it was")
+            XCTAssertNotNil(f.model.skillProposal(proposal.id, inProject: f.project))
+        }
+    }
+
+    func testANewSkillWhoseNameWasTakenIsRefused() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Mine."))
+            f.assistant.skills[f.project] = [ApprovedSkill(name: "linux-tests", text: "theirs")]
+            XCTAssertFalse(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            XCTAssertEqual(f.model.approvedSkills[f.project]?.first?.text, "theirs")
+        }
+    }
+
+    func testEditingAProposalIsChecked() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            let renamed = SkillText.compose(name: "other", description: "d", whenToUse: "", paths: [], body: "b", metadata: [])
+            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: renamed, projectID: f.project).first,
+                           "the name can't change while editing (it's linux-tests)")
+            let leaky = SkillTests.skillText("Token: ghp_abcdefghijklmnopqrstuvwxyz0123456789")
+            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: leaky, projectID: f.project),
+                           ["it looks like it holds a secret (a GitHub token)"])
+            XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.text, proposal.text, "not saved")
+            let better = SkillTests.skillText("Run it in Docker, then push.")
+            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: better, projectID: f.project), [])
+            XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.text, better)
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            XCTAssertEqual(SkillText.body(of: f.model.approvedSkills[f.project]?.first?.text ?? ""), "Run it in Docker, then push.")
+        }
+    }
+
+    func testNotNowOnAProposalHoldsItsLessonBack() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 1)
+            f.model.dismissSkillProposal(proposal.id, projectID: f.project)
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
+            let candidate = f.model.skillsData(inProject: f.project).candidates.first
+            XCTAssertEqual(candidate?.state, .collecting)
+            XCTAssertEqual(candidate?.heldUntilSessions, 2)
+            XCTAssertTrue(f.model.approvedSkills[f.project]?.isEmpty ?? true, "nothing loads a draft you didn't approve")
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 0)
+        }
+    }
+
+    func testASkillThatCantBeWrittenStaysProposed() async throws {
+        let assistant = MemoryAssistantStore()
+        let f = try await makeFixture(assistant: assistant)
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            assistant.skillWriteError = CocoaError(.fileWriteNoPermission)
+            XCTAssertFalse(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            XCTAssertNotNil(f.model.errorMessage)
+            XCTAssertNotNil(f.model.skillProposal(proposal.id, inProject: f.project))
+            XCTAssertTrue(f.model.skillsData(inProject: f.project).records.isEmpty)
+        }
+    }
+
+    func testTheFileStoreWritesSkillsAndHistory() throws {
+        let store = AssistantFileStore(root: try makeTemporaryDirectory())
+        let project = UUID()
+        _ = try store.skillsRoot(projectID: project)
+        try store.writeSkillHistory(name: "linux-tests", version: 1, text: SkillTests.skillText("One."), projectID: project)
+        try store.writeSkillHistory(name: "linux-tests", version: 2, text: SkillTests.skillText("Two.", version: 2), projectID: project)
+        try store.writeApprovedSkill(name: "linux-tests", text: SkillTests.skillText("Two.", version: 2), projectID: project)
+        XCTAssertEqual(store.approvedSkills(projectID: project).map(\.version), [2])
+        XCTAssertEqual(store.skillHistory(name: "linux-tests", projectID: project).map(\.version), [2, 1])
+        XCTAssertNotNil(store.skillHistory(name: "linux-tests", projectID: project).first?.approvedAt)
+        var data = SkillsData()
+        _ = data.recordUse(of: "linux-tests", by: UUID(), at: SkillTests.now)
+        try store.saveSkillsData(data, projectID: project)
+        XCTAssertEqual(try store.loadSkillsData(projectID: project), data)
+        let file = store.directory(projectID: project).appendingPathComponent("skills.json")
+        try "not json".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try store.loadSkillsData(projectID: project))
+    }
 }
