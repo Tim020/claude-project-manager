@@ -492,13 +492,14 @@ struct SessionPane: View {
                 if !running {
                     ResumeBar(session: session, message: exitMessage(exitCode), compact: style.isCompact)
                 }
-            } else if model.isAgentAlive(session.id) && exitCode == nil {
-                // A live background agent: attach to it as soon as it's shown.
+            } else if model.isAgentAlive(session.id) && exitCode == nil && !model.isStopping(session.id) {
+                // A live background agent: attach to it as soon as it's shown
+                // (not while it's being stopped, which would bring it back).
                 Text("Attaching to agent…")
                     .font(DS.font(13))
                     .foregroundStyle(DS.dim)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onAppear { model.resume(session.id) }
+                    .onAppear { model.attachIfLive(session.id) }
             } else {
                 TranscriptView(session: session, lines: model.history(for: session.id), compact: style.isCompact)
                     // Loaded off the main thread; reloads when the session has new activity.
@@ -514,12 +515,14 @@ struct SessionPane: View {
     }
 
     private func exitMessage(_ code: Int32?) -> String {
+        if model.isStopping(session.id) { return ResumeBar.stoppingMessage }
         if model.isAgentAlive(session.id) { return "Detached — the agent is still running." }
         guard let code, code != 0 else { return "Session ended." }
         return "Session ended (exit code \(code))."
     }
 
     private var idleMessage: String {
+        if model.isStopping(session.id) { return ResumeBar.stoppingMessage }
         if model.isAgentAlive(session.id) { return "The agent is running in the background." }
         if model.isOpenInTerminal(session.id) { return "Running in a terminal — sending here starts a copy." }
         return session.hasConversation ? "This session isn't running." : "This session hasn't started yet."
@@ -538,7 +541,12 @@ private struct ResumeBar: View {
     @State private var draft = ""
     @FocusState private var focused: Bool
 
-    private var agentAlive: Bool { model.isAgentAlive(session.id) }
+    static let stoppingMessage = "Stopping the agent…"
+
+    /// Alive and staying so: one being stopped gets the usual bar, held
+    /// until it has gone.
+    private var agentAlive: Bool { model.isAgentAlive(session.id) && !stopping }
+    private var stopping: Bool { model.isStopping(session.id) }
     private var hasDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private var placeholder: String {
@@ -556,7 +564,7 @@ private struct ResumeBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if agentAlive || message.hasPrefix("Session ended") || message.hasPrefix("Detached") {
+            if agentAlive || stopping || message.hasPrefix("Session ended") || message.hasPrefix("Detached") {
                 Text(message)
                     .font(DS.font(12))
                     .foregroundStyle(DS.dim)
@@ -589,6 +597,7 @@ private struct ResumeBar: View {
                 Button(buttonTitle, action: send)
                     .buttonStyle(PrimaryButtonStyle())
                     .fixedSize()
+                    .disabled(stopping)
             }
             .padding(.vertical, compact ? 8 : 10)
             .padding(.horizontal, compact ? 10 : 12)
@@ -601,6 +610,7 @@ private struct ResumeBar: View {
     }
 
     private func send() {
+        guard !stopping else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         model.select(session.id)
         model.resume(session.id, message: text.isEmpty ? nil : text)

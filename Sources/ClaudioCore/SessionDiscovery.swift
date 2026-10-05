@@ -266,7 +266,23 @@ public struct SessionDiscovery: Sendable {
 
     /// Events from a session's history file, suitable for `TranscriptBuilder`.
     public func loadHistory(projectPath: String, claudeSessionID: String) throws -> [StreamEvent] {
-        let file = historyFile(projectPath: projectPath, claudeSessionID: claudeSessionID)
+        try loadHistory(file: historyFile(projectPath: projectPath, claudeSessionID: claudeSessionID))
+    }
+
+    /// The conversation's newest `.jsonl` among `historyItems`: one that
+    /// moved into a worktree (EnterWorktree) carries on in the worktree's
+    /// folder, while its session may still name the repository.
+    public func newestHistoryFile(projectPath: String, workingDirectory: String, claudeSessionID: String) -> URL? {
+        func modified(_ url: URL) -> Date? {
+            (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+        }
+        return historyItems(projectPath: projectPath, workingDirectory: workingDirectory, claudeSessionID: claudeSessionID)
+            .filter { $0.pathExtension == "jsonl" }
+            .compactMap { url in modified(url).map { (url, $0) } }
+            .max { $0.1 < $1.1 }?.0
+    }
+
+    public func loadHistory(file: URL) throws -> [StreamEvent] {
         guard FileManager.default.fileExists(atPath: file.path) else { return [] }
         let text = try String(contentsOf: file, encoding: .utf8)
         return text.split(separator: "\n").compactMap { StreamEventParser.parse(String($0)) }
@@ -413,7 +429,10 @@ extension Workspace {
     public mutating func importDiscovered(_ discovered: [DiscoveredSession], into projectID: UUID, skipping live: Set<UUID>) -> Int {
         guard project(projectID) != nil else { return 0 }
         var added = 0
-        for found in discovered where !isRemoved(claudeSessionID: found.claudeSessionID) {
+        // Left behind by `/clear`: the session that ran them has moved on.
+        // Not one that's still some session's own.
+        let replaced = Set(sessions.flatMap(\.replacedConversations)).subtracting(sessions.compactMap(\.claudeSessionID))
+        for found in discovered where !isRemoved(claudeSessionID: found.claudeSessionID) && !replaced.contains(found.claudeSessionID) {
             if let existing = session(claudeSessionID: found.claudeSessionID) {
                 syncTitle(existing.id, claudeTitle: found.customTitle)
                 // Pull requests only add up, so they're safe to take even

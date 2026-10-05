@@ -58,6 +58,11 @@ public struct HookEvent: Equatable, Sendable {
     public var error: String?
     /// PostToolUseFailure: the user stopped the tool (Esc), so it didn't fail.
     public var isInterrupt = false
+    /// Stop: the session's background tasks (shell commands, Monitors,
+    /// subagents) still running as the turn ended. Each one wakes the
+    /// session with a new turn when it finishes. Nil from a CLI that doesn't
+    /// report them (`background_tasks`, seen with 2.1.289).
+    public var backgroundTasks: [BackgroundTaskReport]?
 
     public init(appSessionID: UUID, name: HookEventName) {
         self.appSessionID = appSessionID
@@ -87,6 +92,12 @@ public enum HookEventParser {
         event.reason = json["reason"]?.stringValue
         event.error = json["error"]?.stringValue
         event.isInterrupt = json["is_interrupt"]?.boolValue ?? false
+        // Only "running" has been seen (2.1.289). A task in any other status
+        // counts as over, so a later CLI's "queued", say, would need adding.
+        event.backgroundTasks = json["background_tasks"]?.arrayValue?.compactMap { task in
+            guard (task["status"]?.stringValue ?? "running") == "running", let id = task["id"]?.stringValue else { return nil }
+            return BackgroundTaskReport(id: id, kind: task["type"]?.stringValue, description: task["description"]?.stringValue)
+        }
         return event
     }
 }
@@ -128,12 +139,13 @@ public struct HookEventTailer: Sendable {
 
 /// Maps hook events onto session status:
 /// prompt / tool use → Working; permission request → Awaiting Input;
-/// Stop → Completed, or Awaiting Input when Claude ended on a question.
+/// Stop → Completed, or Awaiting Input when Claude ended on a question, or
+/// still Working while background tasks it started are running.
 public enum HookReducer {
     public static let maxSummaryLength = 140
 
     public static func apply(_ event: HookEvent, to session: inout Session, now: Date) {
-        if let id = event.claudeSessionID, !id.isEmpty { session.claudeSessionID = id }
+        if let id = event.claudeSessionID { session.adoptConversation(id) }
 
         switch event.name {
         case .sessionStart:
@@ -142,6 +154,9 @@ public enum HookReducer {
             if event.name == .userPromptSubmit {
                 session.hasConversation = true
                 session.lastTurnFailed = false
+                // Woken by a task ending: it's gone, whatever ends this turn.
+                let ended = TaskNotification.endedTaskIDs(in: event.prompt ?? "")
+                if !ended.isEmpty { session.backgroundTasks.removeAll { ended.contains($0.id) } }
             }
             session.status = .working
             session.needsAction = nil
@@ -163,24 +178,36 @@ public enum HookReducer {
             if !text.isEmpty {
                 session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength)
             }
+            session.setBackgroundTasks(event.backgroundTasks ?? [], now: now)
             if text.hasSuffix("?") {
                 session.status = .awaitingInput
                 session.needsAction = session.summary
             } else {
-                session.status = .completed
+                // A task finishing starts a new turn, whose Stop reports again.
+                session.status = session.backgroundTasks.isEmpty ? .completed : .working
                 session.needsAction = nil
             }
             session.lastActivity = now
             session.lastTurnFailed = false
         case .stopFailure:
             // The turn ended (it comes instead of Stop), with an API error.
-            session.status = .completed
+            // It doesn't list background tasks (2.1.289). The last Stop's may
+            // have ended during the turn with no hook, so they're dropped:
+            // one still running wakes it later, and that Stop lists it again.
+            // Marks stay, so a task marked finished still doesn't count then.
+            if let tasks = event.backgroundTasks {
+                session.setBackgroundTasks(tasks, now: now)
+            } else {
+                session.backgroundTasks = []
+            }
+            session.status = session.backgroundTasks.isEmpty ? .completed : .working
             session.needsAction = nil
             session.lastTurnFailed = true
             let text = event.lastAssistantMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !text.isEmpty { session.summary = ToolSummary.truncate(TranscriptBuilder.firstLine(text), to: maxSummaryLength) }
             session.lastActivity = now
         case .sessionEnd:
+            session.forgetBackgroundTasks()
             if session.status == .working { session.status = .completed }
         case .other:
             break

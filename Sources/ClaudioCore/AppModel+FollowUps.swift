@@ -34,13 +34,15 @@ extension AppModel {
 
     /// The rail badge and the section's count: what's waiting for you.
     /// Jobs still running don't count. With the assistant off, only plan
-    /// changes sessions suggested (`claudio suggest` told them you'd see them).
-    public func needsYouCount(inProject projectID: UUID) -> Int {
+    /// changes sessions suggested (`claudio suggest` told them you'd see them)
+    /// and long-running background tasks, which aren't the assistant's.
+    public func needsYouCount(inProject projectID: UUID, now: Date? = nil) -> Int {
         let data = needsYouData(inProject: projectID)
-        guard isAssistantOn(inProject: projectID) else { return data.suggestions.count }
+        let others = data.suggestions.count + longRunningSessions(inProject: projectID, now: now).count
+        guard isAssistantOn(inProject: projectID) else { return others }
         let skills = skillsData(inProject: projectID)
         let offers = skills.candidates.filter { $0.state == .offered && !draftingCandidates.contains($0.id) }.count
-        return data.followUps.filter { $0.state != .working }.count + data.suggestions.count + offers + skills.proposals.count
+        return data.followUps.filter { $0.state != .working }.count + others + offers + skills.proposals.count
     }
 
     // MARK: - Finding sessions ready for a follow-up
@@ -104,12 +106,9 @@ extension AppModel {
         }
         // The newest, when a conversation has files in both the repository's
         // folder and a worktree's.
-        let files = discovery.historyItems(projectPath: project.path, workingDirectory: session.workingDirectory,
-                                           claudeSessionID: conversationID).filter { $0.pathExtension == "jsonl" }
-        func modified(_ url: URL) -> Date {
-            (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
-        }
-        guard let url = files.max(by: { modified($0) < modified($1) }), let bytes = size(url) else {
+        guard let url = discovery.newestHistoryFile(projectPath: project.path, workingDirectory: session.workingDirectory,
+                                                    claudeSessionID: conversationID),
+              let bytes = size(url) else {
             followUpHistoryMissing[session.id] = conversationID
             return nil
         }

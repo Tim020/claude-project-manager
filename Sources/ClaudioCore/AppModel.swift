@@ -132,6 +132,8 @@ public final class AppModel {
     /// A user-facing error to show in an alert; the view clears it.
     public var errorMessage: String?
     private var running: Set<UUID> = []
+    /// The ones of `running` that run `claude` itself, not `claude attach`.
+    @ObservationIgnored private var runningDirectly: Set<UUID> = []
     @ObservationIgnored private var pendingLaunches: [UUID: TerminalLaunch] = [:]
     private var exitCodes: [UUID: Int32] = [:]
     /// Read-only transcripts loaded from history files (see `loadHistory`).
@@ -182,7 +184,11 @@ public final class AppModel {
     /// Sessions you stopped, until their agent is seen gone: they get no
     /// notifications meanwhile (not "stopped unexpectedly", nor "finished"
     /// from the SessionEnd hook). Cleared if `claude stop` fails, or on resume.
-    @ObservationIgnored private var stopsRequested: Set<UUID> = []
+    private var stopsRequested: Set<UUID> = []
+    /// The session whose conversation a `/clear` just ended, by the app id
+    /// its hooks carry (shared by an original and its copies), for the
+    /// SessionStart that follows.
+    @ObservationIgnored private var clearing: [UUID: UUID] = [:]
     @ObservationIgnored private let store: StateStore
     @ObservationIgnored let discovery: SessionDiscovery
     @ObservationIgnored private let hookEventsURL: URL
@@ -378,10 +384,7 @@ public final class AppModel {
         }
         log.append(.info, "Claudio started", detail: errorMessage)
         pollStatusLines()
-        // Nothing is running at launch, whatever was saved.
-        for session in state.workspace.sessions where session.status == .working {
-            state.workspace.updateSession(session.id) { $0.status = .completed }
-        }
+        restoreBackgroundTasks()
         loadAssistantData()
         prepareAssistantFiles()
     }
@@ -530,9 +533,11 @@ public final class AppModel {
         }
         let discovery = self.discovery
         let directory = session.workingDirectory
+        let projectPath = state.workspace.project(session.projectID)?.path ?? directory
         let lines = await Task.detached(priority: .userInitiated) { () -> [TranscriptLine] in
             var builder = TranscriptBuilder(workingDirectory: directory)
-            (try? discovery.loadHistory(projectPath: directory, claudeSessionID: claudeID))?.forEach { builder.apply($0) }
+            let file = discovery.newestHistoryFile(projectPath: projectPath, workingDirectory: directory, claudeSessionID: claudeID)
+            (file.flatMap { try? discovery.loadHistory(file: $0) })?.forEach { builder.apply($0) }
             return builder.lines
         }.value
         if historyLines[sessionID] != lines { historyLines[sessionID] = lines }
@@ -1127,9 +1132,10 @@ public final class AppModel {
             if let agentID = session.agentID {
                 runAgentCommand { $0.remove(agentID: agentID) }
             }
-            // After `claude rm`, so the agent can't write to them again.
-            if let claudeID = session.claudeSessionID {
-                let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            // After `claude rm`, so the agent can't write to them again. With
+            // the conversations `/clear` left behind.
+            let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
+            for claudeID in state.workspace.ownedConversations(of: session) {
                 enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
             }
         }
@@ -1234,6 +1240,21 @@ public final class AppModel {
 
     // MARK: - Background agents
 
+    /// A live agent's tab was shown without a terminal: attach to it, unless
+    /// it's being stopped. Stopping closes the terminal before the agent has
+    /// gone, and attaching then would bring it back.
+    public func attachIfLive(_ sessionID: UUID) {
+        guard isAgentAlive(sessionID), !isStopping(sessionID) else { return }
+        resume(sessionID)
+    }
+
+    /// Whether a stop was asked for and its agent hasn't been seen gone yet.
+    /// (`stopsRequested` itself lasts until the notification check has seen
+    /// it go.)
+    public func isStopping(_ sessionID: UUID) -> Bool {
+        stopsRequested.contains(sessionID) && isAgentAlive(sessionID)
+    }
+
     /// Opens a session: reattaches a live agent, resumes a stopped one in the
     /// background, or (without an agent) starts `claude` directly. A message,
     /// if given, is sent as the first prompt after resuming.
@@ -1299,7 +1320,7 @@ public final class AppModel {
                 if terminal.isBusy {
                     session.status = .working
                     session.needsAction = nil
-                } else if session.status == .working {
+                } else if session.status == .working && session.backgroundTasks.isEmpty {
                     session.status = .completed
                 }
                 session.lastActivity = now()
@@ -1316,7 +1337,37 @@ public final class AppModel {
         if changed { save() }
     }
 
+    /// At launch nothing counts as Working, whatever was saved. Only
+    /// background agents can still be running, and their tasks may have
+    /// finished, or new ones started, while Claudio was closed (the hook log
+    /// is read from its end). So an agent's job state replaces the saved
+    /// list; without one, the saved list stands. The first agent list then
+    /// puts a session whose agent is alive back to Working (`apply(_:)`),
+    /// and one whose agent has gone loses its tasks without ever looking
+    /// as if it had just finished.
+    private func restoreBackgroundTasks() {
+        let launchedAt = now()
+        for session in state.workspace.sessions {
+            var tasks: [BackgroundTask] = []
+            if let agentID = session.agentID {
+                let url = BackgroundJobState.url(claudeHome: discovery.claudeHome, agentID: agentID)
+                tasks = (try? Data(contentsOf: url)).flatMap { BackgroundJobState.runningTasks($0, now: launchedAt) }
+                    .map { $0.filter { !session.finishedBackgroundTasks.contains($0.id) } } ?? session.backgroundTasks
+            }
+            guard tasks != session.backgroundTasks || session.status == .working else { continue }
+            state.workspace.updateSession(session.id) { session in
+                session.backgroundTasks = tasks
+                if session.agentID == nil { session.finishedBackgroundTasks = [] }
+                if session.status == .working { session.status = .completed }
+            }
+        }
+    }
+
     func apply(_ listed: [BackgroundAgent]) {
+        // A turn's Stop hook is written before its process goes idle: apply
+        // it first, or an idle reading would end a turn that left
+        // background tasks running, until the next hook poll.
+        pollHookEvents()
         // Work on a copy and only publish real changes: this runs every few
         // seconds, and every change to observed state redraws views.
         var workspace = state.workspace
@@ -1330,7 +1381,12 @@ public final class AppModel {
             if existing == nil, let match = workspace.session(claudeSessionID: agent.sessionID), !claimed.contains(match.id) {
                 existing = match
             }
-            if let existing { claimed.insert(existing.id) }
+            if let existing {
+                claimed.insert(existing.id)
+                if existing.claudeSessionID != agent.sessionID {
+                    absorbDuplicate(of: agent.sessionID, into: existing.id, in: &workspace)
+                }
+            }
             let stateKey = "\(agent.state ?? "")|\(agent.status ?? "")"
             if let existing {
                 let stateChanged = appliedAgentStates[agent.id] != stateKey
@@ -1340,7 +1396,8 @@ public final class AppModel {
                 let listSaidWaiting = listedAgentStatuses[agent.id] == .awaitingInput
                 workspace.updateSession(existing.id) { session in
                     session.agentID = agent.id
-                    session.claudeSessionID = agent.sessionID
+                    // Changes with `/clear`, which may have run while Claudio was closed.
+                    session.adoptConversation(agent.sessionID)
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
                     if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
@@ -1352,7 +1409,18 @@ public final class AppModel {
                     // or the process has gone (nothing is waiting any more).
                     let keepsWaiting = session.status == .awaitingInput && agent.sessionStatus == .completed
                         && agent.isAlive && !listSaidWaiting
-                    if stateChanged && !keepsWaiting {
+                    // Idle between turns while its background tasks run: the
+                    // next one finishing wakes it (see `HookReducer`). Not a
+                    // session running directly in a tab here: that process
+                    // isn't this agent.
+                    if !agent.isAlive && !session.backgroundTasks.isEmpty && !runningDirectly.contains(session.id) {
+                        session.forgetBackgroundTasks()
+                        if session.status == .working { session.status = .completed }
+                    }
+                    let waitsOnTasks = !session.backgroundTasks.isEmpty && agent.sessionStatus == .completed
+                    // Tasks restored at launch, now that the agent is seen alive.
+                    if waitsOnTasks && agent.isAlive && session.status == .completed { session.status = .working }
+                    if stateChanged && !keepsWaiting && !waitsOnTasks {
                         session.status = agent.sessionStatus
                         session.needsAction = agent.sessionStatus == .awaitingInput ? (agent.waitingFor ?? session.needsAction) : nil
                     }
@@ -1374,9 +1442,18 @@ public final class AppModel {
             listedAgentStatuses[agent.id] = agent.sessionStatus
         }
         for session in workspace.sessions {
-            if let agentID = session.agentID, !listedIDs.contains(agentID), agents[agentID] != nil {
+            guard let agentID = session.agentID, !listedIDs.contains(agentID) else { continue }
+            if agents[agentID] != nil {
                 // Removed outside the app (`claude rm`).
                 workspace.updateSession(session.id) { $0.agentID = nil }
+            }
+            if !session.backgroundTasks.isEmpty && !runningDirectly.contains(session.id) {
+                // Gone with its agent (tasks restored at launch, say). Not a
+                // session running directly in a tab: those are its own.
+                workspace.updateSession(session.id) { session in
+                    session.forgetBackgroundTasks()
+                    if session.status == .working { session.status = .completed }
+                }
             }
         }
         workspace.forgetDeletedAgents(notIn: listedIDs)
@@ -1386,6 +1463,23 @@ public final class AppModel {
             state.workspace = workspace
             save()
         }
+    }
+
+    /// The agent's session is taking up a conversation (a `/clear` made while
+    /// Claudio was closed) that history discovery may already have imported
+    /// as a session of its own, if it ran first: that one goes, its pull
+    /// requests kept. Only one as discovery left it: no agent or process of
+    /// its own, not renamed (a title from Claude Code is fine), archived or
+    /// put in a folder. Otherwise both stay.
+    private func absorbDuplicate(of claudeSessionID: String, into sessionID: UUID, in workspace: inout Workspace) {
+        guard let duplicate = workspace.session(claudeSessionID: claudeSessionID), duplicate.id != sessionID,
+              duplicate.agentID == nil, !running.contains(duplicate.id), !duplicate.isArchived,
+              !duplicate.hasCustomName || duplicate.name == duplicate.claudeTitle else { return }
+        if case .folder? = workspace.group(of: duplicate.id) { return }
+        workspace.updateSession(sessionID) { PullRequestLink.merge(duplicate.pullRequests, into: &$0.pullRequests) }
+        workspace.closeTab(duplicate.id)
+        workspace.removeSession(duplicate.id)
+        log.append(.info, "Merged “\(duplicate.name)” into the session whose agent `/clear` moved on to it")
     }
 
     /// For tests: links a session to an agent as a dispatch would.
@@ -1516,6 +1610,7 @@ public final class AppModel {
               let commands = agentCommands(reportErrors: true) else { return }
         pendingLaunches[sessionID] = commands.attach(agentID: agentID, workingDirectory: session.workingDirectory)
         running.insert(sessionID)
+        runningDirectly.remove(sessionID)
         exitCodes[sessionID] = nil
     }
 
@@ -1591,6 +1686,7 @@ public final class AppModel {
                                                          statusLine: statusLineCapture(), assistant: assistant)
         if markLaunchedWithAssistant(sessionID, assistant) { save() }
         running.insert(sessionID)
+        runningDirectly.insert(sessionID)
         exitCodes[sessionID] = nil
         if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             // Hooks confirm this shortly; an early exit resets it.
@@ -1624,6 +1720,7 @@ public final class AppModel {
         // Closing its tab is a sign it may be ready for a follow-up.
         followUpDue.insert(sessionID)
         running.remove(sessionID)
+        runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
         let name = state.workspace.session(sessionID)?.name ?? sessionID.uuidString
@@ -1634,6 +1731,7 @@ public final class AppModel {
             return
         }
         state.workspace.updateSession(sessionID) { session in
+            session.forgetBackgroundTasks()
             if session.status == .working { session.status = .completed }
         }
         save()
@@ -1653,6 +1751,7 @@ public final class AppModel {
     /// detaches; the agent keeps running.
     private func detach(_ sessionID: UUID) {
         let wasRunning = running.remove(sessionID) != nil
+        runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil
         if wasRunning { terminals?.terminate(sessionID) }
     }
@@ -1707,7 +1806,16 @@ public final class AppModel {
         guard let claudeID = event.claudeSessionID, !claudeID.isEmpty else {
             return workspace.session(event.appSessionID)?.id
         }
-        if let session = workspace.session(claudeSessionID: claudeID) { return session.id }
+        if let session = workspace.session(claudeSessionID: claudeID) {
+            // `/clear` ends this conversation and starts the next under the
+            // same app id: the start goes to whoever ended (a copy, maybe).
+            if event.name == .sessionEnd && event.reason == "clear" { clearing[event.appSessionID] = session.id }
+            return session.id
+        }
+        if event.name == .sessionStart && event.source == "clear",
+           let cleared = clearing.removeValue(forKey: event.appSessionID), workspace.session(cleared) != nil {
+            return cleared
+        }
         if let owner = workspace.session(event.appSessionID),
            owner.claudeSessionID == nil || (event.name == .sessionStart && event.source == "clear") {
             return owner.id
@@ -1732,6 +1840,20 @@ public final class AppModel {
     /// For tests: adds a session directly.
     func applyTestSession(_ session: Session) {
         try? state.workspace.addSession(session)
+    }
+
+    /// You've seen enough: its background tasks stop keeping it Working,
+    /// though they may still run (see AppModel+BackgroundTasks). If Claude
+    /// Code stops reporting them (you ended the task, say), the mark goes too.
+    public func markBackgroundTasksFinished(_ sessionID: UUID) {
+        guard let session = workspace.session(sessionID), !session.backgroundTasks.isEmpty else { return }
+        state.workspace.updateSession(sessionID) { session in
+            session.finishedBackgroundTasks += session.backgroundTasks.map(\.id)
+            session.backgroundTasks = []
+            if session.status == .working { session.status = .completed }
+        }
+        log.append(.info, "Marked \(session.name)'s \(BackgroundTasks.count(session.backgroundTasks)) finished")
+        save()
     }
 
     /// Moves a session's follow-up mark (see AppModel+FollowUps).

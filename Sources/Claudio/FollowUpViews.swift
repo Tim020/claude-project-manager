@@ -14,34 +14,85 @@ struct NeedsYouSection: View {
     let projectID: UUID
 
     var body: some View {
-        let data = model.needsYouData(inProject: projectID)
-        VStack(alignment: .leading, spacing: 6) {
-            Text("NEEDS YOU · \(model.needsYouCount(inProject: projectID))")
-                .font(DS.font(11, .extraBold))
-                .kerning(0.66)
-                .foregroundStyle(DS.muted)
-                .padding(.horizontal, 4)
-            let skills = model.skillsData(inProject: projectID)
-            let hasSkillCards = model.isAssistantOn(inProject: projectID)
-                && (!skills.proposals.isEmpty || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
-            if data.followUps.isEmpty && data.suggestions.isEmpty && !hasSkillCards {
-                Text("Nothing needs you.")
-                    .font(DS.font(12.5))
-                    .foregroundStyle(DS.dim)
+        // Background tasks become long-running as time passes, not only
+        // when something changes.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let data = model.needsYouData(inProject: projectID)
+            let longRunning = model.longRunningSessions(inProject: projectID, now: context.date)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("NEEDS YOU · \(model.needsYouCount(inProject: projectID, now: context.date))")
+                    .font(DS.font(11, .extraBold))
+                    .kerning(0.66)
+                    .foregroundStyle(DS.muted)
                     .padding(.horizontal, 4)
-            }
-            if model.isAssistantOn(inProject: projectID) {
-                ForEach(data.followUps.reversed()) { followUp in
-                    NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
+                let skills = model.skillsData(inProject: projectID)
+                let hasSkillCards = model.isAssistantOn(inProject: projectID)
+                    && (!skills.proposals.isEmpty || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
+                if data.followUps.isEmpty && data.suggestions.isEmpty && longRunning.isEmpty && !hasSkillCards {
+                    Text("Nothing needs you.")
+                        .font(DS.font(12.5))
+                        .foregroundStyle(DS.dim)
+                        .padding(.horizontal, 4)
                 }
-                SkillNeedsYouCards(projectID: projectID)
+                ForEach(longRunning) { session in
+                    LongRunningTasksCard(session: session, now: context.date)
+                }
+                if model.isAssistantOn(inProject: projectID) {
+                    ForEach(data.followUps.reversed()) { followUp in
+                        NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
+                    }
+                    SkillNeedsYouCards(projectID: projectID)
+                }
+                ForEach(data.suggestions.reversed()) { suggestion in
+                    SessionSuggestionCard(suggestion: suggestion, projectID: projectID)
+                }
             }
-            ForEach(data.suggestions.reversed()) { suggestion in
-                SessionSuggestionCard(suggestion: suggestion, projectID: projectID)
+            // With no cards it would shrink to its text and sit centred.
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A session kept Working for a long time by background tasks that may never
+/// end (a dev server, `tail -f`): open it, or stop waiting on them.
+private struct LongRunningTasksCard: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    let now: Date
+
+    var body: some View {
+        let tasks = session.backgroundTasks
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.orange).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(session.name) is still running").font(DS.font(13)).foregroundStyle(DS.text).lineLimit(2)
+                    Text("\(BackgroundTasks.count(tasks)) for \(BackgroundTasks.duration(from: BackgroundTasks.runningSince(tasks) ?? now, to: now))")
+                        .font(DS.font(11.5)).foregroundStyle(DS.dim)
+                    ForEach(tasks.prefix(3)) { task in
+                        Text("• " + BackgroundTasks.line(task, now: now))
+                            .font(DS.font(11.5)).foregroundStyle(DS.dim).lineLimit(1).truncationMode(.middle)
+                    }
+                    if tasks.count > 3 {
+                        Text("and \(tasks.count - 3) more").font(DS.font(11.5)).foregroundStyle(DS.dim)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Button("Open") { model.select(session.id) }
+                    .buttonStyle(OutlineButtonStyle())
+                    .font(DS.font(12))
+                LinkLabelButton(title: "Mark Finished") { model.markBackgroundTasksFinished(session.id) }
+                    .font(DS.font(12))
+                    .help("Stop waiting on them: the session counts as finished, though they may still run.")
+                Spacer(minLength: 0)
             }
         }
-        // With no cards it would shrink to its text and sit centred.
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 5).fill(DS.input))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(DS.border, lineWidth: 1))
     }
 }
 
