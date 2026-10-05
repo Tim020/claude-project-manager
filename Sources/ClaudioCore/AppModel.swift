@@ -235,6 +235,26 @@ public final class AppModel {
     public var includeUnlinkedPullRequests = true
     /// Each project's assistant data, as saved (see AppModel+Assistant).
     public internal(set) var assistantData: [UUID: AssistantData] = [:]
+    // Usage (design 11a; see AppModel+Usage).
+    @ObservationIgnored let usageStore: UsageStoring
+    /// What's been read from every conversation's transcripts.
+    @ObservationIgnored var usageLedger = UsageLedger()
+    @ObservationIgnored var isScanningUsage = false
+    /// Scans finished since launch (the first one shows its progress).
+    @ObservationIgnored var usageScans = 0
+    /// Transcripts already reported as unreadable in the Activity Log.
+    @ObservationIgnored var reportedUnreadableTranscripts = Set<String>()
+    /// The assistant's priced calls, per project, from its audit log.
+    @ObservationIgnored var assistantJobCosts: [UUID: [AssistantJobCost]] = [:]
+    /// Every hour of every conversation, and every assistant call, priced:
+    /// what the Usage views add up.
+    public internal(set) var usageEntries: [UsageEntry] = []
+    /// Transcripts being read, and ones that couldn't be.
+    public internal(set) var usageScan = UsageScanStatus()
+    /// The Usage tool's folder, when drilled into one.
+    public internal(set) var usageFolder: SessionGroup?
+    /// The time zone days are counted in (tests set one).
+    @ObservationIgnored public var timeZone = TimeZone.current
     /// The capture box's target, while a note is being written.
     public internal(set) var noteCapture: NoteCapture?
     /// What's typed in the capture box.
@@ -328,6 +348,7 @@ public final class AppModel {
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
         assistantStore: AssistantStoring = MemoryAssistantStore(),
+        usageStore: UsageStoring = MemoryUsageStore(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
@@ -345,6 +366,7 @@ public final class AppModel {
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
         self.assistantStore = assistantStore
+        self.usageStore = usageStore
         self.gitExecutable = git
         self.locateClaude = locateClaude
         self.locateGitHubCLI = locateGitHubCLI
@@ -363,6 +385,7 @@ public final class AppModel {
         restoreBackgroundTasks()
         loadAssistantData()
         prepareAssistantFiles()
+        loadUsage()
     }
 
     // MARK: - Derived state
@@ -1160,6 +1183,8 @@ public final class AppModel {
     }
 
     private func removeHistory(of session: Session, claudeSessionID: String, projectPath: String) {
+        // What it used still counts once its transcripts have gone.
+        recordUsageBeforeDeleting(session, conversationID: claudeSessionID, projectPath: projectPath)
         let items = discovery.historyItems(projectPath: projectPath, workingDirectory: session.workingDirectory,
                                            claudeSessionID: claudeSessionID)
         for item in items {
@@ -1848,6 +1873,11 @@ public final class AppModel {
     /// For tests: changes a session directly.
     func applyTestSessionChange(_ sessionID: UUID, _ body: (inout Session) -> Void) {
         state.workspace.updateSession(sessionID, body)
+    }
+
+    /// For tests: a plan usage reading, as `claude /usage` would give.
+    func applyTestUsage(_ snapshot: UsageSnapshot?) {
+        usage = snapshot
     }
 
     /// For tests: gives a session a conversation, as its first prompt would.

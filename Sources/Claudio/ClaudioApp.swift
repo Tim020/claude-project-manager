@@ -20,6 +20,7 @@ enum AppEnvironment {
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
             statusDirectory: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("status"),
             assistantStore: AssistantFileStore(root: AssistantFileStore.defaultRoot),
+            usageStore: UsageFileStore(url: UsageFileStore.defaultURL),
             logFileURL: ActivityLog.defaultFileURL)
     }
 
