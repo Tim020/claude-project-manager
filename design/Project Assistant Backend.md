@@ -62,14 +62,16 @@ CLI facts were checked against Claude Code 2.1.284 on macOS, and in `node:22-sli
     index.tsv                        project path → project id, for bin/claudio
     runs/                            working directory for `claude -p` jobs
     <project-id>/
-      assistant.json                 notes, plan items, skill records
+      assistant.json                 notes and plan items
+      skills.json                    lesson candidates, skill drafts, skill records, usage (step 5)
       audit.jsonl                    append-only change log (backs Undo)
       suggestions.json               the suggestions showing on notes (throwaway: no audit, no version)
       plan.md                        read-only snapshot that `claudio plan` prints
       skills/.claude/skills/<name>/SKILL.md    ← the --add-dir root: approved skills only
-      drafts/<suggestion-id>/SKILL.md          proposals, outside the add-dir so nothing loads them
       history/<name>/<n>.md                    every approved version
 ```
+
+*(Step 5a: skill records live in `skills.json`, not `assistant.json`, so adding them didn't make older builds read notes as read-only. Drafts are kept in `skills.json` too, not in `drafts/`: nothing on disk is needed until a draft is approved, and nothing loads it from there.)*
 
 ## Decisions, by open question
 
@@ -463,6 +465,19 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - From 4b (PR #35 review round 1): a Failed marker on a note whose background check failed, opening Job Failed.
      - From the handover: Skills (with a count) in the Assistant ⋯ menu.
      - From What was verified: live reload of `--add-dir` skills, and whether the loader follows symlinks (both now verified).
+   - **Done in 5a:**
+     - **Usage:** `skills.json` records which sessions used each skill, written only for a new session or a new day (hooks are polled twice a second). Claude invoking a skill is a `PreToolUse` of the Skill tool. Typing `/name` fires no tool event, only `UserPromptSubmit` with that prompt (recorded with 2.1.289, `Fixtures/hook-skill-use.log`), so both count. Only the project's skills count (approved, or in the repository's `.claude/skills`). Approving counts as a use, so 5b's retirement check needs no baseline.
+     - **Chips:** touched files are read from the item's sessions' history files (`EditLogCache`, off the main actor, when the item or the sheet opens), with Files Changed's paths added when loaded. The usage term counts sessions in the folder picked for the session (Unfiled counts unfiled sessions).
+     - **Skill files that can't be used** (a folder with no `SKILL.md`, one that can't be read, or frontmatter with no closing `---`) are logged once each. One with no closing `---` is still listed, under its folder's name.
+     - **Check Failed on a note:** a background check that fails marks the note ("Check against the plan failed"), which opens Job Failed with Try Again. It's kept in memory until the note is checked again or joins the plan; the Activity Log keeps the record.
+     - **Lessons:** the digest gives failures and corrections refs (`f1`, `c1`), and the follow-up schema has `lessons[]` (summary, evidence refs, remember). Refs are resolved in code; a lesson citing none is dropped. Its signature comes from the evidence (see `LessonSignature`): a failed command's first two words and the error's first line with paths and numbers taken out, a tool and its file, or a correction's first six words that matter. `remember` only stands when a cited correction asks for it in your words ("remember", "next time", "from now on", "always", "never").
+     - **Candidates** gather in `skills.json` by signature (at most 10 pieces of evidence each, 200 candidates per project). They qualify at two sessions, or with remember. After a draft that isn't kept, a candidate waits for more sessions: two more after Not Now or "not worth a skill", one more after a draft fails its checks.
+     - **The draft job** (`SkillDraftJob`, the project's deep model) gets the lesson, its evidence and the approved skills, and must prefer patching one. It returns fields and the whole body; code writes the frontmatter and `metadata` (`claudio-id`, `claudio-evidence`, `claudio-version`). Measured with 2.1.289 (Sonnet): $0.015 and 5.2 s for a draft, $0.010 and 2.6 s for a follow-up with a lesson (`Fixtures/assistant-skill-draft.json`, `assistant-followup-lessons.json`). The cap is $0.15 on Haiku, scaled by model ($0.45 on Sonnet); the timeout is 120 s.
+     - **Checks:** a lower-case slug name of up to 64 characters; not one of Claude Code's own names (recorded from 2.1.169 and 2.1.289 containers, `Fixtures/init-builtins-*.json`, plus its interactive commands); not an approved or repository skill's name (a change keeps its name); description and `when_to_use` within 1,536 characters; relative `paths` globs; instructions present, within 500 lines and 20,000 characters; files named in backticks exist in the repository; commands in shell code blocks are on the login shell's PATH (read once with `printf` in a login shell; if that fails the check is skipped, not failed, since a GUI app's own PATH lacks Homebrew); and no secrets. The Activity Log hides command output rather than redacting it, so the secret patterns are new (`SecretPatterns`). A failing draft is logged by its name and the checks it failed, never its text.
+     - **Modes:** Automatic drafts behind the usage gate and the held-back queue (`HeldJobKey.skillDraft`, logged by id). Manual offers it in Needs You (Draft Skill, Not Now). Remember drafts straight away, as something you asked for. Switching to Manual turns held drafts into offers; Off and the global switch withdraw offers (the lessons stay). Don't send transcripts is checked when a draft runs, not when it was queued, and with it on follow-ups find no lessons (the evidence is transcript text). A background draft that fails shows in the Activity Log with Try Again.
+     - **Approval:** Approve writes `skills/.claude/skills/<name>/SKILL.md` and `history/<name>/<n>.md`, and records the version and a hash of the text (FNV-1a, for 5b's drift check). It refuses a change whose skill was edited since the draft (its `previousText` no longer matches), and a new skill whose name has been taken; it checks again. Edit is checked the same way and can't rename. Not Now drops the draft.
+     - **Views:** Needs You shows drafts being written, offers and New Skill / Changed Skill (why, added lines or a diff, Approve, Edit, Not Now). Skills (n) in the ⋯ menu lists approved skills with their use and when they changed; each opens with its text and approved versions.
+   - **For 5b (decided above, nothing left for later):** drift and Edited Outside Claudio, retirement and Unused Skill, Save to Repository and Restore, REPOSITORY skills in the Skills list, and the skill set per session.
 6. **GitHub.** Polling, triage, export, and status suggestions.
 7. **Ask.**
 
@@ -489,6 +504,9 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
 | A failed `-p` call still reports `"subtype": "success"`; `is_error`, `terminal_reason: "api_error"` and exit 1 tell | A signed-out container, and one with a rejected API key (2.1.284). The rejected key took 190 s of retries, so the 60 s timeout matters. Recorded in `Fixtures/assistant-*.json`. |
 
 | Skills under an `--add-dir` root reload live: a skill added, a skill linked in, and an edit to a skill's text all reach a running session | One `claude -p --input-format stream-json` process (Haiku, 2.1.289, step 5), three turns. With 3 s between the change and the next turn, the new skills weren't there yet; with 12 s they were, and were invoked. An edit to `SKILL.md` was followed on the next call. So a change takes a few seconds to arrive. |
+| Typing `/name` fires no `PreToolUse`; only `UserPromptSubmit`, with the prompt `/name`. Claude invoking a skill fires `PreToolUse` and `PostToolUse` of the Skill tool with `tool_input.skill` | A recording hook in one stream-json process (Haiku, 2.1.289, step 5). Recorded in `Fixtures/hook-skill-use.log`. |
+| Claude Code's own skill and command names | The init event of signed-out containers, 2.1.169 and 2.1.289 (`Fixtures/init-builtins-*.json`). |
+| A skill draft costs about $0.015 and 5 s on Sonnet; a follow-up with a lesson $0.010 and 3 s, and Sonnet cites the digest's refs | Real calls with the app's prompts and schemas (2.1.289, step 5). Recorded in `Fixtures/assistant-skill-draft.json` and `assistant-followup-lessons.json`. |
 | The skill loader follows symlinks, both a linked skill folder and a linked `SKILL.md` | The same probe (2.1.289): both listed in the init event's `skills` and invoked, returning their text. A signed-out 2.1.169 container listed both in its init event too. |
 
 **Assumed, and to check at the build step that needs it:** none.
