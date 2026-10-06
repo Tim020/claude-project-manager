@@ -57,7 +57,11 @@ public struct TokenCounts: Codable, Equatable, Sendable {
     /// usage says (`cache_creation.ephemeral_5m/1h_input_tokens`); otherwise
     /// they're taken as 5-minute writes.
     init(usage: [String: Any]) {
-        func int(_ value: Any?) -> Int { (value as? NSNumber)?.intValue ?? 0 }
+        func int(_ value: Any?) -> Int {
+            if let value = value as? Int { return value }
+            if let value = value as? Double { return Int(value) }
+            return (value as? NSNumber)?.intValue ?? 0
+        }
         input = int(usage["input_tokens"])
         output = int(usage["output_tokens"])
         cacheRead = int(usage["cache_read_input_tokens"])

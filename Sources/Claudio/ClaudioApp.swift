@@ -142,6 +142,8 @@ struct ClaudioApp: App {
                     .keyboardShortcut("2")
                 Button(model.menuFlags.leftTool == .assistant ? "Hide Assistant" : "Show Assistant") { model.toggleTool(.assistant) }
                     .keyboardShortcut("3")
+                Button(model.menuFlags.leftTool == .usage ? "Hide Usage" : "Show Usage") { model.toggleTool(LeftTool.usage) }
+                    .keyboardShortcut("4")
                 Button(model.menuFlags.rightTool == .changes ? "Hide Changes" : "Show Changes") { model.toggleTool(.changes) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
                     .disabled(!model.menuFlags.hasSelection)
@@ -149,6 +151,11 @@ struct ClaudioApp: App {
                     model.toggleTool(.pullRequest)
                 }
                 .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(!model.menuFlags.hasSelection)
+                Button(model.menuFlags.rightTool == .usage ? "Hide Session's Usage" : "Show Session's Usage") {
+                    model.toggleTool(RightTool.usage)
+                }
+                .keyboardShortcut("u", modifiers: [.command, .option])
                 .disabled(!model.menuFlags.hasSelection)
                 Divider()
                 // As in VS Code: ⌃` toggles the panel, ⌃⇧` opens another shell.
@@ -176,6 +183,14 @@ struct ClaudioApp: App {
         }
         .defaultSize(width: 900, height: 560)
         .keyboardShortcut("l", modifiers: [.command, .option])
+
+        // Every project's usage, and the assistant's (design 11a).
+        Window("Usage", id: UsageWindowView.windowID) {
+            UsageWindowView()
+                .environment(model)
+        }
+        .defaultSize(width: 1080, height: 760)
+        .keyboardShortcut("u", modifiers: [.command, .shift])
 
         Settings {
             SettingsView()
