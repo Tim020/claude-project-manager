@@ -44,7 +44,7 @@ public enum SkillName {
     public static let maxLength = 64
 
     public static func isValid(_ name: String) -> Bool {
-        // `\A…\z`, not `^…$`: ICU's `$` also matches before a final line break.
+        // `\A…\z`, not `^…$`: exact whole-string anchors on every platform.
         name.count <= maxLength && name.range(of: #"\A[a-z0-9]+(-[a-z0-9]+)*\z"#, options: .regularExpression) != nil
     }
 }
