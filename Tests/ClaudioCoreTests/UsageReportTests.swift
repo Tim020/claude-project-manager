@@ -200,7 +200,7 @@ final class UsageReportTests: XCTestCase {
             XCTAssertEqual(all.rows.map(\.name), ["site", "app"])
             XCTAssertEqual(all.cost, 17.75, accuracy: 0.0001)
 
-            let rows = f.model.projectUsageRows(range: .week)
+            let rows = f.model.projectUsageRows(f.model.usageReport(.all, range: .week))
             XCTAssertEqual(rows.map(\.name), ["site", "app"])
             XCTAssertNil(rows[0].assistantCost, "Off: the assistant isn't on there and spent nothing")
             XCTAssertEqual(rows[1].assistantCost ?? 0, 0.75, accuracy: 0.0001)

@@ -529,9 +529,8 @@ extension AppModel {
                               projects: byProject.sorted { $0.cost > $1.cost })
     }
 
-    /// The Usage window's project table.
-    public func projectUsageRows(range: UsageRange) -> [ProjectUsageRow] {
-        let report = usageReport(.all, range: range)
+    /// The Usage window's project table, from its `.all` report.
+    public func projectUsageRows(_ report: UsageReport) -> [ProjectUsageRow] {
         let period = report.period
         return report.rows.compactMap { row -> ProjectUsageRow? in
             guard case .project(let id) = row.kind else { return nil }

@@ -42,7 +42,7 @@ struct UsageWindowView: View {
                     VStack(spacing: 12) {
                         summary(report)
                         chart(report)
-                        projectTable(range: range)
+                        projectTable(report)
                         assistant(range: range)
                     }
                     .frame(maxWidth: .infinity)
@@ -188,8 +188,8 @@ struct UsageWindowView: View {
         .foregroundStyle(DS.muted)
     }
 
-    private func projectTable(range: UsageRange) -> some View {
-        let rows = model.projectUsageRows(range: range)
+    private func projectTable(_ report: UsageReport) -> some View {
+        let rows = model.projectUsageRows(report)
         let columns = [GridItem(.flexible(minimum: 120), alignment: .leading), GridItem(.fixed(90), alignment: .trailing),
                        GridItem(.fixed(90), alignment: .trailing), GridItem(.fixed(90), alignment: .trailing),
                        GridItem(.fixed(120), alignment: .leading)]
