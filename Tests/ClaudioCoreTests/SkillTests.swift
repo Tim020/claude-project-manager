@@ -7,9 +7,14 @@ final class SkillRunner: CommandRunning, @unchecked Sendable {
     let base = FakeRunner()
     private let lock = NSLock()
     private var _calls: [[String]] = []
+    private var _scripts: [String] = []
     private var _answer: ([String]) -> CommandResult = { _ in CommandResult(exitCode: 1, output: "", errorOutput: "no answer set") }
+    /// What a shell script (the login shell's PATH read) prints.
+    var scriptOutput = CommandResult(exitCode: 0, output: "", errorOutput: "")
 
     var calls: [[String]] { lock.withLock { _calls } }
+    /// Shell scripts run (not `claude`): their command lines.
+    var scripts: [String] { lock.withLock { _scripts } }
     var answer: ([String]) -> CommandResult {
         get { lock.withLock { _answer } }
         set { lock.withLock { _answer = newValue } }
@@ -17,6 +22,10 @@ final class SkillRunner: CommandRunning, @unchecked Sendable {
 
     func run(_ command: TerminalLaunch) async -> CommandResult {
         let args = command.claudeArguments
+        if args.isEmpty, let script = command.arguments.last {
+            lock.withLock { _scripts.append(script) }
+            return lock.withLock { scriptOutput }
+        }
         guard args.contains("--json-schema") else { return await base.run(command) }
         lock.withLock { _calls.append(args) }
         return answer(args)
@@ -639,10 +648,11 @@ final class SkillTests: XCTestCase {
         await MainActor.run {
             f.assistant.skills[f.project] = [SkillFiles.skill(fromSkillFile: old, folderName: "linux-tests")]
             f.model.refreshApprovedSkills(projectID: f.project)
-            let proposal = propose(f, text: SkillTests.skillText("New.", version: 3), previous: old)
+            let proposal = propose(f, text: SkillTests.skillText("New.", version: 1), previous: old)
             XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
             let skill = f.model.approvedSkills[f.project]?.first
-            XCTAssertEqual(skill?.version, 3)
+            XCTAssertEqual(skill?.version, 3, "worked out at approval, whatever the draft says")
+            XCTAssertEqual(f.assistant.skillHistory(name: "linux-tests", projectID: f.project).map(\.version), [3])
             XCTAssertEqual(skill?.claudioID, UUID(uuidString: SkillTests.skillID))
             XCTAssertEqual(SkillText.body(of: skill?.text ?? ""), "New.")
         }
@@ -680,8 +690,8 @@ final class SkillTests: XCTestCase {
             XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: renamed, projectID: f.project).first,
                            "the name can't change while editing (it's linux-tests)")
             let leaky = SkillTests.skillText("Token: ghp_abcdefghijklmnopqrstuvwxyz0123456789")
-            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: leaky, projectID: f.project),
-                           ["it looks like it holds a secret (a GitHub token)"])
+            XCTAssertTrue(f.model.editSkillProposal(proposal.id, text: leaky, projectID: f.project)
+                .contains("it looks like it holds a secret (a GitHub token)"))
             XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.text, proposal.text, "not saved")
             let better = SkillTests.skillText("Run it in Docker, then push.")
             XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: better, projectID: f.project), [])
@@ -777,6 +787,144 @@ final class SkillTests: XCTestCase {
             settings.assistant.isEnabled = true
             f.model.updateSettings(settings)
             XCTAssertEqual(f.model.skillOffers(inProject: f.project).count, 1, "offered again")
+        }
+    }
+
+    // MARK: - Review round 1 (PR #38)
+
+    func testADraftNameWithALineBreakMakesNoProposal() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        let escaping = #"{"action":"new","skill":null,"name":"ok-name\n../../../../.claude/skills/x","description":"d","whenToUse":"","paths":[],"body":"b","why":"w"}"#
+        answerFollowUpsAndDrafts(f, draft: escaping, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
+            XCTAssertTrue(f.model.log.entries.contains { $0.title == "Assistant: a skill draft came back in a form Claudio couldn't use" })
+        }
+    }
+
+    func testApproveRefusesANameThatDoesntMatchItsText() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var proposal = propose(f, text: SkillTests.skillText("Run it."))
+            f.model.updateSkillsData(f.project) { data in data.proposals[0].name = "../../evil" }
+            proposal = f.model.skillProposals(inProject: f.project)[0]
+            XCTAssertFalse(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            f.model.updateSkillsData(f.project) { data in data.proposals[0].name = "other-name" }
+            XCTAssertFalse(f.model.approveSkillProposal(proposal.id, projectID: f.project), "a slug, but not the text's name")
+            XCTAssertEqual(f.model.toast?.text, "This draft's name doesn't match its text, so it wasn't approved. Not Now drops it.")
+            XCTAssertTrue(f.assistant.skills[f.project]?.isEmpty ?? true, "nothing written")
+        }
+    }
+
+    func testTheFileStoreRefusesNamesThatArentSlugs() throws {
+        let root = try makeTemporaryDirectory()
+        let store = AssistantFileStore(root: root.appendingPathComponent("assistant"))
+        let project = UUID()
+        XCTAssertThrowsError(try store.writeApprovedSkill(name: "../evil", text: "x", projectID: project))
+        XCTAssertThrowsError(try store.writeSkillHistory(name: "a/../../b", version: 1, text: "x", projectID: project))
+        XCTAssertThrowsError(try store.writeApprovedSkill(name: "ok\nname", text: "x", projectID: project))
+        XCTAssertEqual(store.skillHistory(name: "../x", projectID: project), [])
+        let written = FileManager.default.enumerator(atPath: root.path)?.allObjects as? [String] ?? []
+        XCTAssertFalse(written.contains { $0.contains("SKILL.md") || $0.hasSuffix(".md") }, "nothing written anywhere")
+    }
+
+    func testASecretInTheReasonOrAPathIsntLogged() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+        let draft = #"{"action":"new","skill":null,"name":"deploy","description":"Deploy.","whenToUse":"","paths":[],"body":"See `secrets/\#(token).txt`.","why":"Use \#(token)"}"#
+        answerFollowUpsAndDrafts(f, draft: draft, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
+            let entry = f.model.log.entries.last { $0.title.contains("dropped a skill draft") }
+            XCTAssertNotNil(entry)
+            XCTAssertTrue(entry?.detail?.contains("its reason looks like it holds a secret (a GitHub token)") ?? false)
+            XCTAssertTrue(entry?.detail?.contains("secrets/[secret].txt") ?? false, "the path is quoted with the token taken out")
+            XCTAssertFalse(f.model.log.entries.contains { !SecretPatterns.matches(in: $0.title + ($0.detail ?? "")).isEmpty },
+                           "no log line holds anything like a secret")
+        }
+    }
+
+    func testALessonWhoseDraftWasReplacedGoesBackToGathering() async throws {
+        let f = try await makeFixture()
+        let approved = SkillTests.skillText("Old.", version: 1)
+        await MainActor.run {
+            f.model.commandExistsOverride = { _ in true }
+            f.assistant.skills[f.project] = [SkillFiles.skill(fromSkillFile: approved, folderName: "linux-tests")]
+            f.model.refreshApprovedSkills(projectID: f.project)
+            _ = propose(f, text: SkillTests.skillText("A's change."), previous: approved)
+        }
+        let first = await MainActor.run { f.model.skillsData(inProject: f.project).candidates[0].id }
+        let patch = #"{"action":"patch","skill":"linux-tests","name":"linux-tests","description":"New.","whenToUse":"","paths":[],"body":"B's change.","why":"x"}"#
+        answerFollowUpsAndDrafts(f, draft: patch, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            XCTAssertEqual(f.model.skillProposals(inProject: f.project).count, 1, "B's draft replaced A's")
+            let a = f.model.skillCandidate(first, inProject: f.project)
+            XCTAssertEqual(a?.state, .collecting, "not stuck waiting on a draft that's gone")
+        }
+    }
+
+    func testAStuckLessonIsFreedAtLaunch() async throws {
+        let assistant = MemoryAssistantStore()
+        var data = SkillsData()
+        data.add([LessonFinding(summary: "s", evidence: [SessionDigest.Evidence(ref: "f1", kind: .failure, command: "make", text: "boom")],
+                                remember: false, signature: "bash make | boom")],
+                 sessionID: UUID(), sessionName: "One", at: SkillTests.now)
+        data.candidates[0].state = .proposed
+        let project = UUID()
+        assistant.skillsData[project] = data
+        let f = try await makeFixture(assistant: assistant)
+        _ = f
+        // The fixture's project has its own id, so check the reconcile directly too.
+        var stuck = data
+        stuck.reconcileProposals()
+        XCTAssertEqual(stuck.candidates[0].state, .collecting)
+        XCTAssertEqual(stuck.candidates[0].heldUntilSessions, 2)
+    }
+
+    func testPathCheckOnlyRunsAFixedScript() async throws {
+        let f = try await makeFixture()
+        f.runner.scriptOutput = CommandResult(exitCode: 0, output: "Welcome to zsh\n/usr/bin:/bin", errorOutput: "")
+        let draft = #"{"action":"new","skill":null,"name":"wipe","description":"Wipe.","whenToUse":"","paths":[],"body":"```bash\nrm -rf x; $(touch /tmp/pwn)\nnotarealcommand --go\n```","why":"x"}"#
+        answerFollowUpsAndDrafts(f, draft: draft, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        XCTAssertEqual(f.runner.scripts.count, 1, "read once")
+        XCTAssertTrue(f.runner.scripts[0].hasSuffix(#"printf '\n%s' "$PATH""#), "a fixed script: nothing from the draft")
+        XCTAssertFalse(f.runner.scripts[0].contains("touch"))
+        await MainActor.run {
+            XCTAssertEqual(f.model.loginShellPATH, ["/usr/bin", "/bin"], "the last line, after a profile's own")
+            XCTAssertEqual(f.model.log.entries.last { $0.title.contains("dropped a skill draft") }?.detail,
+                           "it runs notarealcommand, which isn't on the PATH")
+        }
+    }
+
+    func testAFailedPathReadIsTriedAgainLater() async throws {
+        var clock = SkillTests.now
+        let f = try await makeFixture(clock: { clock })
+        f.runner.scriptOutput = CommandResult(exitCode: 1, output: "", errorOutput: "zsh: broken profile")
+        var check = await f.model.commandCheck()
+        XCTAssertNil(check, "skipped, not failed")
+        check = await f.model.commandCheck()
+        XCTAssertEqual(f.runner.scripts.count, 1, "not again straight away")
+        clock = clock.addingTimeInterval(AppModel.loginShellPATHRetry)
+        f.runner.scriptOutput = CommandResult(exitCode: 0, output: "/usr/bin", errorOutput: "")
+        check = await f.model.commandCheck()
+        XCTAssertEqual(f.runner.scripts.count, 2, "tried again after a while")
+        XCTAssertNotNil(check)
+    }
+
+    func testUnresolvedLessonsAreCountedInTheLog() async throws {
+        let f = try await makeFixture()
+        let followUp = #"{"notes":[],"planChanges":[],"lessons":[{"summary":"Made up.","evidence":["f9"],"remember":false}]}"#
+        f.runner.answer = { _ in SkillRunner.reply(followUp) }
+        await self.followUp(f, session: f.session)
+        await MainActor.run {
+            XCTAssertTrue(f.model.skillsData(inProject: f.project).candidates.isEmpty)
+            XCTAssertTrue(f.model.log.entries.contains { $0.title == "Assistant: dropped 1 lesson from a follow-up" })
         }
     }
 }

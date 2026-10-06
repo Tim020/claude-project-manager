@@ -309,7 +309,7 @@ private struct SkillListRowView: View {
     }
 
     private var meta: String {
-        let used = row.usedBy == 0 ? "Not used yet" : "Used by \(row.usedBy) session\(row.usedBy == 1 ? "" : "s")"
+        let used = row.usedBy == 0 ? "Not used by a session yet" : "Used by \(row.usedBy) session\(row.usedBy == 1 ? "" : "s")"
         let changed = row.changedAt.map { "changed \(RelativeAge.string(from: $0, now: Date())) ago" }
         return [used, changed].compactMap { $0 }.joined(separator: " · ")
     }

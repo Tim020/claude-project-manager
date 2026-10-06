@@ -154,7 +154,7 @@ public enum SkillCheck {
         if name.isEmpty {
             problems.append("no name")
         } else {
-            if name.count > maxName || name.range(of: #"^[a-z0-9]+(-[a-z0-9]+)*$"#, options: .regularExpression) == nil {
+            if !SkillName.isValid(name) {
                 problems.append("the name isn't a lower-case slug of up to \(maxName) characters")
             }
             if let patching = context.patching {
@@ -253,20 +253,34 @@ public enum SkillCheck {
 public enum SecretPatterns {
     static let patterns: [(String, NSRegularExpression)] = [
         ("an Anthropic API key", #"sk-ant-[A-Za-z0-9_-]{20,}"#),
-        ("an API key", #"\bsk-[A-Za-z0-9]{32,}"#),
+        // OpenAI's keys, `sk-proj-…` and `sk-svcacct-…` included.
+        ("an API key", #"\bsk-[A-Za-z0-9_-]{20,}"#),
         ("a GitHub token", #"\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})"#),
         ("an AWS access key", #"\bAKIA[0-9A-Z]{16}\b"#),
         ("a Google API key", #"\bAIza[0-9A-Za-z_-]{35}"#),
         ("a Slack token", #"\bxox[abprs]-[A-Za-z0-9-]{10,}"#),
         ("a private key", #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#),
         ("a JSON web token", #"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}"#),
-        ("a password or token", #"(?i)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*['"]?[^\s'"<>{}$]{8,}"#),
+        ("a bearer token", #"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}"#),
+        // Not `\b`: `_` is a word character, so `DATABASE_PASSWORD=` has no
+        // boundary before PASSWORD.
+        ("a password or token", #"(?i)(?:^|[^a-z])(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|token)\s*[:=]\s*['"]?[^\s'"<>{}$]{8,}"#),
     ].map { ($0.0, try! NSRegularExpression(pattern: $0.1)) }
 
     /// What kinds of secret the text seems to hold.
     public static func matches(in text: String) -> [String] {
         let range = NSRange(text.startIndex..., in: text)
         return patterns.filter { $0.1.firstMatch(in: text, range: range) != nil }.map(\.0)
+    }
+
+    /// The text with anything that looks like a secret replaced, for logs
+    /// (a dropped draft's name, or a path or command a check quotes).
+    public static func redacted(_ text: String) -> String {
+        var result = text
+        for (_, pattern) in patterns {
+            result = pattern.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "[secret]")
+        }
+        return result
     }
 }
 
@@ -345,6 +359,9 @@ public enum SkillDraftJob {
         }
         var name = string("name")
         if case .patch(let target) = action { name = target }
+        // The name becomes a folder: a slug or nothing (a line break in it
+        // would otherwise reach the path, and the frontmatter).
+        guard action == .none || SkillName.isValid(name) else { return nil }
         let paths = (reply["paths"]?.arrayValue ?? []).compactMap { $0.stringValue?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return SkillDraft(action: action, name: name, description: string("description"), whenToUse: string("whenToUse"),

@@ -495,6 +495,7 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var skillWriteError: Error?
     public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
         if let skillWriteError { throw skillWriteError }
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
         var list = skills[projectID] ?? []
         list.removeAll { $0.name == name }
         list.append(SkillFiles.skill(fromSkillFile: text, folderName: name))
@@ -607,18 +608,22 @@ public final class AssistantFileStore: AssistantStoring {
     }
 
     public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
+        // The name becomes a folder: never anything but a slug.
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
         let folder = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills").appendingPathComponent(name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try text.write(to: folder.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
     }
 
     public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {
+        guard SkillName.isValid(name), version > 0 else { throw CocoaError(.fileWriteInvalidFileName) }
         let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try text.write(to: folder.appendingPathComponent("\(version).md"), atomically: true, encoding: .utf8)
     }
 
     public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
+        guard SkillName.isValid(name) else { return [] }
         let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
         let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
         return files.compactMap { file -> SkillVersion? in

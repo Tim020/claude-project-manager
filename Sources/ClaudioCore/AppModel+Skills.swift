@@ -25,7 +25,9 @@ extension AppModel {
     func loadSkillsData() {
         for project in workspace.projects {
             do {
-                let data = try assistantStore.loadSkillsData(projectID: project.id)
+                var data = try assistantStore.loadSkillsData(projectID: project.id)
+                // Saved with the next change; until then it's only in memory.
+                data.reconcileProposals()
                 savedSkillsData[project.id] = data
                 if !data.isEmpty { skillsData[project.id] = data }
                 if data.unreadableCount > 0 {

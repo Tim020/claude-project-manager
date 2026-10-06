@@ -98,6 +98,10 @@ public struct SkillRecord: Codable, Equatable, Sendable {
 
 /// What a project's `skills.json` holds.
 public struct SkillsData: Codable, Equatable, Sendable {
+    /// 1: usage, candidates, proposals and records. Bump it for any new
+    /// field or candidate state: an older build then leaves a newer file
+    /// alone (read-only) rather than drop what it doesn't know.
+    public static let currentVersion = 1
     /// By skill name (what `/name` calls).
     public var usage: [String: SkillUsage] = [:]
     /// Usage entries that couldn't be read, kept as they were.
@@ -112,10 +116,15 @@ public struct SkillsData: Codable, Equatable, Sendable {
         self.usage = usage
     }
 
-    private enum CodingKeys: String, CodingKey { case usage, candidates, proposals, records }
+    private enum CodingKeys: String, CodingKey { case version, usage, candidates, proposals, records }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        guard version <= SkillsData.currentVersion else {
+            throw DecodingError.dataCorruptedError(forKey: .version, in: c,
+                                                   debugDescription: "Saved by a newer Claudio (version \(version))")
+        }
         func each<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> [T] {
             let (read, unread) = NeedsYouData.decodeEach(type, c, key)
             if !unread.isEmpty { unreadableEntries[key.rawValue] = unread }
@@ -137,6 +146,7 @@ public struct SkillsData: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(SkillsData.currentVersion, forKey: .version)
         var all: [String: JSONValue] = unreadableUsage
         let valueEncoder = JSONFileStore.encoder
         for (name, usage) in self.usage {
@@ -156,6 +166,16 @@ public struct SkillsData: Codable, Equatable, Sendable {
     public var isEmpty: Bool {
         usage.isEmpty && unreadableUsage.isEmpty && candidates.isEmpty && proposals.isEmpty && records.isEmpty
             && unreadableEntries.isEmpty
+    }
+
+    /// Candidates marked as having a draft waiting whose draft has gone
+    /// (replaced by another lesson's draft for the same skill, or unreadable)
+    /// go back to gathering, held for one more session, so none is stuck.
+    public mutating func reconcileProposals() {
+        let waiting = Set(proposals.compactMap(\.candidateID))
+        for index in candidates.indices where candidates[index].state == .proposed && !waiting.contains(candidates[index].id) {
+            candidates[index].holdBack(more: 1)
+        }
     }
 
     /// Entries that couldn't be read, for the Activity Log.

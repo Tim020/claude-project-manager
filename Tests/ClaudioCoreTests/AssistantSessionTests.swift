@@ -58,6 +58,7 @@ final class AssistantSessionTests: XCTestCase {
             """, folderName: "folder-name")
         var withoutText = skill
         withoutText.text = ""
+        withoutText.folder = ""
         XCTAssertEqual(withoutText, ApprovedSkill(name: "shell-panel-code-map", description: "Where the Shell panel's code lives.",
                                                   paths: ["Sources/Claudio/ShellPanelViews.swift", "Sources/ClaudioCore/Shell*.swift"],
                                                   folders: ["In-built Shell", "Terminal"]))
@@ -65,7 +66,7 @@ final class AssistantSessionTests: XCTestCase {
         let plain = SkillFiles.skill(fromSkillFile: "---\ndescription: x\npaths: a/*.swift, b/**\n---\n", folderName: "readme-style")
         XCTAssertEqual(plain.name, "readme-style", "the folder's name without a name field")
         XCTAssertEqual(plain.paths, ["a/*.swift", "b/**"])
-        XCTAssertEqual(SkillFiles.skill(fromSkillFile: "No frontmatter", folderName: "x"), ApprovedSkill(name: "x", text: "No frontmatter"))
+        XCTAssertEqual(SkillFiles.skill(fromSkillFile: "No frontmatter", folderName: "x"), ApprovedSkill(name: "x", text: "No frontmatter", folder: "x"))
     }
 
     func testApprovedSkillsAreReadFromTheSkillsRoot() throws {

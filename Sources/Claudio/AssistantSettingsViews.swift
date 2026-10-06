@@ -20,8 +20,9 @@ struct OpenAssistantSettingsButton<Label: View>: View {
     }
 }
 
-/// The ⋯ menu in the panel's header. Import Issues… and Skills join it
-/// with the steps that build them.
+/// The ⋯ menu in the panel's header: Skills (with a count, step 5a),
+/// the Activity Log and Assistant Settings. Import Issues… joins it with
+/// step 6.
 struct AssistantHeaderMenu: View {
     @Environment(AppModel.self) private var model
     let projectID: UUID

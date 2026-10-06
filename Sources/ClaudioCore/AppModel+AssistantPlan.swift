@@ -208,6 +208,9 @@ extension AppModel {
     public func openSkillProposal(_ id: UUID, projectID: UUID) {
         refreshApprovedSkills(projectID: projectID)
         assistantPanel = .skillProposal(projectID: projectID, id: id)
+        // Edit and Approve check commands against it; after a relaunch it
+        // hasn't been read yet.
+        if loginShellPATH == nil, commandExistsOverride == nil { Task { _ = await commandCheck() } }
     }
 
     /// Assistant Settings, the Activity Log, Job Failed or a skills view,

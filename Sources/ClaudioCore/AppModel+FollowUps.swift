@@ -347,7 +347,12 @@ extension AppModel {
             }
             setFollowUpMark(sessionID, request.mark)
             pendingDigests[id] = nil
-            addLessons(FollowUpJob.lessons(from: reply.output, evidence: request.evidence), sessionID: sessionID, projectID: projectID)
+            let lessons = FollowUpJob.lessonsAndDrops(from: reply.output, evidence: request.evidence)
+            if lessons.dropped > 0 {
+                log.append(.info, "Assistant: dropped \(lessons.dropped) lesson\(lessons.dropped == 1 ? "" : "s") from a follow-up",
+                           detail: "They cited nothing in the session's digest that a lesson can be grouped by.")
+            }
+            addLessons(lessons.lessons, sessionID: sessionID, projectID: projectID)
             updateFollowUp(id, projectID: projectID) { followUp in
                 followUp.state = .ready
                 followUp.notes = kept

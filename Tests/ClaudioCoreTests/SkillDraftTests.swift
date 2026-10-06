@@ -268,7 +268,7 @@ final class SkillDraftTests: XCTestCase {
         let lessons = FollowUpJob.lessons(from: reply.output, evidence: evidence)
         XCTAssertEqual(lessons.count, 1)
         XCTAssertTrue(lessons[0].remember, "it cited the correction that says remember")
-        XCTAssertEqual(lessons[0].signature, "correction run swift test on this mac")
+        XCTAssertEqual(lessons[0].signature, "correction run swift test on mac for")
         XCTAssertEqual(reply.costUSD ?? 0, 0.010222, accuracy: 0.000001)
     }
 
@@ -285,5 +285,85 @@ final class SkillDraftTests: XCTestCase {
         XCTAssertEqual(SkillCheck.problems(text, context: context), [])
         XCTAssertEqual(SkillFiles.skill(fromSkillFile: text, folderName: "x").paths, ["Tests/**/*.swift", "scripts/test-linux.sh"])
         XCTAssertEqual(reply.durationMS, 5232)
+    }
+
+    // MARK: - Review round 1 (PR #38)
+
+    func testMoreSecretShapesAreRefused() {
+        let secrets = [
+            "DATABASE_PASSWORD=hunter2hunter2",
+            "OPENAI_API_KEY=abcdef0123456789",
+            "GITLAB_ACCESS_TOKEN: glpat-abcdefghij",
+            "token=abcdefgh12345678",
+            "sk-proj-" + String(repeating: "Ab_-", count: 8),
+            "sk-svcacct-" + String(repeating: "x", count: 24),
+            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345",
+        ]
+        for secret in secrets { XCTAssertFalse(SecretPatterns.matches(in: secret).isEmpty, secret) }
+        XCTAssertEqual(SecretPatterns.redacted("use ghp_abcdefghijklmnopqrstuvwxyz0123456789 now"), "use [secret] now")
+        let inDescription = SkillText.compose(name: "a", description: "Key sk-ant-api03-\(String(repeating: "a", count: 30))", whenToUse: "",
+                                              paths: [], body: "Body.", metadata: [])
+        XCTAssertTrue(SkillCheck.problems(inDescription, context: context()).contains { $0.hasPrefix("it looks like it holds a secret") },
+                      "a secret in the frontmatter")
+    }
+
+    func testDraftNamesMustBeSlugs() throws {
+        func reply(_ name: String) throws -> SkillDraft? {
+            let json = #"{"action":"new","skill":null,"name":"\#(name)","description":"d","whenToUse":"","paths":[],"body":"b","why":""}"#
+            return SkillDraftJob.draft(from: try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8)), skills: [])
+        }
+        XCTAssertNil(try reply(#"ok-name\n../../x"#))
+        XCTAssertNil(try reply("Has Spaces"))
+        XCTAssertNil(try reply(String(repeating: "a", count: 65)))
+        XCTAssertNotNil(try reply("linux-tests"))
+        XCTAssertFalse(SkillName.isValid("../x"))
+        XCTAssertFalse(SkillName.isValid("a--b"))
+    }
+
+    func testEmptySignaturesAreNil() {
+        XCTAssertNil(LessonSignature.of(SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: "cd /x && export A=1", text: "e")))
+        XCTAssertNil(LessonSignature.of(SessionDigest.Evidence(ref: "c1", kind: .correction, text: "No, don't do that!")))
+        XCTAssertNil(LessonSignature.of(SessionDigest.Evidence(ref: "f2", kind: .failure, tool: "Edit", text: "e")), "no file")
+        XCTAssertEqual(LessonSignature.of([SessionDigest.Evidence(ref: "f2", kind: .failure, tool: "Edit", text: "e"),
+                                           SessionDigest.Evidence(ref: "c1", kind: .correction, text: "use the script")]),
+                       "correction use script", "falls back to one that has something to go on")
+    }
+
+    func testRememberNeedsRealWords() throws {
+        func remember(_ correction: String, cite: [String] = ["c1"]) throws -> [LessonFinding] {
+            let evidence = ["c1": SessionDigest.Evidence(ref: "c1", kind: .correction, text: correction),
+                            "f1": SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: "make test", text: "boom")]
+            let refs = cite.map { "\"\($0)\"" }.joined(separator: ",")
+            let reply = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"lessons":[{"summary":"s","evidence":[\#(refs)],"remember":true}]}"#.utf8))
+            return FollowUpJob.lessons(from: reply, evidence: evidence)
+        }
+        XCTAssertFalse(try remember("No, never mind, use the script").first?.remember ?? true, "never mind isn't a rule")
+        XCTAssertTrue(try remember("No, always run the Linux script").first?.remember ?? false)
+        let mixed = try remember("make it work", cite: ["f1", "c9"])
+        XCTAssertEqual(mixed.first?.evidence.map(\.ref), ["f1"], "the ref that resolves is kept")
+        XCTAssertEqual(mixed.first?.remember, false)
+        let dropped = FollowUpJob.lessonsAndDrops(from: try JSONDecoder().decode(JSONValue.self, from: Data(#"{"lessons":[{"summary":"s","evidence":["x9"],"remember":false}]}"#.utf8)),
+                                                  evidence: [:])
+        XCTAssertEqual(dropped.dropped, 1)
+    }
+
+    func testSessionsCountBeyondTheEvidenceCap() {
+        var data = SkillsData()
+        let evidence = (1...3).map { SessionDigest.Evidence(ref: "f\($0)", kind: .failure, command: "make", text: "boom \($0)") }
+        for index in 0..<6 {
+            data.add([LessonFinding(summary: "s", evidence: evidence, remember: false, signature: "bash make | boom")],
+                     sessionID: UUID(), sessionName: "S\(index)", at: Date(timeIntervalSince1970: 1000))
+            if index == 3 { data.candidates[0].holdBack(more: 2) }
+        }
+        XCTAssertEqual(data.candidates[0].evidence.count, LessonCandidate.maxEvidence)
+        XCTAssertEqual(data.candidates[0].sessionCount, 6, "counted apart from the capped evidence")
+        XCTAssertTrue(data.candidates[0].qualifies, "Not Now's two more sessions can be reached")
+    }
+
+    func testANewerSkillsFileIsRefused() throws {
+        XCTAssertThrowsError(try JSONFileStore.decoder.decode(SkillsData.self, from: Data(#"{"version":2,"usage":{}}"#.utf8)))
+        let saved = try JSONDecoder().decode(JSONValue.self, from: JSONFileStore.encoder.encode(SkillsData()))
+        XCTAssertEqual(saved["version"], .number(1), "saved with its version")
+        XCTAssertNoThrow(try JSONFileStore.decoder.decode(SkillsData.self, from: Data(#"{"usage":{}}"#.utf8)), "no version: 1")
     }
 }

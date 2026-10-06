@@ -20,7 +20,11 @@ extension AppModel {
         guard !findings.isEmpty else { return }
         let name = workspace.session(sessionID)?.name ?? "A session"
         let date = now()
-        guard updateSkillsData(projectID, { $0.add(findings, sessionID: sessionID, sessionName: name, at: date) }) else { return }
+        guard updateSkillsData(projectID, { $0.add(findings, sessionID: sessionID, sessionName: name, at: date) }) else {
+            log.append(.error, "Assistant: \(findings.count) lesson\(findings.count == 1 ? "" : "s") from \(name) weren't kept",
+                       detail: "The skills file can't be read or saved. See the earlier entry about it.")
+            return
+        }
         log.append(.info, "Assistant: \(findings.count) lesson\(findings.count == 1 ? "" : "s") from \(name)")
         considerSkillCandidates(projectID: projectID)
     }
@@ -140,7 +144,9 @@ extension AppModel {
         }
         let skills = approvedSkills[projectID] ?? []
         guard let draft = SkillDraftJob.draft(from: reply.output, skills: skills) else {
-            log.append(.error, "Assistant: a skill draft came back in a form Claudio couldn't use")
+            log.append(.error, "Assistant: a skill draft came back in a form Claudio couldn't use",
+                       detail: "lesson \(id.uuidString.lowercased()) (an unknown action, or a name that isn't a lower-case slug)")
+            if askedFor { showToast("The draft came back in a form Claudio couldn't use, so it was dropped") }
             updateSkillCandidate(id, projectID: projectID) { $0.holdBack(more: 1) }
             return
         }
@@ -160,12 +166,14 @@ extension AppModel {
                                      metadata: [("claudio-id", skillID.uuidString.lowercased()),
                                                 ("claudio-evidence", evidence.joined(separator: ",")),
                                                 ("claudio-version", String(version))])
-        let problems = await skillProblems(text, projectID: projectID, patching: patched?.name)
+        var problems = await skillProblems(text, projectID: projectID, patching: patched?.name)
+        problems += SecretPatterns.matches(in: draft.why).map { "its reason looks like it holds a secret (\($0))" }
         guard problems.isEmpty else {
-            // By name and check only: the text may be what failed (a secret).
-            log.append(.error, "Assistant: dropped a skill draft (\(draft.name)) that failed its checks",
-                       detail: problems.joined(separator: "\n"))
-            if askedFor { showToast("The draft didn't pass Claudio's checks, so it was dropped. See the Activity Log.") }
+            // By name and check only, with anything like a secret taken out:
+            // the text may be what failed.
+            log.append(.error, "Assistant: dropped a skill draft (\(SecretPatterns.redacted(draft.name))) that failed its checks",
+                       detail: problems.map(SecretPatterns.redacted).joined(separator: "\n"))
+            if askedFor { showToast("The draft didn't pass Claudio's checks, so it was dropped. The app's Activity Log (⌥⌘L) says why.") }
             updateSkillCandidate(id, projectID: projectID) { $0.holdBack(more: 1) }
             return
         }
@@ -178,6 +186,9 @@ extension AppModel {
                 data.candidates[index].state = .proposed
                 data.candidates[index].remember = false
             }
+            // Another lesson's draft for the same skill was replaced: its
+            // lesson goes back to gathering rather than wait on nothing.
+            data.reconcileProposals()
         }
         log.append(.info, "Assistant: drafted \(patched == nil ? "a new skill" : "a change to a skill"): \(draft.name)")
     }
@@ -186,27 +197,46 @@ extension AppModel {
     /// the repository's), and the commands on the login shell's PATH.
     func skillProblems(_ text: String, projectID: UUID, patching: String?) async -> [String] {
         guard let project = workspace.project(projectID) else { return ["the project has gone"] }
-        var names = Set((approvedSkills[projectID] ?? []).map(\.name))
-        let repository = (project.path as NSString).appendingPathComponent(".claude/skills")
-        names.formUnion((try? FileManager.default.contentsOfDirectory(atPath: repository))?.filter { !$0.hasPrefix(".") } ?? [])
-        let context = SkillCheck.Context(projectPath: project.path, existingNames: names, patching: patching,
-                                         commandExists: await commandCheck())
+        let context = SkillCheck.Context(projectPath: project.path, existingNames: existingSkillNames(projectID: projectID),
+                                         patching: patching, commandExists: await commandCheck())
         return SkillCheck.problems(text, context: context)
+    }
+
+    /// Names a new skill can't take: approved skills' names and folders,
+    /// and the repository's own skills.
+    func existingSkillNames(projectID: UUID) -> Set<String> {
+        let approved = approvedSkills[projectID] ?? []
+        var names = Set(approved.map(\.name)).union(approved.map(\.folder).filter { !$0.isEmpty })
+        if let project = workspace.project(projectID) {
+            let repository = (project.path as NSString).appendingPathComponent(".claude/skills")
+            names.formUnion((try? FileManager.default.contentsOfDirectory(atPath: repository))?.filter { !$0.hasPrefix(".") } ?? [])
+        }
+        return names
     }
 
     /// Whether a command is on the user's login shell PATH (a GUI app's own
     /// PATH lacks Homebrew's and others). Nil when it can't be read: the
     /// check is then skipped, rather than dropping every draft.
+    /// A failed read is tried again after this long, rather than leaving
+    /// the check off until a relaunch.
+    nonisolated static let loginShellPATHRetry: TimeInterval = 300
+
     func commandCheck() async -> ((String) -> Bool)? {
         if let commandExistsOverride { return commandExistsOverride }
-        if loginShellPATH == nil {
+        if loginShellPATH == nil, loginShellPATHFailedAt.map({ now().timeIntervalSince($0) >= AppModel.loginShellPATHRetry }) ?? true {
+            // A fixed script: nothing from a draft is ever run.
             let launch = TerminalLaunch.script(#"printf '\n%s' "$PATH""#, workingDirectory: "/", shell: shell)
             let result = await run(launch)
             // The last line: a profile may print lines of its own first.
             let line = result.exitCode == 0 ? result.output.split(separator: "\n").last.map(String.init) ?? "" : ""
-            loginShellPATH = line.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
-            if loginShellPATH?.isEmpty ?? true {
-                log.append(.error, "Couldn't read the login shell's PATH, so skill drafts' commands aren't checked")
+            let directories = line.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
+            if directories.isEmpty {
+                loginShellPATHFailedAt = now()
+                log.append(.error, "Couldn't read the login shell's PATH, so skill drafts' commands aren't checked",
+                           detail: "Tried again in \(Int(AppModel.loginShellPATHRetry / 60)) minutes.")
+            } else {
+                loginShellPATH = directories
+                loginShellPATHFailedAt = nil
             }
         }
         guard let directories = loginShellPATH, !directories.isEmpty else { return nil }
@@ -233,9 +263,7 @@ extension AppModel {
     /// command check is skipped; the draft was checked with it).
     func skillProblemsNow(_ text: String, projectID: UUID, patching: String?) -> [String] {
         guard let project = workspace.project(projectID) else { return ["the project has gone"] }
-        var names = Set((approvedSkills[projectID] ?? []).map(\.name))
-        let repository = (project.path as NSString).appendingPathComponent(".claude/skills")
-        names.formUnion((try? FileManager.default.contentsOfDirectory(atPath: repository))?.filter { !$0.hasPrefix(".") } ?? [])
+        let names = existingSkillNames(projectID: projectID)
         var exists = commandExistsOverride
         if exists == nil, let directories = loginShellPATH, !directories.isEmpty {
             exists = { name in directories.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") } }
@@ -253,10 +281,10 @@ extension AppModel {
         let name = SkillFiles.skill(fromSkillFile: text, folderName: "").name
         if name != proposal.name { problems.insert("the name can't change while editing (it's \(proposal.name))", at: 0) }
         guard problems.isEmpty else { return problems }
-        updateSkillsData(projectID) { data in
+        let saved = updateSkillsData(projectID) { data in
             if let index = data.proposals.firstIndex(where: { $0.id == id }) { data.proposals[index].text = text }
         }
-        return []
+        return saved ? [] : ["it couldn't be saved (the app's Activity Log, ⌥⌘L, says why)"]
     }
 
     /// Approve: writes the skill where sessions load it (they pick it up
@@ -270,10 +298,20 @@ extension AppModel {
             report("This project's skills file couldn't be read, so skills can't be approved. See the Activity Log.")
             return false
         }
+        // The name becomes a folder, so it must be a slug and the text's own
+        // name (`skills.json` can be edited by hand).
+        guard SkillName.isValid(proposal.name), SkillFiles.skill(fromSkillFile: proposal.text, folderName: "").name == proposal.name else {
+            showToast("This draft's name doesn't match its text, so it wasn't approved. Not Now drops it.")
+            return false
+        }
         refreshApprovedSkills(projectID: projectID)
-        let current = (approvedSkills[projectID] ?? []).first { $0.name == proposal.name }
+        let current = (approvedSkills[projectID] ?? []).first { $0.name == proposal.name || $0.folder == proposal.name }
         if let previous = proposal.previousText {
-            guard let current, current.text == previous else {
+            guard let current else {
+                showToast("\(proposal.name) isn't there any more, or can't be read, so this wasn't approved. Not Now drops this draft.")
+                return false
+            }
+            guard current.text == previous else {
                 showToast("\(proposal.name) changed after this was drafted, so it wasn't approved. Not Now drops this draft.")
                 return false
             }
@@ -283,8 +321,9 @@ extension AppModel {
         }
         let problems = skillProblemsNow(proposal.text, projectID: projectID, patching: proposal.isChange ? proposal.name : nil)
         guard problems.isEmpty else {
-            log.append(.error, "Assistant: \(proposal.name) wasn't approved: it fails Claudio's checks", detail: problems.joined(separator: "\n"))
-            showToast("It doesn't pass Claudio's checks now, so it wasn't approved. See the Activity Log.")
+            log.append(.error, "Assistant: \(proposal.name) wasn't approved: it fails Claudio's checks",
+                       detail: problems.map(SecretPatterns.redacted).joined(separator: "\n"))
+            showToast("It doesn't pass Claudio's checks now, so it wasn't approved. The app's Activity Log (⌥⌘L) says why.")
             return false
         }
         let record = skillsData(inProject: projectID).records.first { $0.name == proposal.name }
@@ -293,26 +332,38 @@ extension AppModel {
         let text = SkillText.settingMetadata(proposal.text, [("claudio-id", skillID.uuidString.lowercased()),
                                                              ("claudio-version", String(version))])
         do {
-            try assistantStore.writeSkillHistory(name: proposal.name, version: version, text: text, projectID: projectID)
             try assistantStore.writeApprovedSkill(name: proposal.name, text: text, projectID: projectID)
         } catch {
             report("Couldn't save the skill \(proposal.name): \(AppModel.describe(error))")
             return false
         }
+        // After the skill itself, so history never lists a version that
+        // wasn't approved; a failure here loses only the earlier-versions list.
+        do {
+            try assistantStore.writeSkillHistory(name: proposal.name, version: version, text: text, projectID: projectID)
+        } catch {
+            log.append(.error, "Couldn't keep version \(version) of \(proposal.name) in its history", detail: AppModel.describe(error))
+        }
         let date = now()
-        updateSkillsData(projectID) { data in
+        let recorded = updateSkillsData(projectID) { data in
             data.proposals.removeAll { $0.id == id }
             if let candidateID = proposal.candidateID { data.candidates.removeAll { $0.id == candidateID } }
             data.records.removeAll { $0.name == proposal.name }
             data.records.append(SkillRecord(id: skillID, name: proposal.name, version: version, approvedAt: date,
                                             contentHash: SkillText.hash(text)))
-            // Approving counts as a use, so it isn't unused from day one.
+            // Approving counts as its last use (for 5b's unused check), so it
+            // isn't unused from day one. No session used it, so none is added.
             var usage = data.usage[proposal.name] ?? SkillUsage()
             if usage.lastUsed.map({ $0 < date }) ?? true { usage.lastUsed = date }
             data.usage[proposal.name] = usage
         }
         refreshApprovedSkills(projectID: projectID)
         log.append(.info, "Approved the skill \(proposal.name) (version \(version))")
+        guard recorded else {
+            // The skill is in place and loads; only Claudio's record of it is missing.
+            report("\(proposal.name) was approved, but Claudio couldn't save its record of it. The Activity Log (⌥⌘L) says why.")
+            return true
+        }
         showToast("Approved \(proposal.name). Sessions pick it up within a few seconds.")
         return true
     }

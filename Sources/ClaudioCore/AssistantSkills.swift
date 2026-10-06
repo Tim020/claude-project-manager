@@ -21,9 +21,11 @@ public struct ApprovedSkill: Equatable, Sendable {
     public var version: Int?
     /// `metadata.claudio-id`: the same through every version.
     public var claudioID: UUID?
+    /// The folder it's in (normally its name).
+    public var folder: String
 
     public init(name: String, description: String = "", paths: [String] = [], folders: [String] = [], text: String = "",
-                version: Int? = nil, claudioID: UUID? = nil) {
+                version: Int? = nil, claudioID: UUID? = nil, folder: String = "") {
         self.name = name
         self.description = description
         self.paths = paths
@@ -31,6 +33,18 @@ public struct ApprovedSkill: Equatable, Sendable {
         self.text = text
         self.version = version
         self.claudioID = claudioID
+        self.folder = folder
+    }
+}
+
+/// A skill's name: a lower-case slug, which is also its folder's name.
+/// Checked wherever a name reaches a path, since a draft's name comes from
+/// the model (and `skills.json` can be edited by hand).
+public enum SkillName {
+    public static let maxLength = 64
+
+    public static func isValid(_ name: String) -> Bool {
+        name.count <= maxLength && name.range(of: #"^[a-z0-9]+(-[a-z0-9]+)*$"#, options: .regularExpression) != nil
     }
 }
 
@@ -96,7 +110,8 @@ public enum SkillFiles {
                              folders: fields["metadata.claudio-folders"] ?? [],
                              text: text,
                              version: fields["metadata.claudio-version"]?.first.flatMap { Int($0) },
-                             claudioID: fields["metadata.claudio-id"]?.first.flatMap { UUID(uuidString: $0) })
+                             claudioID: fields["metadata.claudio-id"]?.first.flatMap { UUID(uuidString: $0) },
+                             folder: folderName)
     }
 
     static func lines(_ text: String) -> [String] {

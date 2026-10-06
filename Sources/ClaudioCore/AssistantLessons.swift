@@ -19,27 +19,33 @@ public struct LessonFinding: Equatable, Sendable {
 }
 
 public enum LessonSignature {
-    /// A lesson's signature, from the first failure it cites, else its
-    /// first correction:
+    /// A lesson's signature, from the first failure it cites that has one,
+    /// else its first correction that has one:
     /// - a failed Bash command: its first two words and the error's first
     ///   line, normalised ("bash swift test | error: # tests failed");
     /// - another tool: the tool and the file ("edit Sources/a.swift");
-    /// - a correction: its words, without the "no," or "don't" it starts with.
+    /// - a correction: its first six words that aren't filler ("no",
+    ///   "don't", "the"…), wherever they are.
+    /// Nil when none has anything to go on (a command of only `cd`, a
+    /// correction of only filler words, a failure with no file), so
+    /// unrelated lessons don't share one empty signature.
     public static func of(_ evidence: [SessionDigest.Evidence]) -> String? {
-        if let failure = evidence.first(where: { $0.kind == .failure }) { return of(failure) }
-        return evidence.first.map(of)
+        evidence.filter { $0.kind == .failure }.lazy.compactMap(of).first
+            ?? evidence.filter { $0.kind == .correction }.lazy.compactMap(of).first
     }
 
-    public static func of(_ evidence: SessionDigest.Evidence) -> String {
+    public static func of(_ evidence: SessionDigest.Evidence) -> String? {
         switch evidence.kind {
         case .failure:
-            let tool = (evidence.tool ?? "tool").lowercased()
             if let command = evidence.command, !command.isEmpty {
-                return "bash \(commandHead(command)) | \(errorHead(evidence.text))"
+                let head = commandHead(command)
+                return head.isEmpty ? nil : "bash \(head) | \(errorHead(evidence.text))"
             }
-            return [tool, evidence.file].compactMap { $0 }.joined(separator: " ")
+            guard let file = evidence.file, !file.isEmpty else { return nil }
+            return "\((evidence.tool ?? "tool").lowercased()) \(file)"
         case .correction:
-            return "correction " + correctionWords(evidence.text)
+            let words = correctionWords(evidence.text)
+            return words.isEmpty ? nil : "correction " + words
         }
     }
 
@@ -75,7 +81,8 @@ public enum LessonSignature {
     }
 
     static let fillerWords: Set<String> = ["no", "nope", "don't", "dont", "do", "not", "stop", "wrong", "that's", "thats", "actually",
-                                           "please", "the", "a", "an", "it", "you", "i", "to", "and", "is"]
+                                           "please", "the", "a", "an", "it", "it's", "its", "you", "i", "to", "and", "is",
+                                           "that", "this", "these", "those", "like", "just", "again"]
 
     /// A correction's first six words that matter.
     static func correctionWords(_ text: String) -> String {
@@ -120,6 +127,10 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
     public var summary: String
     /// Newest last, at most `maxEvidence`.
     public var evidence: [LessonEvidence]
+    /// Every session it came up in, oldest first (at most `maxSessions`).
+    /// Counted apart from the evidence, which keeps only its newest items,
+    /// so a hold-back's "n more sessions" can always be reached.
+    public var sessionIDs: [UUID]
     /// You told Claude to remember it: drafted straight away, once.
     public var remember: Bool
     public var state: State = .collecting
@@ -131,6 +142,7 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
     public var updatedAt: Date
 
     public static let maxEvidence = 10
+    public static let maxSessions = 200
     /// Sessions that must show a lesson before a skill is drafted from it.
     public static let sessionsToDraft = 2
 
@@ -138,13 +150,16 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
         self.signature = signature
         self.summary = summary
         self.evidence = evidence
+        var sessions: [UUID] = []
+        for item in evidence where !sessions.contains(item.sessionID) { sessions.append(item.sessionID) }
+        sessionIDs = sessions
         self.remember = remember
         createdAt = date
         updatedAt = date
     }
 
     /// How many sessions it came up in.
-    public var sessionCount: Int { Set(evidence.map(\.sessionID)).count }
+    public var sessionCount: Int { sessionIDs.count }
 
     /// Gathering, and either you said to remember it or enough sessions show it.
     public var qualifies: Bool {
@@ -160,7 +175,7 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, signature, summary, evidence, remember, state, heldUntilSessions, createdAt, updatedAt
+        case id, signature, summary, evidence, sessionIDs, remember, state, heldUntilSessions, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -169,6 +184,10 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
         signature = try c.decode(String.self, forKey: .signature)
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         evidence = NeedsYouData.decodeEach(LessonEvidence.self, c, .evidence).read
+        let sessions = NeedsYouData.decodeEach(UUID.self, c, .sessionIDs).read
+        var fromEvidence: [UUID] = []
+        for item in evidence where !fromEvidence.contains(item.sessionID) { fromEvidence.append(item.sessionID) }
+        sessionIDs = sessions.isEmpty ? fromEvidence : sessions
         remember = try c.decodeIfPresent(Bool.self, forKey: .remember) ?? false
         // An unknown state from a later build goes back to gathering.
         state = ((try? c.decodeIfPresent(State.self, forKey: .state)) ?? nil) ?? .collecting
@@ -199,6 +218,12 @@ extension SkillsData {
                 if candidate.evidence.count > LessonCandidate.maxEvidence {
                     candidate.evidence.removeFirst(candidate.evidence.count - LessonCandidate.maxEvidence)
                 }
+                if !candidate.sessionIDs.contains(sessionID) {
+                    candidate.sessionIDs.append(sessionID)
+                    if candidate.sessionIDs.count > LessonCandidate.maxSessions {
+                        candidate.sessionIDs.removeFirst(candidate.sessionIDs.count - LessonCandidate.maxSessions)
+                    }
+                }
                 candidate.summary = finding.summary
                 candidate.remember = candidate.remember || finding.remember
                 candidate.updatedAt = date
@@ -226,28 +251,42 @@ extension FollowUpJob {
     /// Lessons kept from one reply, at most.
     public static let maxLessons = 3
 
-    /// Words in a correction that ask Claude to remember something.
+    /// Words in a correction that ask Claude to remember something. "Always"
+    /// and "never" only count before a verb, so "no, never mind" doesn't.
     static let rememberPattern = try! NSRegularExpression(
-        pattern: #"\b(remember|next time|from now on|in future|always|never)\b"#, options: [.caseInsensitive])
+        pattern: #"\b(remember|next time|from now on|in future|going forward)\b|\b(always|never)\s+(use|run|do|call|add|put|write|check|commit|push|make|edit|ask|test|leave|skip|start|open|change|delete|create)\b"#,
+        options: [.caseInsensitive])
 
     /// The reply's lessons that cite real evidence. Refs are looked up in
     /// the call's own map; a lesson with none that resolve is dropped.
     /// `remember` only stands when a cited correction asks for it.
     public static func lessons(from reply: JSONValue, evidence: [String: SessionDigest.Evidence]) -> [LessonFinding] {
+        lessonsAndDrops(from: reply, evidence: evidence).lessons
+    }
+
+    /// The lessons, and how many were dropped for citing nothing that
+    /// resolves (or nothing a signature can be made from), for the log.
+    public static func lessonsAndDrops(from reply: JSONValue, evidence: [String: SessionDigest.Evidence])
+        -> (lessons: [LessonFinding], dropped: Int) {
         var findings: [LessonFinding] = []
+        var dropped = 0
         for raw in reply["lessons"]?.arrayValue ?? [] {
             guard findings.count < maxLessons else { break }
             let summary = raw["summary"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let cited = (raw["evidence"]?.arrayValue ?? []).compactMap { $0.stringValue.flatMap { evidence[$0] } }
             var unique: [SessionDigest.Evidence] = []
             for item in cited where !unique.contains(item) { unique.append(item) }
-            guard !summary.isEmpty, !unique.isEmpty, let signature = LessonSignature.of(unique) else { continue }
+            guard !summary.isEmpty else { continue }
+            guard !unique.isEmpty, let signature = LessonSignature.of(unique) else {
+                dropped += 1
+                continue
+            }
             let asked = raw["remember"]?.boolValue == true && unique.contains { item in
                 item.kind == .correction
                     && rememberPattern.firstMatch(in: item.text, range: NSRange(item.text.startIndex..., in: item.text)) != nil
             }
             findings.append(LessonFinding(summary: String(summary.prefix(300)), evidence: unique, remember: asked, signature: signature))
         }
-        return findings
+        return (findings, dropped)
     }
 }

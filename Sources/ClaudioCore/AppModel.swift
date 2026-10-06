@@ -320,6 +320,8 @@ public final class AppModel {
     /// The login shell's PATH, read once for the drafts' command check
     /// (empty: it couldn't be read, so that check is skipped).
     @ObservationIgnored var loginShellPATH: [String]?
+    /// When reading it last failed (it's tried again after a while).
+    @ObservationIgnored var loginShellPATHFailedAt: Date?
     /// Replaces the command check's PATH lookup (for tests).
     @ObservationIgnored var commandExistsOverride: ((String) -> Bool)?
     /// Drafts whose reply is being checked (the PATH may be read first).
