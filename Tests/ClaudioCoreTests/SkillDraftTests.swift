@@ -318,6 +318,7 @@ final class SkillDraftTests: XCTestCase {
         XCTAssertNotNil(try reply("linux-tests"))
         XCTAssertFalse(SkillName.isValid("../x"))
         XCTAssertFalse(SkillName.isValid("a--b"))
+        XCTAssertFalse(SkillName.isValid("ok\n"), "a final line break doesn't pass")
     }
 
     func testEmptySignaturesAreNil() {
