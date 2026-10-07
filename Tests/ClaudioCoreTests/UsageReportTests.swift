@@ -353,11 +353,20 @@ final class UsageReportTests: XCTestCase {
         return model
     }
 
-    /// A store whose ledger can't be read, and can't be moved aside.
+    /// A store whose ledger can't be read, and can't be moved aside, until
+    /// `isStuck` is cleared; then it reads `saved`.
     private final class StuckUsageStore: UsageStoring, @unchecked Sendable {
+        var isStuck = true
+        var saved: UsageLedger?
         var saves = 0
-        func load() throws -> UsageLedger? { throw CocoaError(.fileReadCorruptFile) }
-        func save(_ ledger: UsageLedger) throws { saves += 1 }
+        func load() throws -> UsageLedger? {
+            if isStuck { throw CocoaError(.fileReadCorruptFile) }
+            return saved
+        }
+        func save(_ ledger: UsageLedger) throws {
+            saves += 1
+            saved = ledger
+        }
         func setAside(now: Date) throws -> URL? { throw CocoaError(.fileWriteNoPermission) }
     }
 
@@ -397,6 +406,23 @@ final class UsageReportTests: XCTestCase {
         await MainActor.run {
             XCTAssertEqual(readOnly.usageEntries.isEmpty, false, "figures still show")
             XCTAssertTrue(readOnly.log.entries.contains { $0.title == "Couldn't read the saved usage figures, or move them aside" })
+        }
+
+        // Once it reads again (the sync client let go, say), its figures
+        // (a deleted session's here) and the ones read since launch are
+        // kept together, and saving starts again.
+        var earlier = UsageLedger()
+        earlier.conversations["c-gone"] = ConversationUsage(projectID: fixture.state.workspace.projects[0].id, sessionID: UUID(),
+                                                            sessionName: "Gone", folderID: nil)
+        stuck.saved = earlier
+        stuck.isStuck = false
+        await readOnly.refreshUsageLedger()
+        await readOnly.waitForUsageSaves()
+        XCTAssertEqual(stuck.saves, 1)
+        XCTAssertEqual(stuck.saved?.conversations.keys.sorted(), ["c-gone", "c1"])
+        XCTAssertGreaterThan(stuck.saved?.conversations["c1"]?.files.first?.value.offset ?? 0, 0)
+        await MainActor.run {
+            XCTAssertTrue(readOnly.log.entries.contains { $0.title == "The saved usage figures can be read again" })
         }
     }
 

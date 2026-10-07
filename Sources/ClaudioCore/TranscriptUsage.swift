@@ -130,6 +130,26 @@ public struct TranscriptProgress: Codable, Equatable, Sendable {
 
     public init() {}
 
+    enum CodingKeys: String, CodingKey {
+        case offset, size, turns, unreadableLines, buckets, messageIDs, last
+    }
+
+    /// Tolerant, like `TokenCounts`: a field added later (`unreadableLines`)
+    /// is missing from files saved before it, and a synthesised decoder
+    /// would throw, dropping the whole conversation from the ledger. A
+    /// missing `offset` means the file is read again from the start; its
+    /// `messageIDs` keep that from counting a reply twice.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        offset = try c.decodeIfPresent(Int.self, forKey: .offset) ?? 0
+        size = try c.decodeIfPresent(Int.self, forKey: .size) ?? 0
+        turns = try c.decodeIfPresent(Int.self, forKey: .turns) ?? 0
+        unreadableLines = try c.decodeIfPresent(Int.self, forKey: .unreadableLines) ?? 0
+        buckets = try c.decodeIfPresent([UsageBucket].self, forKey: .buckets) ?? []
+        messageIDs = try c.decodeIfPresent(Set<String>.self, forKey: .messageIDs) ?? []
+        last = try c.decodeIfPresent(CountedMessage.self, forKey: .last)
+    }
+
     public var tokens: TokenCounts { buckets.reduce(TokenCounts()) { $0 + $1.tokens } }
 
     /// Reads complete lines from `data` (the file from `offset` on). A line

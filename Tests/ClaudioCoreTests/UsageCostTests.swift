@@ -207,6 +207,23 @@ final class UsageCostTests: XCTestCase {
         XCTAssertEqual(ledger.conversations["c1"]?.buckets.reduce(0) { $0 + $1.cost } ?? 0, 3.307508, accuracy: 0.000001)
     }
 
+    func testALedgerSavedBeforeLaterFieldsStillReads() throws {
+        // A transcript's progress as first saved, before `unreadableLines`.
+        let projectID = UUID()
+        let json = """
+        {"version": 1, "conversations": {"c1": {"projectID": "\(projectID.uuidString)", "sessionName": "A",
+          "files": {"/x/c1.jsonl": {"offset": 120, "size": 120, "turns": 2, "messageIDs": ["msg_A"],
+            "buckets": [{"t": 495873, "m": "claude-haiku-4-5", "k": {"i": 1000000}}]}}}}}
+        """
+        let ledger = try JSONDecoder().decode(UsageLedger.self, from: Data(json.utf8))
+        let file = try XCTUnwrap(ledger.conversations["c1"]?.files["/x/c1.jsonl"], "the conversation survives")
+        XCTAssertEqual(file.offset, 120)
+        XCTAssertEqual(file.turns, 2)
+        XCTAssertEqual(file.unreadableLines, 0)
+        XCTAssertEqual(file.buckets.first?.cost ?? 0, 1, accuracy: 0.000001)
+        XCTAssertEqual(ledger.conversations["c1"]?.projectID, projectID)
+    }
+
     func testLedgerSurvivesSavingAndDropsWhatItCantRead() throws {
         let url = try makeTemporaryDirectory().appendingPathComponent("usage.json")
         let store = UsageFileStore(url: url)

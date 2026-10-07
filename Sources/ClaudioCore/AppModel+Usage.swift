@@ -172,6 +172,7 @@ extension AppModel {
         guard !isScanningUsage else { return }
         isScanningUsage = true
         defer { isScanningUsage = false }
+        if isUsageLedgerReadOnly { retrySavedUsage() }
         if !unreadableAssistantCosts.isEmpty {
             loadAssistantJobCosts(projects: Array(unreadableAssistantCosts))
             rebuildUsageEntries()
@@ -201,6 +202,11 @@ extension AppModel {
             log.append(.error, "Couldn't read a transcript in \(name), so its usage isn't counted",
                        detail: PathDisplay.tilde(path, home: home))
         }
+        // A file read again from the start (shrunk, or a bad offset) starts
+        // its count again, so a recurrence is said again.
+        for path in reportedUnreadableLines.keys where result.unreadableLines[path] == nil {
+            reportedUnreadableLines[path] = nil
+        }
         for (path, count) in result.unreadableLines where reportedUnreadableLines[path] != count {
             reportedUnreadableLines[path] = count
             log.append(.error, "\(count) line\(count == 1 ? "" : "s") of a transcript looked like a reply but couldn't be read, so \(count == 1 ? "its" : "their") tokens aren't counted",
@@ -218,6 +224,29 @@ extension AppModel {
         guard pass == usageScans, isScanningUsage else { return }
         let reading = UsageScanStatus.Reading(done: done, total: total)
         if usageScan.reading != reading { usageScan.reading = reading }
+    }
+
+    /// While the saved ledger couldn't be read or moved aside (a sync client
+    /// holding it, say), tries again with each scan. Once it reads, what's
+    /// been read since launch goes on top of it; once it can be moved
+    /// aside, saving starts again.
+    private func retrySavedUsage() {
+        do {
+            if let saved = try usageStore.load() {
+                var ledger = saved
+                ledger.merge(usageLedger, since: UsageLedger())
+                usageLedger = ledger
+                rebuildUsageEntries()
+            }
+            isUsageLedgerReadOnly = false
+            log.append(.info, "The saved usage figures can be read again")
+        } catch {
+            guard let moved = try? usageStore.setAside(now: now()) else { return }
+            isUsageLedgerReadOnly = false
+            log.append(.info, "The saved usage figures were moved aside, and new figures are saved again",
+                       detail: PathDisplay.tilde(moved.path, home: home))
+        }
+        saveUsageLedger()
     }
 
     /// Saves off the main actor, one save at a time in the order asked
@@ -249,15 +278,25 @@ extension AppModel {
         let request = UsageScanRequest(conversationID: conversationID, projectID: session.projectID, projectPath: projectPath,
                                        workingDirectory: session.workingDirectory, sessionID: session.id,
                                        sessionName: session.name, folderID: folderID)
-        let before = usageLedger
         let discovery = self.discovery
-        let scanned = await Task.detached(priority: .userInitiated) { () -> UsageLedger in
-            var ledger = before
-            _ = UsageScanner.scan(AppModel.targets(for: [request], discovery: discovery), into: &ledger)
-            return ledger
-        }.value
-        guard scanned != before else { return }
-        usageLedger.merge(scanned, since: before)
+        // A scan that merged first means this one's files are skipped (its
+        // read began from older figures), and with the transcripts about to
+        // go there'd be no later scan to catch up. So it reads again, from
+        // the figures as they are now, until its own read is the one kept.
+        var changed = false
+        for _ in 0..<5 {
+            let before = usageLedger
+            let scanned = await Task.detached(priority: .userInitiated) { () -> UsageLedger in
+                var ledger = before
+                _ = UsageScanner.scan(AppModel.targets(for: [request], discovery: discovery), into: &ledger)
+                return ledger
+            }.value
+            guard scanned != before else { break }
+            usageLedger.merge(scanned, since: before)
+            changed = true
+            if usageLedger.conversations[conversationID]?.files == scanned.conversations[conversationID]?.files { break }
+        }
+        guard changed else { return }
         saveUsageLedger()
         rebuildUsageEntries()
     }

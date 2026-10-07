@@ -25,6 +25,18 @@ public struct ConversationUsage: Codable, Equatable, Sendable {
         self.files = files
     }
 
+    enum CodingKeys: String, CodingKey { case projectID, sessionID, sessionName, folderID, files }
+
+    /// Tolerant of fields added later; only the project is required.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        projectID = try c.decode(UUID.self, forKey: .projectID)
+        sessionID = try c.decodeIfPresent(UUID.self, forKey: .sessionID)
+        sessionName = try c.decodeIfPresent(String.self, forKey: .sessionName) ?? ""
+        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
+        files = try c.decodeIfPresent([String: TranscriptProgress].self, forKey: .files) ?? [:]
+    }
+
     /// Every file's hours, merged.
     public var buckets: [UsageBucket] {
         var merged: [String: UsageBucket] = [:]
