@@ -40,7 +40,9 @@ extension AppModel {
         let data = needsYouData(inProject: projectID)
         let others = data.suggestions.count + longRunningSessions(inProject: projectID, now: now).count
         guard isAssistantOn(inProject: projectID) else { return others }
-        return data.followUps.filter { $0.state != .working }.count + others
+        let skills = skillsData(inProject: projectID)
+        let offers = skills.candidates.filter { $0.state == .offered && !draftingCandidates.contains($0.id) }.count
+        return data.followUps.filter { $0.state != .working }.count + others + offers + skills.proposals.count
     }
 
     // MARK: - Finding sessions ready for a follow-up
@@ -345,6 +347,12 @@ extension AppModel {
             }
             setFollowUpMark(sessionID, request.mark)
             pendingDigests[id] = nil
+            let lessons = FollowUpJob.lessonsAndDrops(from: reply.output, evidence: request.evidence)
+            if lessons.dropped > 0 {
+                log.append(.info, "Assistant: dropped \(lessons.dropped) lesson\(lessons.dropped == 1 ? "" : "s") from a follow-up",
+                           detail: "They cited nothing in the session's digest that a lesson can be grouped by.")
+            }
+            addLessons(lessons.lessons, sessionID: sessionID, projectID: projectID)
             updateFollowUp(id, projectID: projectID) { followUp in
                 followUp.state = .ready
                 followUp.notes = kept

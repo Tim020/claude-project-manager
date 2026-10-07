@@ -23,8 +23,8 @@ private final class FollowUpRunner: CommandRunning, @unchecked Sendable {
     static let readyReply = #"{"type":"result","subtype":"success","is_error":false,"duration_ms":9120,"total_cost_usd":0.041,"structured_output":{"notes":[{"text":"The shell height is stored per project in AppSettings, not per window."},{"text":"SwiftTerm resets scrollback when the view is re-created."}],"planChanges":[{"kind":"add","ref":null,"title":"Remember the Shell's scroll position","status":"idea","reason":"Found while fixing the height."},{"kind":"done","ref":"i1","title":"Remember Shell panel height","status":"done","reason":"Committed in this session."}]}}"#
 }
 
-/// History file lines, as Claude Code writes them.
-private enum History {
+/// History file lines, as Claude Code writes them (shared with SkillTests).
+enum History {
     static func prompt(_ text: String) -> String {
         json(["type": "user", "isSidechain": false, "message": ["role": "user", "content": text]])
     }

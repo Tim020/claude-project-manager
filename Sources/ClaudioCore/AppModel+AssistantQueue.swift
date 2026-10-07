@@ -13,13 +13,16 @@ import Foundation
 public enum HeldJobKey: Hashable, Sendable {
     case noteCheck(UUID)
     case followUp(UUID)
+    /// Drafting a skill from a lesson (a candidate's id).
+    case skillDraft(UUID)
 
-    /// For the app's Activity Log: an id, never the note's or session's
-    /// words (step 2 keeps note text out of that log).
+    /// For the app's Activity Log: an id, never the note's, session's or
+    /// lesson's words (step 2 keeps note text out of that log).
     var logDetail: String {
         switch self {
         case .noteCheck(let id): return "note \(id.uuidString.lowercased())"
         case .followUp(let id): return "session \(id.uuidString.lowercased())"
+        case .skillDraft(let id): return "lesson \(id.uuidString.lowercased())"
         }
     }
 }
@@ -160,10 +163,16 @@ extension AppModel {
     }
 
     /// Off or Manual (the project, or Settings › Assistant): held work is
-    /// dropped and open follow-up offers are withdrawn.
+    /// dropped and open follow-up offers are withdrawn. A lesson whose draft
+    /// was held becomes an offer in Manual; in Off, offers to draft go too.
     func assistantStoppedBackgroundWork(inProject projectID: UUID, because reason: String) {
         let held = heldJobEntries.filter { $0.job.projectID == projectID }.count
         if held > 0 { heldJobEntries.removeAll { $0.job.projectID == projectID } }
+        if isAssistantOn(inProject: projectID) {
+            considerSkillCandidates(projectID: projectID)
+        } else {
+            withdrawSkillOffers(inProject: projectID)
+        }
         let offers = needsYouData(inProject: projectID).followUps.filter { $0.state == .offered }
         if !offers.isEmpty {
             for offer in offers { pendingDigests[offer.id] = nil }
@@ -185,6 +194,10 @@ extension AppModel {
             for project in workspace.projects { assistantStoppedBackgroundWork(inProject: project.id, because: "the assistant was turned off") }
         } else {
             releaseHeldJobs()
+            // Back on: lessons whose offers were withdrawn are offered (or drafted) again.
+            if !old.isEnabled && new.isEnabled {
+                for project in workspace.projects { considerSkillCandidates(projectID: project.id) }
+            }
         }
     }
 

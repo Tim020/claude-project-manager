@@ -324,13 +324,18 @@ private struct PlanItemSessionSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 let skills = session?.namedSkills ?? model.suggestedSkills(forItem: item, inProject: projectID)
-                if skills.isEmpty {
-                    Text(session == nil ? "No approved skills match it yet." : "None.")
-                        .font(DS.font(12.5))
-                        .foregroundStyle(DS.dim)
-                } else {
-                    FlowChips(names: skills)
+                Group {
+                    if skills.isEmpty {
+                        Text(session == nil ? "No approved skills match it yet." : "None.")
+                            .font(DS.font(12.5))
+                            .foregroundStyle(DS.dim)
+                    } else {
+                        FlowChips(names: skills)
+                    }
                 }
+                // Picks come partly from the files its sessions touched,
+                // read from their history.
+                .task(id: item.id) { if session == nil { await model.refreshTouchedFiles(forItem: item, inProject: projectID) } }
             }
             if let session {
                 Button { model.select(session.id) } label: {

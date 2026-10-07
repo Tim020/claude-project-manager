@@ -300,6 +300,32 @@ public final class AppModel {
     public internal(set) var toast: Toast?
     /// Each project's approved skills, as last read (see AppModel+AssistantSessions).
     public internal(set) var approvedSkills: [UUID: [ApprovedSkill]] = [:]
+    /// Each project's `skills.json` (see AppModel+Skills).
+    public internal(set) var skillsData: [UUID: SkillsData] = [:]
+    @ObservationIgnored var savedSkillsData: [UUID: SkillsData] = [:]
+    /// Projects whose `skills.json` couldn't be read: left alone, and
+    /// nothing about their skills is saved that launch.
+    public internal(set) var unreadableSkillsData = Set<UUID>()
+    /// Skill file problems already logged, so a rescan doesn't log them again.
+    @ObservationIgnored var loggedSkillProblems: [UUID: Set<String>] = [:]
+    /// Files each plan item's sessions edited, from their history files
+    /// (relative to the project), for picking skill chips.
+    public internal(set) var itemTouchedFiles: [UUID: [String]] = [:]
+    /// Background checks of notes that failed, by note: shown on the note
+    /// as Check Failed, which opens Job Failed. Kept until the note is
+    /// checked again (in memory: the Activity Log keeps the record).
+    public internal(set) var noteCheckFailures: [UUID: NoteCheckFailure] = [:]
+    /// Lessons a skill is being drafted from now (see AppModel+SkillDrafts).
+    public internal(set) var draftingCandidates = Set<UUID>()
+    /// The login shell's PATH, read once for the drafts' command check
+    /// (empty: it couldn't be read, so that check is skipped).
+    @ObservationIgnored var loginShellPATH: [String]?
+    /// When reading it last failed (it's tried again after a while).
+    @ObservationIgnored var loginShellPATHFailedAt: Date?
+    /// Replaces the command check's PATH lookup (for tests).
+    @ObservationIgnored var commandExistsOverride: ((String) -> Bool)?
+    /// Drafts whose reply is being checked (the PATH may be read first).
+    @ObservationIgnored var skillDraftTasks: [UUID: Task<Void, Never>] = [:]
     /// Where Claudio's plugin for sessions is (nil: it couldn't be set up).
     @ObservationIgnored var assistantPluginPath: String?
     /// The `index.tsv` text last written.
@@ -1749,6 +1775,7 @@ public final class AppModel {
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
             // It's carrying on, so an offered follow-up no longer applies.
             if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
+            if event.name == .preToolUse || event.name == .userPromptSubmit { noteSkillUse(event, sessionID: target) }
             // Otherwise the only trace is the follow-up it holds back.
             if event.name == .stopFailure {
                 log.append(.error, "\(state.workspace.session(target)?.name ?? "A session"): its turn failed (\(event.error ?? "an API error"))")

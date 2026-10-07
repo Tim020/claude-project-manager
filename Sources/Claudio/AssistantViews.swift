@@ -76,6 +76,12 @@ struct AssistantTool: View {
                     case .settings: AssistantSettingsView(projectID: projectID)
                     case .activityLog: AssistantActivityLogView(projectID: projectID)
                     case .jobFailed(_, let row): JobFailedView.forRow(row, projectID: projectID, model: model).id(row.id)
+                    case .skills: SkillsListView(projectID: projectID)
+                    case .skill(_, let name): SkillDetailView(name: name, projectID: projectID).id(name)
+                    case .skillProposal(_, let id):
+                        if let proposal = model.skillProposal(id, inProject: projectID) {
+                            SkillProposalView(proposal: proposal, projectID: projectID).id(proposal.id)
+                        }
                     default: EmptyView()
                     }
                 } else {
@@ -141,6 +147,10 @@ extension AssistantTool {
         case .settings?: return "Assistant Settings"
         case .activityLog?: return "Activity Log"
         case .jobFailed?: return "Job Failed"
+        case .skills?: return "Skills"
+        case .skill?: return "Skill"
+        case .skillProposal(let projectID, let id)?:
+            return model.skillProposal(id, inProject: projectID)?.isChange == true ? "Changed Skill" : "New Skill"
         default: return "Assistant"
         }
     }
@@ -346,6 +356,20 @@ struct NoteCard: View {
             }
             if let suggestion {
                 SuggestionBox(suggestion: suggestion, note: note, projectID: projectID)
+            } else if let failure = model.noteCheckFailure(note.id, inProject: projectID) {
+                // A background check that failed: Job Failed says why, with Try Again.
+                Button { model.openNoteCheckFailure(note.id, projectID: projectID) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.circle")
+                        Text("Check against the plan failed")
+                        Image(systemName: "chevron.right").font(.system(size: 9))
+                    }
+                    .font(DS.font(11.5))
+                    .foregroundStyle(DS.red)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(failure.message)
             }
         }
         .padding(.horizontal, 10)

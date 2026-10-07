@@ -358,6 +358,32 @@ public protocol AssistantStoring: AnyObject {
     /// many didn't (from a later build, or a line cut short). Empty for no
     /// log yet; throws for one that's there but can't be read.
     func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int)
+    // Step 5: skills.
+    /// The approved skills, and the files that couldn't be used.
+    func scanSkills(projectID: UUID) -> SkillScan
+    /// `skills.json`: empty when there's none yet; throws for one that's
+    /// there but can't be read (it's then left alone).
+    func loadSkillsData(projectID: UUID) throws -> SkillsData
+    func saveSkillsData(_ data: SkillsData, projectID: UUID) throws
+    /// Writes an approved skill's `SKILL.md` (sessions load it live).
+    func writeApprovedSkill(name: String, text: String, projectID: UUID) throws
+    /// `history/<name>/<version>.md`, one per approval.
+    func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws
+    /// A skill's approved versions, newest first.
+    func skillHistory(name: String, projectID: UUID) -> [SkillVersion]
+}
+
+/// One approved version of a skill, from its history.
+public struct SkillVersion: Equatable, Sendable {
+    public var version: Int
+    public var text: String
+    public var approvedAt: Date?
+
+    public init(version: Int, text: String, approvedAt: Date?) {
+        self.version = version
+        self.text = text
+        self.approvedAt = approvedAt
+    }
 }
 
 extension AssistantStoring {
@@ -380,6 +406,12 @@ extension AssistantStoring {
     public func loadProjectSettings(projectID: UUID) throws -> ProjectAssistantSettings { ProjectAssistantSettings() }
     public func saveProjectSettings(_ settings: ProjectAssistantSettings, projectID: UUID) throws {}
     public func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int) { ([], 0) }
+    public func scanSkills(projectID: UUID) -> SkillScan { SkillScan(skills: approvedSkills(projectID: projectID)) }
+    public func loadSkillsData(projectID: UUID) throws -> SkillsData { SkillsData() }
+    public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {}
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {}
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {}
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] { [] }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -440,6 +472,41 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func readAudit(projectID: UUID, limit: Int) throws -> (entries: [AuditEntry], unreadable: Int) {
         if let auditReadError { throw auditReadError }
         return (Array((audit[projectID] ?? []).suffix(max(0, limit))), 0)
+    }
+    /// Problems `scanSkills` reports, by project.
+    public var skillProblems: [UUID: [String]] = [:]
+    public var skillsData: [UUID: SkillsData] = [:]
+    /// Makes `loadSkillsData` throw, as an unreadable file does.
+    public var skillsDataError: Error?
+    public func scanSkills(projectID: UUID) -> SkillScan {
+        SkillScan(skills: skills[projectID] ?? [], problems: skillProblems[projectID] ?? [])
+    }
+    public func loadSkillsData(projectID: UUID) throws -> SkillsData {
+        if let skillsDataError { throw skillsDataError }
+        return skillsData[projectID] ?? SkillsData()
+    }
+    public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {
+        if let saveError { throw saveError }
+        skillsData[projectID] = data
+    }
+    /// Approved versions written, by project and skill name.
+    public var skillVersions: [UUID: [String: [SkillVersion]]] = [:]
+    /// Makes writing a skill throw.
+    public var skillWriteError: Error?
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        var list = skills[projectID] ?? []
+        list.removeAll { $0.name == name }
+        list.append(SkillFiles.skill(fromSkillFile: text, folderName: name))
+        skills[projectID] = list.sorted { $0.name < $1.name }
+    }
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        skillVersions[projectID, default: [:]][name, default: []].append(SkillVersion(version: version, text: text, approvedAt: nil))
+    }
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
+        (skillVersions[projectID]?[name] ?? []).sorted { $0.version > $1.version }
     }
 }
 
@@ -527,7 +594,53 @@ public final class AssistantFileStore: AssistantStoring {
     }
 
     public func approvedSkills(projectID: UUID) -> [ApprovedSkill] {
-        SkillFiles.approved(inRoot: directory(projectID: projectID).appendingPathComponent("skills"))
+        scanSkills(projectID: projectID).skills
+    }
+
+    public func scanSkills(projectID: UUID) -> SkillScan {
+        SkillFiles.scan(inRoot: directory(projectID: projectID).appendingPathComponent("skills"))
+    }
+
+    public func loadSkillsData(projectID: UUID) throws -> SkillsData {
+        let url = directory(projectID: projectID).appendingPathComponent("skills.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return SkillsData() }
+        return try JSONFileStore.decoder.decode(SkillsData.self, from: Data(contentsOf: url))
+    }
+
+    public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {
+        // The name becomes a folder: never anything but a slug.
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let folder = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try text.write(to: folder.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+    }
+
+    public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {
+        guard SkillName.isValid(name), version > 0 else { throw CocoaError(.fileWriteInvalidFileName) }
+        let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try text.write(to: folder.appendingPathComponent("\(version).md"), atomically: true, encoding: .utf8)
+    }
+
+    public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
+        guard SkillName.isValid(name) else { return [] }
+        let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return files.compactMap { file -> SkillVersion? in
+            guard file.hasSuffix(".md"), let version = Int(file.dropLast(3)) else { return nil }
+            let url = folder.appendingPathComponent(file)
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+            let date = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+            return SkillVersion(version: version, text: text, approvedAt: date)
+        }.sorted { $0.version > $1.version }
+    }
+
+    public func saveSkillsData(_ data: SkillsData, projectID: UUID) throws {
+        let directory = directory(projectID: projectID)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONFileStore.encoder
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(data).write(to: directory.appendingPathComponent("skills.json"), options: .atomic)
     }
 
     public func writeIndex(_ text: String) throws {

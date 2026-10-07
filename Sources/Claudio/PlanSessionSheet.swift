@@ -126,6 +126,13 @@ struct PlanSessionSheet: View {
         .background(DS.sidebar)
         .preferredColorScheme(.dark)
         .onAppear(perform: applyDraft)
+        .task {
+            // The files its sessions touched, read from their history: the
+            // picks may change once they're in.
+            await model.refreshTouchedFiles(forItem: item, inProject: projectID)
+            skills = model.suggestedSkills(forItem: item, inProject: projectID, folderID: folderID)
+                .filter { !removedSkills.contains($0) }
+        }
     }
 
     private var folders: [Folder] {

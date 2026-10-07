@@ -54,6 +54,7 @@ extension AppModel {
         }
         writeAssistantIndex()
         loadNeedsYou()
+        loadSkillsData()
         pollAssistantInbox()
     }
 
@@ -111,24 +112,29 @@ extension AppModel {
     // MARK: - Skills
 
     /// Rereads a project's approved skills (at launch, and when a plan item
-    /// or the sheet opens).
+    /// or the sheet opens), logging files that can't be used.
     public func refreshApprovedSkills(projectID: UUID) {
-        let skills = assistantStore.approvedSkills(projectID: projectID)
-        if approvedSkills[projectID] != skills { approvedSkills[projectID] = skills }
+        let scan = assistantStore.scanSkills(projectID: projectID)
+        logSkillProblems(scan.problems, projectID: projectID)
+        if approvedSkills[projectID] != scan.skills { approvedSkills[projectID] = scan.skills }
     }
 
     /// The skills picked for an item's opening prompt (see `SkillChips`).
-    /// Files come from the item's sessions whose changes have loaded;
-    /// `folderID` is the folder the new session is going in (items have none).
+    /// Files come from the item's sessions' history files (read by
+    /// `refreshTouchedFiles`), and from any whose Files Changed has loaded
+    /// since; `folderID` is the folder the new session is going in (items
+    /// have none), which also picks whose usage counts.
     public func suggestedSkills(forItem item: PlanItem, inProject projectID: UUID, folderID: UUID? = nil) -> [String] {
         let skills = approvedSkills[projectID] ?? []
         guard !skills.isEmpty, let project = workspace.project(projectID) else { return [] }
         var sessionIDs = Set(notes(forItem: item.id, inProject: projectID).compactMap(\.sessionID))
         if let sessionID = item.sessionID { sessionIDs.insert(sessionID) }
-        let files = sessionIDs.flatMap { sessionChanges[$0]?.session?.absolutePaths.values.map { $0 } ?? [] }
+        let loaded = sessionIDs.flatMap { sessionChanges[$0]?.session?.absolutePaths.values.map { $0 } ?? [] }
             .compactMap { SkillChips.relativePath($0, projectPath: project.path) }
+        let files = Set(loaded).union(itemTouchedFiles[item.id] ?? [])
         let folder = folderID.flatMap { workspace.folder($0)?.name }
-        return SkillChips.pick(from: skills, touchedFiles: Array(Set(files)).sorted(), folderName: folder).map(\.name)
+        return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderName: folder,
+                               usage: skillUsage(inProject: projectID, folderID: folderID)).map(\.name)
     }
 
     // MARK: - Start Session from a plan item
