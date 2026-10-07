@@ -284,7 +284,6 @@ struct UsageWindowView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .layoutPriority(1.4)
                 VStack(alignment: .leading, spacing: 0) {
                     UsageLabel(text: "BY PROJECT").padding(.bottom, 6)
                     ForEach(model.workspace.projects) { project in
@@ -305,7 +304,7 @@ struct UsageWindowView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 8)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(width: 240, alignment: .topLeading)
             }
             .font(DS.font(12.5))
         }
