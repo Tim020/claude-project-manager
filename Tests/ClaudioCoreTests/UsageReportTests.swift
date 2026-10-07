@@ -227,18 +227,18 @@ final class UsageReportTests: XCTestCase {
             XCTAssertEqual(usage.turns, 1)
             XCTAssertEqual(usage.mainModel, "Haiku 4.5")
             XCTAssertEqual(usage.followUpCost ?? 0, 0.5, accuracy: 0.0001)
-            XCTAssertNil(usage.weekShare, "no weekly reading yet")
+            XCTAssertNil(usage.week, "no weekly reading yet")
 
             f.model.applyTestUsage(UsageSnapshot(fiveHour: nil, sevenDay: UsageWindow(usedPercentage: 31, resetsAt: nil), subscriptionType: nil,
                                                  updatedAt: Self.now))
             usage = try XCTUnwrap(f.model.sessionUsage(f.opus))
-            XCTAssertEqual(usage.weekShare ?? 0, 4 / 17.75 * 0.31, accuracy: 0.0001)
-            XCTAssertEqual(usage.weekUsed, 31)
+            XCTAssertEqual(usage.week?.share ?? 0, 4 / 17.75 * 0.31, accuracy: 0.0001)
+            XCTAssertEqual(usage.week?.used, 31)
             XCTAssertNil(f.model.sessionUsage(UUID()))
 
             f.model.applyTestUsage(UsageSnapshot(fiveHour: nil, sevenDay: UsageWindow(usedPercentage: 0, resetsAt: nil), subscriptionType: nil,
                                                  updatedAt: Self.now))
-            XCTAssertNil(f.model.sessionUsage(f.opus)?.weekShare)
+            XCTAssertNil(f.model.sessionUsage(f.opus)?.week)
         }
     }
 
@@ -338,5 +338,150 @@ final class UsageReportTests: XCTestCase {
         // Saved off the main actor.
         for _ in 0..<50 where usageStore.ledger == nil { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertEqual(usageStore.ledger?.conversations.count, 2)
+    }
+
+    // MARK: - Failures (review round 1)
+
+    @MainActor private func makeModel(home: URL, state: PersistedState, usageStore: UsageStoring = MemoryUsageStore(),
+                                      assistantStore: AssistantStoring = MemoryAssistantStore()) -> AppModel {
+        let store = MemoryStore()
+        store.state = state
+        let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: home), hookEventsURL: home.appendingPathComponent("h.log"),
+                             runner: FakeRunner(), assistantStore: assistantStore, usageStore: usageStore,
+                             locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", now: { Self.now }, home: "/")
+        model.timeZone = TimeZone(identifier: "UTC")!
+        return model
+    }
+
+    /// A store whose ledger can't be read, and can't be moved aside.
+    private final class StuckUsageStore: UsageStoring, @unchecked Sendable {
+        var saves = 0
+        func load() throws -> UsageLedger? { throw CocoaError(.fileReadCorruptFile) }
+        func save(_ ledger: UsageLedger) throws { saves += 1 }
+        func setAside(now: Date) throws -> URL? { throw CocoaError(.fileWriteNoPermission) }
+    }
+
+    /// A project with one session whose transcript is the fixture.
+    private func transcriptFixture(lines: [String]? = nil) throws -> (home: URL, state: PersistedState, session: Session, file: URL) {
+        let home = try makeTemporaryDirectory()
+        var state = PersistedState()
+        let project = state.workspace.addProject(path: "/code/app")
+        let session = Session(projectID: project, claudeSessionID: "c1", name: "One", workingDirectory: "/code/app")
+        try state.workspace.addSession(session)
+        let directory = SessionDiscovery(claudeHome: home).projectDirectory(for: "/code/app")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("c1.jsonl")
+        try ((lines ?? Fixtures.lines("transcript-usage.jsonl")).joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        return (home, state, session, file)
+    }
+
+    func testAnUnreadableLedgerIsMovedAsideNotOverwritten() async throws {
+        let fixture = try transcriptFixture()
+        let usageStore = MemoryUsageStore()
+        usageStore.loadError = CocoaError(.fileReadCorruptFile)
+        let model = await MainActor.run { makeModel(home: fixture.home, state: fixture.state, usageStore: usageStore) }
+        XCTAssertEqual(usageStore.setAsideCount, 1)
+        await model.refreshUsageLedger()
+        await model.waitForUsageSaves()
+        XCTAssertEqual(usageStore.ledger?.conversations.count, 1, "read again from the transcripts, then saved")
+        await MainActor.run {
+            XCTAssertTrue(model.log.entries.contains { $0.title.hasPrefix("Couldn't read the saved usage figures, so they're read again") })
+        }
+
+        // If it can't be moved, nothing is written over it.
+        let stuck = StuckUsageStore()
+        let readOnly = await MainActor.run { makeModel(home: fixture.home, state: fixture.state, usageStore: stuck) }
+        await readOnly.refreshUsageLedger()
+        await readOnly.waitForUsageSaves()
+        XCTAssertEqual(stuck.saves, 0)
+        await MainActor.run {
+            XCTAssertEqual(readOnly.usageEntries.isEmpty, false, "figures still show")
+            XCTAssertTrue(readOnly.log.entries.contains { $0.title == "Couldn't read the saved usage figures, or move them aside" })
+        }
+    }
+
+    func testTheFileStoreRefusesAnotherVersionAndMovesItAside() throws {
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("usage.json")
+        try Data(#"{"version": 99, "conversations": {}}"#.utf8).write(to: url)
+        let store = UsageFileStore(url: url)
+        XCTAssertThrowsError(try store.load())
+        let moved = try XCTUnwrap(try store.setAside(now: Self.now))
+        XCTAssertEqual(moved.lastPathComponent, "usage-unreadable-\(Int(Self.now.timeIntervalSince1970)).json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertNil(try store.load())
+        XCTAssertNil(try store.setAside(now: Self.now), "nothing to move")
+    }
+
+    func testUnreadableAssistantCallsAreLoggedOnceAndTriedAgain() async throws {
+        let fixture = try transcriptFixture()
+        let projectID = fixture.state.workspace.projects[0].id
+        let assistant = MemoryAssistantStore()
+        assistant.audit[projectID] = [AuditEntry(at: Self.now, actor: .assistant, action: .jobRan,
+                                                 job: AuditEntry.Job(name: PromoteCheck.job, model: "Haiku", subject: "x",
+                                                                     succeeded: true, costUSD: 0.25), cause: "assistant")]
+        assistant.auditReadError = CocoaError(.fileReadNoPermission)
+        let model = await MainActor.run { makeModel(home: fixture.home, state: fixture.state, assistantStore: assistant) }
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            XCTAssertEqual(model.log.entries.filter { $0.title.hasPrefix("Couldn't read the assistant's calls") }.count, 1)
+            XCTAssertEqual(model.usageReport(.project(projectID), range: .all).assistantCost, 0)
+        }
+        assistant.auditReadError = nil
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            XCTAssertEqual(model.usageReport(.project(projectID), range: .all).assistantCost, 0.25, accuracy: 0.0001)
+        }
+    }
+
+    func testAnUnreadableTranscriptIsNotCountedAndIsLoggedOnce() async throws {
+        guard getuid() != 0 else { throw XCTSkip("root can read any file") }
+        let fixture = try transcriptFixture()
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: fixture.file.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fixture.file.path) }
+        let model = await MainActor.run { makeModel(home: fixture.home, state: fixture.state) }
+        await model.refreshUsageLedger()
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            XCTAssertEqual(model.usageScan.unreadable, [fixture.file.path: fixture.state.workspace.projects[0].id])
+            XCTAssertEqual(model.usageScan.unreadableCount(inProject: fixture.state.workspace.projects[0].id), 1)
+            XCTAssertNil(model.sessionUsage(fixture.session.id))
+            XCTAssertEqual(model.log.entries.filter { $0.title.hasPrefix("Couldn't read a transcript") }.count, 1)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fixture.file.path)
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            XCTAssertEqual(model.usageScan.unreadable, [:], "readable again")
+            XCTAssertNotNil(model.sessionUsage(fixture.session.id))
+        }
+    }
+
+    func testLinesThatLookLikeRepliesButCantBeReadAreCountedAndLogged() async throws {
+        var lines = try Fixtures.lines("transcript-usage.jsonl")
+        // Cut short, and a reply with no message id.
+        lines.append(#"{"type":"assistant","message":{"model":"claude-opus-5-5","id":"msg_X","usage":{"input_tokens":"#)
+        lines.append(#"{"type":"assistant","timestamp":"2026-10-05T11:00:00.000Z","message":{"model":"claude-opus-5-5","usage":{"input_tokens":5,"output_tokens":5}}}"#)
+        // A prompt that mentions "assistant" and "usage" isn't a reply.
+        lines.append(#"{"type":"user","uuid":"u-9","message":{"role":"user","content":"Show the \"assistant\" its \"usage\""},"timestamp":"2026-10-05T11:01:00.000Z"}"#)
+        let fixture = try transcriptFixture(lines: lines)
+        let model = await MainActor.run { makeModel(home: fixture.home, state: fixture.state) }
+        await model.refreshUsageLedger()
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            XCTAssertEqual(model.sessionUsage(fixture.session.id)?.cost ?? 0, 3.307508, accuracy: 0.000001)
+            XCTAssertEqual(model.sessionUsage(fixture.session.id)?.turns, 3)
+            XCTAssertEqual(model.log.entries.filter { $0.title.hasPrefix("2 lines of a transcript looked like a reply") }.count, 1)
+        }
+    }
+
+    func testAnOverlappingScanReturnsAtOnceAndLosesNothing() async throws {
+        let fixture = try transcriptFixture()
+        let model = await MainActor.run { makeModel(home: fixture.home, state: fixture.state) }
+        async let first: Void = model.refreshUsageLedger()
+        async let second: Void = model.refreshUsageLedger()
+        _ = await (first, second)
+        await MainActor.run {
+            XCTAssertEqual(model.sessionUsage(fixture.session.id)?.cost ?? 0, 3.307508, accuracy: 0.000001)
+        }
     }
 }

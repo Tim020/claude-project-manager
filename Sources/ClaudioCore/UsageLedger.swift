@@ -38,6 +38,20 @@ public struct ConversationUsage: Codable, Equatable, Sendable {
     public var turns: Int { files.values.reduce(0) { $0 + $1.turns } }
 }
 
+extension UsageLedger {
+    /// The targets' transcripts with lines that looked like replies but
+    /// couldn't be read.
+    func unreadableLines(in targets: [UsageScanTarget]) -> [String: Int] {
+        var lines: [String: Int] = [:]
+        for target in targets {
+            for (path, file) in conversations[target.conversationID]?.files ?? [:] where file.unreadableLines > 0 {
+                lines[path] = file.unreadableLines
+            }
+        }
+        return lines
+    }
+}
+
 public struct UsageLedger: Codable, Equatable, Sendable {
     /// Bumped when what's recorded changes; an older ledger is read afresh.
     public static let currentVersion = 1
@@ -64,9 +78,25 @@ public struct UsageLedger: Codable, Equatable, Sendable {
 
 /// Where the usage ledger is kept.
 public protocol UsageStoring: AnyObject, Sendable {
-    /// Nil when there's none yet. Throws for one that can't be read.
+    /// Nil when there's none yet. Throws for one that can't be read,
+    /// including one from another version.
     func load() throws -> UsageLedger?
     func save(_ ledger: UsageLedger) throws
+    /// Moves a ledger that couldn't be read out of the way, so saving
+    /// doesn't overwrite it (it may hold deleted sessions' only totals).
+    /// Returns where it went (nil: there was nothing to move).
+    func setAside(now: Date) throws -> URL?
+}
+
+public enum UsageLedgerError: Error, LocalizedError {
+    case otherVersion(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .otherVersion(let version):
+            return "It's version \(version), and this Claudio reads version \(UsageLedger.currentVersion)."
+        }
+    }
 }
 
 /// Keeps the ledger in memory: the default, so tests never touch real files.
@@ -75,8 +105,24 @@ public final class MemoryUsageStore: UsageStoring, @unchecked Sendable {
     private var stored: UsageLedger?
     public init(_ ledger: UsageLedger? = nil) { stored = ledger }
     public var ledger: UsageLedger? { lock.withLock { stored } }
-    public func load() throws -> UsageLedger? { lock.withLock { stored } }
+    /// Makes `load` throw, as an unreadable file does (for tests).
+    public var loadError: Error?
+    /// What `setAside` moved (for tests).
+    public private(set) var setAsideCount = 0
+    public func load() throws -> UsageLedger? {
+        try lock.withLock {
+            if let loadError { throw loadError }
+            return stored
+        }
+    }
     public func save(_ ledger: UsageLedger) throws { lock.withLock { stored = ledger } }
+    public func setAside(now: Date) throws -> URL? {
+        lock.withLock {
+            loadError = nil
+            setAsideCount += 1
+        }
+        return URL(fileURLWithPath: "/memory/usage.json.unreadable")
+    }
 }
 
 /// `~/Library/Application Support/Claudio/usage.json`.
@@ -92,7 +138,17 @@ public final class UsageFileStore: UsageStoring, @unchecked Sendable {
     public func load() throws -> UsageLedger? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let ledger = try JSONDecoder().decode(UsageLedger.self, from: Data(contentsOf: url))
-        return ledger.version == UsageLedger.currentVersion ? ledger : nil
+        guard ledger.version == UsageLedger.currentVersion else { throw UsageLedgerError.otherVersion(ledger.version) }
+        return ledger
+    }
+
+    /// `usage.json` → `usage-unreadable-<seconds since 1970>.json`, beside it.
+    public func setAside(now: Date) throws -> URL? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let destination = url.deletingLastPathComponent()
+            .appendingPathComponent("usage-unreadable-\(Int(now.timeIntervalSince1970)).json")
+        try FileManager.default.moveItem(at: url, to: destination)
+        return destination
     }
 
     public func save(_ ledger: UsageLedger) throws {
@@ -139,6 +195,9 @@ public enum UsageScanner {
     public struct Result: Equatable, Sendable {
         /// Transcripts that are there but couldn't be read, with their project.
         public var unreadable: [String: UUID] = [:]
+        /// Transcripts with lines that looked like replies but couldn't be
+        /// read (their tokens aren't counted), and how many such lines each has.
+        public var unreadableLines: [String: Int] = [:]
         /// How many files had something new.
         public var filesRead = 0
     }
@@ -148,7 +207,7 @@ public enum UsageScanner {
     /// stay with the original). `progress` is told (done, total) as files
     /// are read. Files that have gone keep what was read from them.
     public static func scan(_ targets: [UsageScanTarget], into ledger: inout UsageLedger,
-                            progress: (Int, Int) -> Void = { _, _ in }) -> Result {
+                            chunkSize: Int = 8 * 1024 * 1024, progress: (Int, Int) -> Void = { _, _ in }) -> Result {
         var result = Result()
         var pending: [(target: UsageScanTarget, url: URL, size: Int)] = []
         for target in targets {
@@ -160,11 +219,19 @@ public enum UsageScanner {
             conversation.folderID = target.folderID
             if ledger.conversations[target.conversationID] != conversation { ledger.conversations[target.conversationID] = conversation }
             for url in target.files {
-                guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber else { continue }
+                guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber else {
+                    // Gone (what was read from it stays), or there but not
+                    // readable, which is reported like a read that fails.
+                    if FileManager.default.fileExists(atPath: url.path) { result.unreadable[url.path] = target.projectID }
+                    continue
+                }
                 if conversation.files[url.path]?.size != size.intValue { pending.append((target, url, size.intValue)) }
             }
         }
-        guard !pending.isEmpty else { return result }
+        guard !pending.isEmpty else {
+            result.unreadableLines = ledger.unreadableLines(in: targets)
+            return result
+        }
 
         // Which file counted each reply, per project, to count copies once.
         var owners: [UUID: [String: String]] = [:]
@@ -182,10 +249,14 @@ public enum UsageScanner {
             progress(done, pending.count)
             let path = item.url.path
             var file = ledger.conversations[item.target.conversationID]?.files[path] ?? TranscriptProgress()
-            if item.size < file.offset { file = TranscriptProgress() }
-            let projectOwners = owners[item.target.projectID] ?? [:]
+            if file.offset < 0 || item.size < file.offset { file = TranscriptProgress() }
+            let project = item.target.projectID
             do {
-                try read(item.url, into: &file, countsTurns: !path.contains("/subagents/")) { id in projectOwners[id].map { $0 != path } ?? false }
+                // Looked up in place: a copy of the project's map per file
+                // would make a first scan of many files quadratic.
+                try read(item.url, into: &file, countsTurns: !path.contains("/subagents/"), chunkSize: chunkSize) { id in
+                    owners[project]?[id].map { $0 != path } ?? false
+                }
             } catch {
                 result.unreadable[path] = item.target.projectID
                 continue
@@ -196,18 +267,19 @@ public enum UsageScanner {
             result.filesRead += 1
         }
         progress(pending.count, pending.count)
+        result.unreadableLines = ledger.unreadableLines(in: targets)
         return result
     }
 
     /// Reads a file from where it got to, a chunk at a time. A line longer
     /// than a chunk (a pasted image) gets a bigger chunk.
-    static func read(_ url: URL, into file: inout TranscriptProgress, countsTurns: Bool,
+    static func read(_ url: URL, into file: inout TranscriptProgress, countsTurns: Bool, chunkSize: Int = 8 * 1024 * 1024,
                      isCountedElsewhere: (String) -> Bool) throws {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        var chunkSize = 8 * 1024 * 1024
+        var chunkSize = max(1, chunkSize)
         while true {
-            try handle.seek(toOffset: UInt64(file.offset))
+            try handle.seek(toOffset: UInt64(max(0, file.offset)))
             guard let data = try handle.read(upToCount: chunkSize), !data.isEmpty else { return }
             let before = file.offset
             file.read(data, countsTurns: countsTurns, isCountedElsewhere: isCountedElsewhere)

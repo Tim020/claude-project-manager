@@ -561,7 +561,8 @@ struct SessionUsageTool: View {
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
         if !usage.byModel.isEmpty { ModelSplit(models: usage.byModel) }
-        if let share = usage.weekShare, let used = usage.weekUsed {
+        if let week = usage.week {
+            let share = week.share, used = week.used
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     UsageLabel(text: "THIS WEEK'S LIMIT")

@@ -175,6 +175,38 @@ final class UsageCostTests: XCTestCase {
         XCTAssertEqual(conversation.buckets.reduce(0) { $0 + $1.cost }, 2 * 3.307508, accuracy: 0.000001)
     }
 
+    func testALineLongerThanAChunkIsReadWhole() throws {
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("c1.jsonl")
+        try Data(contentsOf: Fixtures.url("transcript-usage.jsonl")).write(to: url)
+        var whole = TranscriptProgress()
+        whole.read(try Data(contentsOf: url))
+        let project = UUID()
+        // Every line is longer than 64 bytes, so each needs the chunk doubled.
+        for chunk in [1, 64, 700, 4096] {
+            var ledger = UsageLedger()
+            _ = UsageScanner.scan([target([url], project: project)], into: &ledger, chunkSize: chunk)
+            let file = try XCTUnwrap(ledger.conversations["c1"]?.files[url.path])
+            XCTAssertEqual(file.tokens, whole.tokens, "chunk \(chunk)")
+            XCTAssertEqual(file.turns, whole.turns, "chunk \(chunk)")
+            XCTAssertEqual(file.offset, try Data(contentsOf: url).count, "chunk \(chunk)")
+        }
+    }
+
+    func testANegativeOffsetStartsTheFileAgain() throws {
+        let directory = try makeTemporaryDirectory()
+        let url = directory.appendingPathComponent("c1.jsonl")
+        try Data(contentsOf: Fixtures.url("transcript-usage.jsonl")).write(to: url)
+        let project = UUID()
+        var broken = TranscriptProgress()
+        broken.offset = -40
+        var ledger = UsageLedger()
+        ledger.conversations["c1"] = ConversationUsage(projectID: project, sessionID: nil, sessionName: "A", folderID: nil,
+                                                       files: [url.path: broken])
+        _ = UsageScanner.scan([target([url], project: project)], into: &ledger)
+        XCTAssertEqual(ledger.conversations["c1"]?.buckets.reduce(0) { $0 + $1.cost } ?? 0, 3.307508, accuracy: 0.000001)
+    }
+
     func testLedgerSurvivesSavingAndDropsWhatItCantRead() throws {
         let url = try makeTemporaryDirectory().appendingPathComponent("usage.json")
         let store = UsageFileStore(url: url)
@@ -197,7 +229,7 @@ final class UsageCostTests: XCTestCase {
         XCTAssertEqual(try store.load()?.conversations.keys.sorted(), ["c1"])
         json["version"] = 99
         try JSONSerialization.data(withJSONObject: json).write(to: url)
-        XCTAssertNil(try store.load())
+        XCTAssertThrowsError(try store.load(), "another version's ledger isn't read, or overwritten")
     }
 }
 

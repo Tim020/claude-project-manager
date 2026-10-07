@@ -260,7 +260,6 @@ public struct UsageReport: Equatable, Sendable {
     public var period: UsagePeriod
     /// "CLAUDE-PROJECT-MANAGER", "ALL PROJECTS".
     public var title: String
-    public var cost: Double
     /// Session tokens (assistant calls report only a cost).
     public var tokens: Int
     /// This scope's part of all usage in the range (nil for all of it).
@@ -275,6 +274,7 @@ public struct UsageReport: Equatable, Sendable {
     /// in the table.
     public var fallbackFamilies: [ModelFamily]
 
+    public var cost: Double { sessionsCost + assistantCost }
     public var isEmpty: Bool { cost <= 0 && tokens == 0 }
 }
 
@@ -283,17 +283,23 @@ public struct SessionUsage: Equatable, Sendable {
     public var cost: Double
     public var tokens: TokenCounts
     public var byModel: [ModelShare]
-    /// Its part of this week's limit (0…1), worked out from its share of
-    /// the last 7 days' usage; nil without a weekly reading.
-    public var weekShare: Double?
-    /// The week's used percentage it's a share of.
-    public var weekUsed: Double?
+    /// Its part of this week's limit; nil without a weekly reading.
+    public var week: WeekShare?
     public var turns: Int
     /// The model it spent most on ("Opus 5.5").
     public var mainModel: String?
     /// What the assistant's follow-ups on it cost; nil for none.
     public var followUpCost: Double?
     public var fallbackFamilies: [ModelFamily]
+}
+
+/// A session's part of this week's limit, worked out from its share of the
+/// last 7 days' usage.
+public struct WeekShare: Equatable, Sendable {
+    /// Its part of the limit (0…1).
+    public var share: Double
+    /// The week's used percentage it's a share of.
+    public var used: Double
 }
 
 /// The assistant's own figures (the Usage window).

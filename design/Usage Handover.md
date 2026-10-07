@@ -25,7 +25,7 @@ Rule: tabs only hold session things, so project and folder usage lives in the le
    - In the project scope, an **Assistant** row follows (✦, its cost, and ↗ to the Usage window).
 
 ### States
-- **Reading transcripts:** a spinner line, "Reading transcripts… 4 of 7. Figures will rise." The figures show what has been read so far. *(Built: shown for the first read after launch, and for any later one with at least 4 files to read, so the 30 s top-ups don't flash it.)*
+- **Reading transcripts:** a spinner line, "Reading transcripts… 4 of 7. Figures will rise." The figures show what has been read so far. *(Built: shown for the first read after launch, and for any later one with at least 20 files to read, so the 30 s top-ups don’t flash it.)*
 - **Unreadable transcript:** an amber line, "1 session's transcript couldn't be read, so it isn't counted. The Activity Log (⌥⌘L) says why."
 - **No usage in range:** a dashed box, "No usage in this range." and "Sessions and assistant calls in this project show here as they run. Try a longer range."
 

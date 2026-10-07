@@ -244,6 +244,14 @@ public final class AppModel {
     @ObservationIgnored var usageScans = 0
     /// Transcripts already reported as unreadable in the Activity Log.
     @ObservationIgnored var reportedUnreadableTranscripts = Set<String>()
+    /// Transcripts reported as having lines that couldn't be read, and how many.
+    @ObservationIgnored var reportedUnreadableLines: [String: Int] = [:]
+    /// Projects whose assistant calls couldn't be read (tried again each scan).
+    @ObservationIgnored var unreadableAssistantCosts = Set<UUID>()
+    /// The saved ledger couldn't be read or moved aside, so it isn't overwritten.
+    @ObservationIgnored var isUsageLedgerReadOnly = false
+    /// Saves the ledger one at a time, in order.
+    @ObservationIgnored let usageSaveQueue = DispatchQueue(label: "Claudio.usage-save", qos: .utility)
     /// The assistant's priced calls, per project, from its audit log.
     @ObservationIgnored var assistantJobCosts: [UUID: [AssistantJobCost]] = [:]
     /// Every hour of every conversation, and every assistant call, priced:
@@ -1135,7 +1143,11 @@ public final class AppModel {
             // the conversations `/clear` left behind.
             let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
             for claudeID in state.workspace.ownedConversations(of: session) {
-                enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
+                enqueue {
+                    // What it used still counts once its transcripts have gone.
+                    await self.recordUsageBeforeDeleting(session, conversationID: claudeID, projectPath: projectPath)
+                    self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath)
+                }
             }
         }
         log.append(.info, scope == .everywhere ? "Deleted “\(session.name)” from Claude Code and Claudio"
@@ -1183,8 +1195,6 @@ public final class AppModel {
     }
 
     private func removeHistory(of session: Session, claudeSessionID: String, projectPath: String) {
-        // What it used still counts once its transcripts have gone.
-        recordUsageBeforeDeleting(session, conversationID: claudeSessionID, projectPath: projectPath)
         let items = discovery.historyItems(projectPath: projectPath, workingDirectory: session.workingDirectory,
                                            claudeSessionID: claudeSessionID)
         for item in items {

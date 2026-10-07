@@ -46,7 +46,8 @@ public struct TokenCounts: Codable, Equatable, Sendable {
                     cacheWrite1h: lhs.cacheWrite1h + rhs.cacheWrite1h, cacheRead: lhs.cacheRead + rhs.cacheRead)
     }
 
-    public static func - (lhs: TokenCounts, rhs: TokenCounts) -> TokenCounts {
+    /// Only for replacing a reply's earlier line with its later one.
+    static func - (lhs: TokenCounts, rhs: TokenCounts) -> TokenCounts {
         TokenCounts(input: lhs.input - rhs.input, output: lhs.output - rhs.output, cacheWrite5m: lhs.cacheWrite5m - rhs.cacheWrite5m,
                     cacheWrite1h: lhs.cacheWrite1h - rhs.cacheWrite1h, cacheRead: lhs.cacheRead - rhs.cacheRead)
     }
@@ -109,6 +110,10 @@ public struct TranscriptProgress: Codable, Equatable, Sendable {
     public var size = 0
     /// Prompts sent (not tool results), in a session's own transcript.
     public var turns = 0
+    /// Lines that looked like replies (an assistant line with a usage) but
+    /// couldn't be read, so their tokens aren't counted. A change in Claude
+    /// Code's transcripts would show here rather than as lower totals.
+    public var unreadableLines = 0
     public var buckets: [UsageBucket] = []
     /// Message ids counted from this file.
     public var messageIDs: Set<String> = []
@@ -157,7 +162,14 @@ public struct TranscriptProgress: Codable, Equatable, Sendable {
                 }
                 continue
             }
-            guard let message = TranscriptProgress.reply(in: line) else { continue }
+            let message: CountedMessage
+            switch TranscriptProgress.reply(in: line) {
+            case .notReply: continue
+            case .unreadable:
+                unreadableLines += 1
+                continue
+            case .reply(let reply): message = reply
+            }
             if let last, last.id == message.id {
                 // A later line of the same reply: it replaces the earlier one.
                 add(TokenCounts() - last.tokens, hour: last.hour, model: last.model)
@@ -206,18 +218,28 @@ public struct TranscriptProgress: Codable, Equatable, Sendable {
 
     /// An assistant reply's id, hour, model and usage. Lines are checked for
     /// the markers before they're decoded, since most lines aren't replies.
-    static func reply(in line: Data) -> CountedMessage? {
-        guard line.range(of: usageMarker) != nil, line.range(of: assistantMarker) != nil,
-              let record = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
-              record["type"] as? String == "assistant",
-              let message = record["message"] as? [String: Any],
-              let id = message["id"] as? String,
+    enum ParsedLine {
+        case notReply
+        case reply(CountedMessage)
+        /// It has the markers of a reply but not what a reply has.
+        case unreadable
+    }
+
+    static func reply(in line: Data) -> ParsedLine {
+        guard line.range(of: usageMarker) != nil, line.range(of: assistantMarker) != nil else { return .notReply }
+        guard let record = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return .unreadable }
+        // `"assistant"` and `"usage"` in a prompt or a tool result aren't replies.
+        guard record["type"] as? String == "assistant" else { return .notReply }
+        guard let message = record["message"] as? [String: Any] else { return .unreadable }
+        // API errors are written as replies from "<synthetic>", with no tokens.
+        if let model = message["model"] as? String, model.hasPrefix("<") { return .notReply }
+        guard let id = message["id"] as? String,
               let usage = message["usage"] as? [String: Any],
-              let model = message["model"] as? String, !model.hasPrefix("<"),
+              let model = message["model"] as? String,
               let stamp = record["timestamp"] as? String, let date = parseDate(stamp)
-        else { return nil }
+        else { return .unreadable }
         let fast = usage["speed"] as? String == "fast"
-        return CountedMessage(id: id, hour: UsageBucket.hour(of: date), model: fast ? model + UsageBucket.fastSuffix : model,
-                              tokens: TokenCounts(usage: usage))
+        return .reply(CountedMessage(id: id, hour: UsageBucket.hour(of: date), model: fast ? model + UsageBucket.fastSuffix : model,
+                                     tokens: TokenCounts(usage: usage)))
     }
 }

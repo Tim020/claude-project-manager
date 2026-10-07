@@ -79,13 +79,16 @@ public enum UsagePricing {
     ].sorted { $0.prefix.count > $1.prefix.count }
 
     /// A model not in the table is priced as its family's commonest rate.
-    /// Ones that aren't listed are most likely older models.
-    static let familyRate: [ModelFamily: TokenPrice] = [
-        .fable: TokenPrice(input: 10, output: 50, cacheRead: 1),
-        .opus: TokenPrice(input: 5, output: 25, cacheRead: 0.5),
-        .sonnet: TokenPrice(input: 3, output: 15, cacheRead: 0.3),
-        .haiku: TokenPrice(input: 1, output: 5, cacheRead: 0.1),
-    ]
+    /// Ones that aren't listed are most likely older models. A switch, so a
+    /// new family can't be left without a rate.
+    static func familyRate(_ family: ModelFamily) -> TokenPrice {
+        switch family {
+        case .fable: return TokenPrice(input: 10, output: 50, cacheRead: 1)
+        case .opus: return TokenPrice(input: 5, output: 25, cacheRead: 0.5)
+        case .sonnet: return TokenPrice(input: 3, output: 15, cacheRead: 0.3)
+        case .haiku: return TokenPrice(input: 1, output: 5, cacheRead: 0.1)
+        }
+    }
 
     /// Fast mode (`usage.speed: "fast"`) costs twice the standard rate on
     /// every model that has it (Opus 5.5: $8 / $40; Opus 5: $10 / $50).
@@ -97,7 +100,7 @@ public enum UsagePricing {
             return Rate(price: row.price, family: row.family, isFallback: false)
         }
         let family = ModelFamily.of(id) ?? .sonnet
-        return Rate(price: familyRate[family]!, family: family, isFallback: true)
+        return Rate(price: familyRate(family), family: family, isFallback: true)
     }
 
     /// What a model's tokens cost at API rates, in USD.

@@ -83,9 +83,10 @@ extension UsageLedger {
 extension AppModel {
     /// How often transcripts are read for usage.
     public static let usageScanInterval: TimeInterval = 30
-    /// A scan reading at least this many files shows its progress; the
-    /// first one after launch always does.
-    nonisolated static let usageProgressThreshold = 4
+    /// The first scan after launch shows its progress; a later one only
+    /// when it reads at least this many files, so the 30 s top-ups don't
+    /// flash it.
+    nonisolated static let usageProgressThreshold = 20
 
     // MARK: - Reading
 
@@ -93,22 +94,40 @@ extension AppModel {
         do {
             usageLedger = try usageStore.load() ?? UsageLedger()
         } catch {
-            log.append(.error, "Couldn't read the saved usage figures",
-                       detail: AppModel.describe(error) + "\nThey'll be read again from the transcripts.")
+            // It may hold deleted sessions' only totals, so it's moved aside
+            // rather than overwritten; if it can't be, nothing is saved.
+            do {
+                let moved = try usageStore.setAside(now: now())
+                log.append(.error, "Couldn't read the saved usage figures, so they're read again from the transcripts",
+                           detail: AppModel.describe(error) + (moved.map { "\nThe file was kept as \(PathDisplay.tilde($0.path, home: home))." } ?? ""))
+            } catch let moveError {
+                isUsageLedgerReadOnly = true
+                log.append(.error, "Couldn't read the saved usage figures, or move them aside",
+                           detail: AppModel.describe(error) + "\n" + AppModel.describe(moveError)
+                               + "\nThey're left as they are, and new figures aren't saved until Claudio can read them.")
+            }
         }
-        loadAssistantJobCosts()
+        loadAssistantJobCosts(projects: state.workspace.projects.map(\.id))
         rebuildUsageEntries()
     }
 
-    /// The assistant's priced calls, from each project's audit log.
-    func loadAssistantJobCosts() {
-        var costs: [UUID: [AssistantJobCost]] = [:]
-        for project in state.workspace.projects {
-            guard let read = try? assistantStore.readAudit(projectID: project.id, limit: Int.max) else { continue }
-            let jobs = read.entries.compactMap(AssistantJobCost.init)
-            if !jobs.isEmpty { costs[project.id] = jobs }
+    /// The assistant's priced calls, from each project's audit log. A log
+    /// that can't be read is said once, and tried again with each scan.
+    func loadAssistantJobCosts(projects: [UUID]) {
+        for projectID in projects {
+            let name = state.workspace.project(projectID)?.name ?? "a project"
+            do {
+                let read = try assistantStore.readAudit(projectID: projectID, limit: Int.max)
+                let jobs = read.entries.compactMap(AssistantJobCost.init)
+                assistantJobCosts[projectID] = jobs.isEmpty ? nil : jobs
+                unreadableAssistantCosts.remove(projectID)
+            } catch {
+                if unreadableAssistantCosts.insert(projectID).inserted {
+                    log.append(.error, "Couldn't read the assistant's calls for \(name), so their cost isn't counted",
+                               detail: AppModel.describe(error))
+                }
+            }
         }
-        assistantJobCosts = costs
     }
 
     /// A call that's just run (from `recordJob`).
@@ -153,6 +172,10 @@ extension AppModel {
         guard !isScanningUsage else { return }
         isScanningUsage = true
         defer { isScanningUsage = false }
+        if !unreadableAssistantCosts.isEmpty {
+            loadAssistantJobCosts(projects: Array(unreadableAssistantCosts))
+            rebuildUsageEntries()
+        }
         let requests = usageScanRequests()
         let before = usageLedger
         let discovery = self.discovery
@@ -178,6 +201,12 @@ extension AppModel {
             log.append(.error, "Couldn't read a transcript in \(name), so its usage isn't counted",
                        detail: PathDisplay.tilde(path, home: home))
         }
+        for (path, count) in result.unreadableLines where reportedUnreadableLines[path] != count {
+            reportedUnreadableLines[path] = count
+            log.append(.error, "\(count) line\(count == 1 ? "" : "s") of a transcript looked like a reply but couldn't be read, so \(count == 1 ? "its" : "their") tokens aren't counted",
+                       detail: PathDisplay.tilde(path, home: home)
+                           + "\nClaude Code may have changed how it writes transcripts.")
+        }
         if status != usageScan { usageScan = status }
         guard scanned != before else { return }
         usageLedger.merge(scanned, since: before)
@@ -191,29 +220,44 @@ extension AppModel {
         if usageScan.reading != reading { usageScan.reading = reading }
     }
 
+    /// Saves off the main actor, one save at a time in the order asked
+    /// for, so an older ledger never lands on disk after a newer one.
     private func saveUsageLedger() {
+        guard !isUsageLedgerReadOnly else { return }
         let ledger = usageLedger
         let store = usageStore
         let log = self.log
-        Task.detached(priority: .utility) {
+        usageSaveQueue.async {
             do {
                 try store.save(ledger)
             } catch {
-                await MainActor.run { log.append(.error, "Couldn't save the usage figures", detail: AppModel.describe(error)) }
+                Task { @MainActor in log.append(.error, "Couldn't save the usage figures", detail: AppModel.describe(error)) }
             }
         }
     }
 
-    /// Reads the rest of a conversation's transcripts before they're
-    /// deleted, so what it used still counts.
-    func recordUsageBeforeDeleting(_ session: Session, conversationID: String, projectPath: String) {
+    /// Waits for the saves asked for so far (for tests).
+    func waitForUsageSaves() async {
+        await withCheckedContinuation { continuation in usageSaveQueue.async { continuation.resume() } }
+    }
+
+    /// Reads the rest of a conversation's transcripts (off the main actor)
+    /// before they're deleted, so what it used still counts.
+    func recordUsageBeforeDeleting(_ session: Session, conversationID: String, projectPath: String) async {
         let folderID = state.workspace.folderID(containing: session.id)
             ?? state.workspace.removedSessions.first { $0.id == session.id }?.folderID
         let request = UsageScanRequest(conversationID: conversationID, projectID: session.projectID, projectPath: projectPath,
                                        workingDirectory: session.workingDirectory, sessionID: session.id,
                                        sessionName: session.name, folderID: folderID)
-        let targets = AppModel.targets(for: [request], discovery: discovery)
-        _ = UsageScanner.scan(targets, into: &usageLedger)
+        let before = usageLedger
+        let discovery = self.discovery
+        let scanned = await Task.detached(priority: .userInitiated) { () -> UsageLedger in
+            var ledger = before
+            _ = UsageScanner.scan(AppModel.targets(for: [request], discovery: discovery), into: &ledger)
+            return ledger
+        }.value
+        guard scanned != before else { return }
+        usageLedger.merge(scanned, since: before)
         saveUsageLedger()
         rebuildUsageEntries()
     }
@@ -453,7 +497,7 @@ extension AppModel {
         case .group(let target): title = workspace.name(of: target).uppercased()
         case .all: title = "ALL PROJECTS"
         }
-        return UsageReport(period: period, title: title, cost: total, tokens: entries.reduce(0) { $0 + $1.tokens.total },
+        return UsageReport(period: period, title: title, tokens: entries.reduce(0) { $0 + $1.tokens.total },
                            shareOfAll: scope == .all || allCost <= 0 ? nil : total / allCost,
                            sessionsCost: sessionsCost, assistantCost: assistantCost, bars: bars,
                            byModel: AppModel.byModel(entries), rows: rows,
@@ -493,12 +537,12 @@ extension AppModel {
         let projects = Set(state.workspace.projects.map(\.id))
         let weekAll = usageEntries.filter { $0.date >= since && projects.contains($0.projectID) }.reduce(0) { $0 + $1.cost }
         let weekOwn = own.filter { $0.date >= since }.reduce(0) { $0 + $1.cost }
-        var weekShare: Double?
-        if let weekUsed, weekUsed > 0, weekAll > 0 { weekShare = weekOwn / weekAll * weekUsed / 100 }
+        var week: WeekShare?
+        if let weekUsed, weekUsed > 0, weekAll > 0 { week = WeekShare(share: weekOwn / weekAll * weekUsed / 100, used: weekUsed) }
 
         let followUpCost = followUps.reduce(0) { $0 + $1.cost }
         return SessionUsage(cost: own.reduce(0) { $0 + $1.cost }, tokens: own.reduce(TokenCounts()) { $0 + $1.tokens },
-                            byModel: AppModel.byModel(own), weekShare: weekShare, weekUsed: weekShare == nil ? nil : weekUsed,
+                            byModel: AppModel.byModel(own), week: week,
                             turns: turns, mainModel: mainModel, followUpCost: followUps.isEmpty ? nil : followUpCost,
                             fallbackFamilies: AppModel.fallbackFamilies(own))
     }
