@@ -77,7 +77,7 @@ public enum LessonSignature {
         for (pattern, replacement) in [(#"(~|\.{0,2})/[^\s:'"]+"#, "<path>"), (#"\b[0-9a-f]{7,}\b"#, "#"), (#"\d+"#, "#"), (#"\s+"#, " ")] {
             normalised = normalised.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
-        return String(normalised.trimmingCharacters(in: .whitespaces).prefix(80))
+        return String(normalised.trimmingCharacters(in: .whitespaces).prefix(80)).trimmingCharacters(in: .whitespaces)
     }
 
     static let fillerWords: Set<String> = ["no", "nope", "don't", "dont", "do", "not", "stop", "wrong", "that's", "thats", "actually",

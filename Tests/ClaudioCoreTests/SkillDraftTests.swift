@@ -264,12 +264,15 @@ final class SkillDraftTests: XCTestCase {
         guard case .success(let reply) = AssistantReplyParser.parse(result, timeout: 120) else { return XCTFail("expected a reply") }
         let correction = "No, don't run swift test on this Mac for the Linux checks, remember to use ./scripts/test-linux.sh next time"
         let evidence = ["c1": SessionDigest.Evidence(ref: "c1", kind: .correction, text: correction),
-                        "f1": SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: "swift test", text: "boom")]
+                        "f1": SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: "swift test --filter ShellPanelTests",
+                                                     text: "Exit code 1\nerror: XCTestCase subclass marked @MainActor isn't discovered on Linux: 0 tests run")]
         let lessons = FollowUpJob.lessons(from: reply.output, evidence: evidence)
         XCTAssertEqual(lessons.count, 1)
+        XCTAssertEqual(lessons[0].evidence.map(\.ref), ["c1", "f1"], "the prompt asks for the failure as well as the correction")
         XCTAssertTrue(lessons[0].remember, "it cited the correction that says remember")
-        XCTAssertEqual(lessons[0].signature, "correction run swift test on mac for")
-        XCTAssertEqual(reply.costUSD ?? 0, 0.010222, accuracy: 0.000001)
+        XCTAssertEqual(lessons[0].signature, "bash swift test | error: xctestcase subclass marked @mainactor isn't discovered on linux: # tests",
+                       "grouped by the failure, which repeats, not by the correction's words")
+        XCTAssertEqual(reply.costUSD ?? 0, 0.0079748, accuracy: 0.0000001)
     }
 
     func testARecordedDraftPassesTheChecks() throws {
