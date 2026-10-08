@@ -296,6 +296,7 @@ extension AppModel {
                                            projectID: projectID)
             // An Activity Log that's been opened shows it.
             if assistantLogRows[projectID] != nil { refreshAssistantLog(projectID: projectID) }
+            recordAssistantCost(job, at: now(), projectID: projectID)
         } catch {
             log.append(.error, "Couldn't record an assistant call", detail: AppModel.describe(error))
         }

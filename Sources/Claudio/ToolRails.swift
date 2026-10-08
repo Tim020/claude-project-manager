@@ -103,6 +103,8 @@ struct LeftRail: View {
                     model.toggleTool(.assistant)
                 }
             }
+            RailButton(systemName: "chart.bar", help: help("Usage", showing == .usage, "⌘4"),
+                       isActive: showing == .usage) { model.toggleTool(LeftTool.usage) }
             Spacer(minLength: 0)
             // The Shell's tool window runs under the panes, as in PyCharm.
             let open = model.shellPanel.isOpen
@@ -143,6 +145,8 @@ struct LeftToolPanel: View {
                 .frame(width: width)
             case .assistant:
                 AssistantTool(width: width)
+            case .usage:
+                UsageTool(width: width)
             }
         }
         .frame(maxHeight: .infinity)
@@ -165,6 +169,8 @@ struct RightRail: View {
                        isActive: showing == .changes, badge: files) { model.toggleTool(.changes) }
             RailButton(systemName: "arrow.triangle.pull", help: help("Pull Request", showing == .pullRequest, "⌥⌘P"),
                        isActive: showing == .pullRequest, badge: pullRequests > 1 ? pullRequests : 0) { model.toggleTool(.pullRequest) }
+            RailButton(systemName: "chart.bar", help: help("Usage", showing == .usage, "⌥⌘U"),
+                       isActive: showing == .usage) { model.toggleTool(RightTool.usage) }
             Spacer(minLength: 0)
         }
         .frame(width: ToolRail.width)
@@ -184,7 +190,7 @@ struct RightToolPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ToolHeader(title: tool == .changes ? "Changes" : "Pull Request") {
+            ToolHeader(title: tool.title) {
                 IconButton(systemName: "minus", help: "Hide", size: 13) { model.toggleTool(tool) }
             }
             // Only shown while a session is selected (`showsSessionTools`).
@@ -192,12 +198,23 @@ struct RightToolPanel: View {
                 switch tool {
                 case .changes: ChangesTool(session: session)
                 case .pullRequest: SessionPullRequestTool(session: session)
+                case .usage: SessionUsageTool(session: session)
                 }
             }
         }
         .frame(width: ToolRail.rightPanelWidth)
         .frame(maxHeight: .infinity)
         .background(DS.sidebar)
+    }
+}
+
+extension RightTool {
+    var title: String {
+        switch self {
+        case .changes: return "Changes"
+        case .pullRequest: return "Pull Request"
+        case .usage: return "Usage"
+        }
     }
 }
 
@@ -293,8 +310,12 @@ struct StatusBar: View {
             .buttonStyle(.plain)
             .help(isStale ? "Plan usage (couldn't update)" : "Plan usage")
             .popover(isPresented: $showingUsage, arrowEdge: .top) {
-                UsageSection(usage: model.usage)
-                    .background(DS.input)
+                VStack(spacing: 0) {
+                    UsageSection(usage: model.usage)
+                    UsagePopoverFooter { showingUsage = false }
+                }
+                .environment(model)
+                .background(DS.input)
             }
         }
     }

@@ -568,7 +568,7 @@ public struct Workspace: Codable, Equatable, Sendable {
 
     // MARK: - Helpers
 
-    private func folderID(containing sessionID: UUID) -> UUID? {
+    func folderID(containing sessionID: UUID) -> UUID? {
         for project in projects {
             if let folder = project.folders.first(where: { $0.sessionIDs.contains(sessionID) }) { return folder.id }
         }
