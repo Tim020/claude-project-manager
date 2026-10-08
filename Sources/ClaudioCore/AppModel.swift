@@ -448,7 +448,7 @@ public final class AppModel {
     public var breadcrumb: Breadcrumb? {
         guard let session = selectedSession, let group = selectedGroup else { return nil }
         return Breadcrumb(project: state.workspace.project(session.projectID)?.name ?? "",
-                          folder: state.workspace.name(of: group),
+                          folder: state.workspace.path(of: group),
                           session: session.name)
     }
 
@@ -759,11 +759,14 @@ public final class AppModel {
 
     // MARK: - Folders
 
-    /// Creates a folder (optionally holding a dropped session) and starts inline rename.
+    /// Creates a folder (nested inside `parentID`, or at the project's top
+    /// level), optionally holding a dropped session, and starts inline rename.
     @discardableResult
-    public func createFolder(in projectID: UUID, containing sessionID: UUID? = nil) -> UUID? {
-        guard let id = attempt({ try state.workspace.createFolder(in: projectID, named: "", containing: sessionID) }) else { return nil }
+    public func createFolder(in projectID: UUID, containing sessionID: UUID? = nil, parentID: UUID? = nil) -> UUID? {
+        guard let id = attempt({ try state.workspace.createFolder(in: projectID, named: "", containing: sessionID, parentID: parentID) })
+        else { return nil }
         if state.workspace.project(projectID)?.isCollapsed == true { state.workspace.toggleCollapsed(projectID) }
+        if let parentID, state.workspace.isCollapsed(.folder(parentID)) { state.workspace.toggleCollapsed(.folder(parentID)) }
         renamingFolderID = id
         save()
         return id
@@ -785,8 +788,15 @@ public final class AppModel {
         renamingFolderID = nil
     }
 
-    public func deleteFolder(_ id: UUID) {
-        state.workspace.deleteFolder(id)
+    /// Whether a folder holds anything of its own: direct sessions, or
+    /// subfolders nested anywhere underneath it. Used to decide whether
+    /// deleting it needs to ask what happens to its contents.
+    public func folderHasContents(_ id: UUID) -> Bool {
+        !(state.workspace.folder(id)?.sessionIDs.isEmpty ?? true) || state.workspace.subtreeFolderIDs(of: id).count > 1
+    }
+
+    public func deleteFolder(_ id: UUID, mode: Workspace.FolderDeletionMode = .promoteChildren) {
+        state.workspace.deleteFolder(id, mode: mode)
         save()
     }
 
@@ -802,15 +812,24 @@ public final class AppModel {
         case session(UUID)
     }
 
+    /// Where a dragged folder lands relative to the folder it's dropped on,
+    /// from the drop's position within that row: its top or bottom edge
+    /// reorders as a sibling before/after it, the rest of the row nests
+    /// inside it. Only meaningful for a folder dropped on a folder; every
+    /// other combination ignores it.
+    public enum SidebarDropEdge: Sendable {
+        case before, into, after
+    }
+
     /// Handles sidebar drag and drop (payloads as `SidebarDragItem`s). A
     /// session goes into the group, or just above the session, it's dropped on
-    /// (Unfiled for a project header). A folder goes just above the folder
-    /// it's dropped on (or the folder of the session it's dropped on), or last
-    /// when dropped on a project header or Unfiled (which always comes last).
-    /// A project dropped anywhere in another takes that project's place.
-    /// Returns whether anything moved.
+    /// (Unfiled for a project header). A folder dropped on another folder is
+    /// placed by `edge`; dropped on a project header, Unfiled, or the folder
+    /// of a session it's dropped on, it goes last/just above that folder
+    /// instead. A project dropped anywhere in another takes that project's
+    /// place. Returns whether anything moved.
     @discardableResult
-    public func drop(_ payloads: [String], on target: SidebarDropTarget) -> Bool {
+    public func drop(_ payloads: [String], on target: SidebarDropTarget, edge: SidebarDropEdge = .into) -> Bool {
         let before = state.workspace
         for item in payloads.compactMap(SidebarDragItem.init(payload:)) {
             switch (item, target) {
@@ -824,8 +843,13 @@ public final class AppModel {
             case (.folder(let id), .project(let projectID)), (.folder(let id), .group(.unfiled(let projectID))):
                 attempt { try state.workspace.moveFolder(id, before: nil, inProject: projectID) }
             case (.folder(let id), .group(.folder(let targetID))):
+                guard id != targetID else { continue }
                 guard let projectID = state.workspace.projectID(containingFolder: targetID) else { continue }
-                attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+                switch edge {
+                case .into: attempt { try state.workspace.moveFolder(id, intoFolder: targetID) }
+                case .before: attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+                case .after: attempt { try state.workspace.moveFolder(id, after: targetID, inProject: projectID) }
+                }
             case (.folder(let id), .session(let sessionID)):
                 // Session rows fill an open folder, so go by the session's group.
                 guard let session = state.workspace.session(sessionID) else { continue }
@@ -855,7 +879,7 @@ public final class AppModel {
     }
 
     public func archiveCompleted(in group: SessionGroup) {
-        let archived = state.workspace.sessions(in: group).filter { $0.status == .completed }.map(\.id)
+        let archived = state.workspace.sessionsInSubtree(group).filter { $0.status == .completed }.map(\.id)
         state.workspace.archiveCompleted(in: group)
         // Archived sessions leave the panes.
         archived.forEach { state.workspace.closeTab($0) }
@@ -2104,6 +2128,7 @@ public final class AppModel {
             case .folderNotFound: return "That folder no longer exists."
             case .sessionNotFound: return "That session no longer exists."
             case .folderNotInProject: return "That folder belongs to a different project."
+            case .cyclicFolderMove: return "A folder can't be moved into itself or one of its own subfolders."
             }
         }
         return String(describing: error)

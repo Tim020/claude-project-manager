@@ -415,7 +415,7 @@ private struct TabItem: View {
             }
             if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
                 // Tabs come from several folders: say where this one lives.
-                Text(model.workspace.name(of: group))
+                Text(model.workspace.path(of: group))
                     .font(DS.font(11, italic: true))
                     .foregroundStyle(DS.dim)
                     .lineLimit(1)

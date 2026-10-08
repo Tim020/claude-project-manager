@@ -80,4 +80,56 @@ final class SidebarTests: XCTestCase {
         XCTAssertTrue(tree[1].hasAwaitingInput)
         XCTAssertEqual(tree[1].initials, "DW")
     }
+
+    // MARK: Nested folders
+
+    func testNestedFoldersFlattenInPreOrderWithDepth() throws {
+        let child = try ws.createFolder(in: ds, named: "Child", parentID: storageFolder)
+        let grandchild = try ws.createFolder(in: ds, named: "Grandchild", parentID: child)
+        let tree = Sidebar.build(ws, filter: "", home: home)
+        let names = tree[0].folders.map(\.name)
+        XCTAssertEqual(names, ["Storage fix — PR #1427", "Child", "Grandchild", "Mic planner perf", "Unfiled"])
+        XCTAssertEqual(tree[0].folders.map(\.depth), [0, 1, 2, 0, 0])
+        _ = grandchild
+    }
+
+    func testCollapsedFolderHidesItsSubfoldersUnlessFiltering() throws {
+        let child = try ws.createFolder(in: ds, named: "Child", parentID: storageFolder)
+        try ws.addSession(Session(projectID: ds, name: "nested session", workingDirectory: "/"), toFolder: child)
+        ws.toggleCollapsed(.folder(storageFolder))
+
+        let collapsed = Sidebar.build(ws, filter: "", home: home)
+        XCTAssertFalse(collapsed[0].folders.contains { $0.name == "Child" }, "collapsed parent hides its subtree")
+
+        let filtered = Sidebar.build(ws, filter: "nested session", home: home)
+        XCTAssertTrue(filtered[0].folders.contains { $0.name == "Child" }, "filtering overrides collapse")
+    }
+
+    func testFolderPillAndCountRollUpTheWholeSubtree() throws {
+        let child = try ws.createFolder(in: ds, named: "Child", parentID: storageFolder)
+        try ws.addSession(Session(projectID: ds, name: "nested working", workingDirectory: "/", status: .working), toFolder: child)
+        let tree = Sidebar.build(ws, filter: "", home: home)
+        let parent = try XCTUnwrap(tree[0].folders.first { $0.name == "Storage fix — PR #1427" })
+        // Its own 2 direct sessions plus the child's 1 nested one.
+        XCTAssertEqual(parent.sessionCount, 3)
+        // One of its direct sessions is already Working (set up above); the
+        // nested one adds a second.
+        XCTAssertEqual(parent.statusCounts.working, 2)
+        XCTAssertEqual(parent.sessions.count, 2, "its row itself still lists only its direct sessions")
+    }
+
+    func testProjectHeaderCountDoesNotDoubleCountNestedSubtrees() throws {
+        let child = try ws.createFolder(in: ds, named: "Child", parentID: storageFolder)
+        try ws.addSession(Session(projectID: ds, name: "nested", workingDirectory: "/"), toFolder: child)
+        let tree = Sidebar.build(ws, filter: "", home: home)
+        // 2 in storageFolder + 1 nested + 1 in Unfiled, each counted once.
+        XCTAssertEqual(tree[0].statusCounts.total, 4)
+    }
+
+    func testFilterMatchingDescendantFolderNameShowsItsAncestors() throws {
+        let child = try ws.createFolder(in: ds, named: "Deeply Nested Match", parentID: emptyFolder)
+        let tree = Sidebar.build(ws, filter: "deeply nested", home: home)
+        XCTAssertEqual(tree[0].folders.map(\.name), ["Mic planner perf", "Deeply Nested Match"])
+        _ = child
+    }
 }

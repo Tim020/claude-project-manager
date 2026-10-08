@@ -145,6 +145,163 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["B", "A", "C"])
     }
 
+    // MARK: Nested folders
+
+    func testCreateSubfolderNestsAndScopesUniqueNamesToSiblings() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "", parentID: parent)
+        XCTAssertEqual(ws.folder(child)?.parentID, parent)
+        XCTAssertEqual(ws.folder(child)?.name, "New Folder", "unique among the project, but no sibling yet")
+        let sibling = try ws.createFolder(in: p, named: "", parentID: parent)
+        XCTAssertEqual(ws.folder(sibling)?.name, "New Folder 2")
+        // A top-level folder can reuse "New Folder" since it's a different sibling group.
+        let topLevel = try ws.createFolder(in: p, named: "")
+        XCTAssertEqual(ws.folder(topLevel)?.name, "New Folder")
+    }
+
+    func testCreateSubfolderInAnotherProjectsFolderThrows() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let parent = try ws.createFolder(in: p1, named: "Parent")
+        XCTAssertThrowsError(try ws.createFolder(in: p2, named: "Child", parentID: parent)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .folderNotInProject)
+        }
+    }
+
+    func testMoveFolderIntoFolderNestsAsLastChild() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let other = try ws.createFolder(in: p, named: "Other")
+        try ws.moveFolder(other, intoFolder: parent)
+        XCTAssertEqual(ws.folder(other)?.parentID, parent)
+        XCTAssertEqual(ws.foldersInDisplayOrder(projectID: p).map(\.folder.name), ["Parent", "Other"])
+        XCTAssertEqual(ws.foldersInDisplayOrder(projectID: p).map(\.depth), [0, 1])
+    }
+
+    func testMoveFolderIntoItselfOrItsOwnDescendantThrows() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        XCTAssertThrowsError(try ws.moveFolder(parent, intoFolder: child)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .cyclicFolderMove)
+        }
+    }
+
+    func testMoveFolderAfterPutsItRightAfterItsNewSibling() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let a = try ws.createFolder(in: p, named: "A")
+        let b = try ws.createFolder(in: p, named: "B")
+        let c = try ws.createFolder(in: p, named: "C")
+        try ws.moveFolder(c, after: a, inProject: p)
+        XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["A", "C", "B"])
+    }
+
+    func testMoveFolderIntoCarriesItsWholeSubtreeAndSessionsToAnotherProject() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let parent = try ws.createFolder(in: p1, named: "Parent")
+        let child = try ws.createFolder(in: p1, named: "Child", parentID: parent)
+        let destination = try ws.createFolder(in: p2, named: "Destination")
+        let s = makeSession("s", project: p1)
+        try ws.addSession(s, toFolder: child)
+        try ws.moveFolder(parent, intoFolder: destination)
+        XCTAssertEqual(ws.projectID(containingFolder: parent), p2)
+        XCTAssertEqual(ws.projectID(containingFolder: child), p2)
+        XCTAssertEqual(ws.folder(parent)?.parentID, destination)
+        XCTAssertEqual(ws.folder(child)?.parentID, parent, "its own nesting under parent is unaffected")
+        XCTAssertEqual(ws.session(s.id)?.projectID, p2)
+        XCTAssertTrue(ws.project(p1)!.folders.isEmpty)
+    }
+
+    func testDeleteFolderPromotesChildrenToItsParent() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let grandparent = try ws.createFolder(in: p, named: "Grandparent")
+        let parent = try ws.createFolder(in: p, named: "Parent", parentID: grandparent)
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let direct = makeSession("direct", project: p)
+        try ws.addSession(direct, toFolder: parent)
+        ws.deleteFolder(parent)
+        XCTAssertNil(ws.folder(parent))
+        XCTAssertEqual(ws.folder(child)?.parentID, grandparent, "promoted up one level")
+        XCTAssertEqual(ws.group(of: direct.id), .folder(grandparent), "its direct sessions move up too")
+    }
+
+    func testDeleteTopLevelFolderPromotesChildrenToTopLevelAndSessionsToUnfiled() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let s = makeSession("s", project: p)
+        try ws.addSession(s, toFolder: parent)
+        ws.deleteFolder(parent)
+        XCTAssertNil(ws.folder(child)?.parentID)
+        XCTAssertEqual(ws.group(of: s.id), .unfiled(projectID: p))
+    }
+
+    func testDeleteFolderFlattenToUnfiledRemovesWholeSubtree() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let direct = makeSession("direct", project: p)
+        let nested = makeSession("nested", project: p)
+        try ws.addSession(direct, toFolder: parent)
+        try ws.addSession(nested, toFolder: child)
+        ws.deleteFolder(parent, mode: .flattenToUnfiled)
+        XCTAssertNil(ws.folder(parent))
+        XCTAssertNil(ws.folder(child))
+        XCTAssertEqual(ws.group(of: direct.id), .unfiled(projectID: p))
+        XCTAssertEqual(ws.group(of: nested.id), .unfiled(projectID: p))
+    }
+
+    func testSubtreeFolderIDsAndSessionsInSubtreeCoverEveryDepth() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let grandparent = try ws.createFolder(in: p, named: "Grandparent")
+        let parent = try ws.createFolder(in: p, named: "Parent", parentID: grandparent)
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let direct = makeSession("direct", project: p)
+        let nested = makeSession("nested", project: p)
+        try ws.addSession(direct, toFolder: grandparent)
+        try ws.addSession(nested, toFolder: child)
+        XCTAssertEqual(ws.subtreeFolderIDs(of: grandparent), [grandparent, parent, child])
+        XCTAssertEqual(Set(ws.sessionsInSubtree(.folder(grandparent)).map(\.name)), ["direct", "nested"])
+        XCTAssertEqual(ws.sessionsInSubtree(.folder(child)).map(\.name), ["nested"])
+        XCTAssertTrue(ws.isFolder(child, orDescendantOf: grandparent))
+        XCTAssertFalse(ws.isFolder(grandparent, orDescendantOf: child))
+    }
+
+    func testPathJoinsAncestorNamesOutermostFirst() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Backend")
+        let child = try ws.createFolder(in: p, named: "Auth", parentID: parent)
+        XCTAssertEqual(ws.path(of: .folder(child)), "Backend › Auth")
+        XCTAssertEqual(ws.path(of: .folder(parent)), "Backend")
+        XCTAssertEqual(ws.path(of: .unfiled(projectID: p)), "Unfiled")
+    }
+
+    func testCorruptedParentIDsAreSanitizedOnDecode() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let a = try ws.createFolder(in: p, named: "A")
+        let b = try ws.createFolder(in: p, named: "B", parentID: a)
+        // Form a cycle by hand, as a corrupted state.json might, then round-trip.
+        ws.setParentIDForTesting(a, to: b)
+        let data = try JSONEncoder().encode(ws)
+        let decoded = try JSONDecoder().decode(Workspace.self, from: data)
+        XCTAssertNil(decoded.folder(a)?.parentID, "the cycle is broken")
+        XCTAssertEqual(decoded.folder(b)?.parentID, a, "the rest of the (now acyclic) chain is kept")
+    }
+
     /// A project takes the target's place: after it going down, before it going up.
     func testMoveProjectOntoAnother() {
         var ws = Workspace()

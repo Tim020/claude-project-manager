@@ -152,22 +152,38 @@ final class NavigationModelTests: XCTestCase {
             let b = try XCTUnwrap(model.createFolder(in: p1))
             model.cancelRename()
 
-            // A folder on a folder goes just above it; on Unfiled, last.
+            // A folder dropped on another folder's row nests inside it by default.
             XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
-            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
-            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertEqual(model.workspace.folder(b)?.parentID, a)
             XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // Its top/bottom edge reorders it as a sibling instead of nesting it.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a)), edge: .before))
+            XCTAssertNil(model.workspace.folder(b)?.parentID)
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a)), edge: .after))
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // A folder can't nest into its own child, or drop onto itself.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))), "b back inside a")
+            XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .group(.folder(b))), "into its own child")
             XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .group(.folder(a))), "onto itself")
 
-            // A folder on another project's header moves there.
+            // On Unfiled, a folder always goes to the project's top level, last.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertNil(model.workspace.folder(b)?.parentID)
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // A folder on another project's header moves there, to its top level.
             XCTAssertTrue(model.drop([SidebarDragItem.folder(a).payload], on: .project(p2)))
             XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a])
 
-            // A folder on a folder in another project moves there, just above it.
+            // A folder dropped on a folder in another project moves there too, nesting inside it by default.
             let c = try XCTUnwrap(model.createFolder(in: p2))
             model.cancelRename()
             XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
-            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [b, a, c])
+            XCTAssertEqual(model.workspace.folder(b)?.parentID, a)
+            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a, c, b])
             XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [])
 
             // A project dropped anywhere in another takes its place.

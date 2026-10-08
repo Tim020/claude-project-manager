@@ -321,7 +321,7 @@ struct OverviewHeader: View {
             Image(systemName: isUnfiled ? "tray" : "folder")
                 .font(.system(size: 14))
                 .foregroundStyle(isUnfiled ? DS.dim : DS.blue)
-            Text(model.workspace.name(of: group))
+            Text(model.workspace.path(of: group))
                 .font(DS.font(14, .bold, italic: isUnfiled))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)

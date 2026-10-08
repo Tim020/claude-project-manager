@@ -212,7 +212,7 @@ public enum PullRequestOverview {
     /// then "No Session". Most recently updated first within each.
     public static func groups(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                               filter: PullRequestFilter, includeUnlinked: Bool) -> [PullRequestGroup] {
-        guard let project = workspace.project(projectID), let known else { return [] }
+        guard workspace.project(projectID) != nil, let known else { return [] }
         let repository = known.repository?.nameWithOwner
         var byGroup: [SessionGroup?: [PullRequestInfo]] = [:]
         for pullRequest in known.items.sortedByUpdate where filter.matches(pullRequest) {
@@ -220,12 +220,14 @@ public enum PullRequestOverview {
             if group == nil && !includeUnlinked { continue }
             byGroup[group, default: []].append(pullRequest)
         }
-        var order: [SessionGroup?] = project.folders.map { .folder($0.id) }
+        var order: [SessionGroup?] = workspace.foldersInDisplayOrder(projectID: projectID).map { .folder($0.folder.id) }
         order.append(.unfiled(projectID: projectID))
         order.append(nil)
         return order.compactMap { group in
             guard let items = byGroup[group], !items.isEmpty else { return nil }
-            return PullRequestGroup(group: group, name: group.map(workspace.name(of:)) ?? "No Session", pullRequests: items)
+            // A flat list of section headers, with no surrounding tree to show
+            // nesting, so a folder's full path disambiguates same-named ones.
+            return PullRequestGroup(group: group, name: group.map(workspace.path(of:)) ?? "No Session", pullRequests: items)
         }
     }
 
@@ -252,11 +254,17 @@ public enum PullRequestOverview {
     }
 
     /// The pull requests a folder's sessions opened (or reviewed, when no
-    /// session opened them), open ones first.
+    /// session opened them), open ones first. For a folder this covers its
+    /// whole subtree, not just sessions filed directly in it.
     public static func pullRequests(in group: SessionGroup, workspace: Workspace, known: ProjectPullRequests?) -> [PullRequestInfo] {
         guard let known, let projectID = workspace.projectID(of: group) else { return [] }
         let repository = known.repository?.nameWithOwner
-        let items = known.items.filter { self.group(of: $0, in: workspace, projectID: projectID, repository: repository) == group }
+        let subtreeIDs: Set<UUID>? = { if case .folder(let id) = group { return workspace.subtreeFolderIDs(of: id) }; return nil }()
+        let items = known.items.filter { pullRequest in
+            guard let prGroup = self.group(of: pullRequest, in: workspace, projectID: projectID, repository: repository) else { return false }
+            if let subtreeIDs, case .folder(let id) = prGroup { return subtreeIDs.contains(id) }
+            return prGroup == group
+        }
         return items.filter(\.isOpen).sortedByUpdate + items.filter { !$0.isOpen }.sortedByUpdate
     }
 

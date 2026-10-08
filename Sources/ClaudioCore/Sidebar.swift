@@ -6,12 +6,19 @@ public struct SidebarFolder: Identifiable, Equatable, Sendable {
     public var name: String
     public var isUnfiled: Bool
     public var isCollapsed: Bool
-    /// Sessions shown (empty when collapsed, unless filtering).
+    /// How deep it's nested: 0 for a top-level folder (or Unfiled), 1 for one
+    /// inside that, and so on. `SidebarProject.folders` is a flattened,
+    /// pre-order walk of the tree (a folder right after its parent), so the
+    /// view renders it with one flat `ForEach`, indenting by this.
+    public var depth: Int = 0
+    /// Its own direct sessions shown (empty when collapsed, unless filtering).
     public var sessions: [Session]
-    /// All visible sessions in the group, for the count badge.
+    /// Every session in its whole subtree the filters show, for the count
+    /// badge (a folder's count includes its subfolders', like a disk usage
+    /// view).
     public var sessionCount: Int
-    /// Sessions in each state that the filters show (collapsing doesn't
-    /// change it), for the folder's pills.
+    /// Subtree sessions in each state that the filters show (collapsing
+    /// doesn't change it), for the folder's pills.
     public var statusCounts = StatusCounts()
 }
 
@@ -81,6 +88,19 @@ public enum Sidebar {
         }
     }
 
+    /// A folder's build result: its (and its subtree's) flattened rows, plus
+    /// what its ancestor needs to decide its own visibility and pill.
+    private struct Built {
+        var rows: [SidebarFolder]
+        /// Whether this folder (or something nested inside it) matched, so an
+        /// ancestor that didn't match on its own still shows.
+        var matched: Bool
+        /// Every filtered session in its subtree, for the parent's own pill
+        /// and, at the top level, the project header's total (counted once
+        /// per session, since top-level subtrees never overlap).
+        var subtreeSessions: [Session]
+    }
+
     public static func build(_ workspace: Workspace, filter: String, status: SessionStatus? = nil,
                              activeSince: Date? = nil, alwaysShow: Set<UUID> = [], home: String) -> [SidebarProject] {
         let query = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -89,44 +109,79 @@ public enum Sidebar {
 
         func matches(_ text: String) -> Bool { text.lowercased().contains(query) }
 
+        /// Applies the recency/status/text filters to a folder's direct
+        /// sessions, same rules as before nesting existed: recency only
+        /// hides a folder that had sessions and lost them all; status and
+        /// text filtering hide a folder with none left, even if it started
+        /// with none. `nameMatches` already folds in every ancestor's name
+        /// (and the project's), so a match anywhere above skips text
+        /// filtering here too.
+        func filteredDirect(_ raw: [Session], nameMatches: Bool) -> (sessions: [Session], hiddenByFilter: Bool) {
+            var sessions = raw
+            if activeSince != nil && !sessions.isEmpty {
+                sessions = sessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
+                if sessions.isEmpty { return (sessions, true) }
+            }
+            if let status {
+                sessions = sessions.filter { $0.status == status }
+                if sessions.isEmpty { return (sessions, true) }
+            }
+            if textFiltering && !nameMatches {
+                sessions = sessions.filter { matches($0.name) || matches($0.summary) }
+                if sessions.isEmpty { return (sessions, true) }
+            }
+            return (sessions, false)
+        }
+
+        func buildFolder(_ folder: Folder, in project: Project, depth: Int, ancestorMatches: Bool) -> Built {
+            let nameMatches = ancestorMatches || (textFiltering && matches(folder.name))
+            let children = project.folders.filter { $0.parentID == folder.id }
+            let builtChildren = children.map { buildFolder($0, in: project, depth: depth + 1, ancestorMatches: nameMatches) }
+            let childRows = builtChildren.flatMap(\.rows)
+            let childSubtreeSessions = builtChildren.flatMap(\.subtreeSessions)
+
+            let (direct, hiddenByFilter) = filteredDirect(workspace.sessions(in: .folder(folder.id)), nameMatches: nameMatches)
+            let matched = !hiddenByFilter || !childRows.isEmpty
+            guard matched else { return Built(rows: [], matched: false, subtreeSessions: []) }
+
+            let subtreeSessions = direct + childSubtreeSessions
+            let collapsed = workspace.isCollapsed(.folder(folder.id))
+            let showContents = !collapsed || filtering
+            let row = SidebarFolder(id: folder.id.uuidString, group: .folder(folder.id), name: folder.name, isUnfiled: false,
+                                    isCollapsed: collapsed, depth: depth, sessions: showContents ? direct : [],
+                                    sessionCount: subtreeSessions.count, statusCounts: StatusCounts(subtreeSessions))
+            return Built(rows: [row] + (showContents ? childRows : []), matched: true, subtreeSessions: subtreeSessions)
+        }
+
         return workspace.projects.compactMap { project -> SidebarProject? in
             let projectMatches = textFiltering && matches(project.name)
 
-            var groups: [(SessionGroup, String, Bool)] = project.folders.map { (.folder($0.id), $0.name, false) }
-            groups.append((.unfiled(projectID: project.id), Workspace.unfiledName, true))
+            let topLevel = project.folders.filter { $0.parentID == nil }
+            let builtTop = topLevel.map { buildFolder($0, in: project, depth: 0, ancestorMatches: projectMatches) }
+            var folders = builtTop.flatMap(\.rows)
 
-            var folders: [SidebarFolder] = []
-            for (group, name, isUnfiled) in groups {
-                var sessions = workspace.sessions(in: group)
-                if activeSince != nil && !sessions.isEmpty {
-                    sessions = sessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
-                    // Hide folders whose sessions are all old; keep ones that are simply empty.
-                    if sessions.isEmpty { continue }
-                }
-                if let status {
-                    sessions = sessions.filter { $0.status == status }
-                    if sessions.isEmpty { continue }
-                }
-                if textFiltering && !projectMatches && !matches(name) {
-                    sessions = sessions.filter { matches($0.name) || matches($0.summary) }
-                    if sessions.isEmpty { continue }
-                }
-                if isUnfiled && sessions.isEmpty { continue }
-                let id: String
-                switch group {
-                case .folder(let folderID): id = folderID.uuidString
-                case .unfiled(let projectID): id = "unfiled-\(projectID.uuidString)"
-                }
-                let collapsed = workspace.isCollapsed(group)
-                folders.append(SidebarFolder(id: id, group: group, name: name, isUnfiled: isUnfiled, isCollapsed: collapsed,
-                                             sessions: collapsed && !filtering ? [] : sessions, sessionCount: sessions.count,
-                                             statusCounts: StatusCounts(sessions)))
+            let unfiledGroup = SessionGroup.unfiled(projectID: project.id)
+            var unfiledSessions = workspace.sessions(in: unfiledGroup)
+            if activeSince != nil && !unfiledSessions.isEmpty {
+                unfiledSessions = unfiledSessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
+            }
+            if let status { unfiledSessions = unfiledSessions.filter { $0.status == status } }
+            if textFiltering && !projectMatches {
+                unfiledSessions = unfiledSessions.filter { matches($0.name) || matches($0.summary) }
+            }
+            if !unfiledSessions.isEmpty {
+                let collapsed = workspace.isCollapsed(unfiledGroup)
+                folders.append(SidebarFolder(id: "unfiled-\(project.id.uuidString)", group: unfiledGroup, name: Workspace.unfiledName,
+                                             isUnfiled: true, isCollapsed: collapsed, depth: 0,
+                                             sessions: collapsed && !filtering ? [] : unfiledSessions,
+                                             sessionCount: unfiledSessions.count, statusCounts: StatusCounts(unfiledSessions)))
             }
 
             if filtering && folders.isEmpty && (status != nil || !projectMatches) { return nil }
 
             let all = workspace.sessions.filter { $0.projectID == project.id && !$0.isArchived }
             let active = all.filter { $0.status != .completed }
+            let projectTotal = StatusCounts(builtTop.flatMap(\.subtreeSessions) + unfiledSessions)
             return SidebarProject(
                 id: project.id,
                 name: project.name,
@@ -137,7 +192,7 @@ public enum Sidebar {
                 folders: project.isCollapsed && !filtering ? [] : folders,
                 activeCount: active.count,
                 hasAwaitingInput: active.contains { $0.status == .awaitingInput },
-                statusCounts: folders.reduce(StatusCounts()) { $0 + $1.statusCounts })
+                statusCounts: projectTotal)
         }
     }
 }
