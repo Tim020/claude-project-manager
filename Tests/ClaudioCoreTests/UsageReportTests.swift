@@ -411,18 +411,30 @@ final class UsageReportTests: XCTestCase {
         // Once it reads again (the sync client let go, say), its figures
         // (a deleted session's here) and the ones read since launch are
         // kept together, and saving starts again.
+        // The saved file also has an older read of c1's transcript (its
+        // first reply only): the one read since launch must win, or the
+        // next scan would read those lines again and count them twice.
         var earlier = UsageLedger()
-        earlier.conversations["c-gone"] = ConversationUsage(projectID: fixture.state.workspace.projects[0].id, sessionID: UUID(),
-                                                            sessionName: "Gone", folderID: nil)
+        let projectID = fixture.state.workspace.projects[0].id
+        earlier.conversations["c-gone"] = ConversationUsage(projectID: projectID, sessionID: UUID(), sessionName: "Gone", folderID: nil)
+        var older = TranscriptProgress()
+        older.read(Data((try Fixtures.lines("transcript-usage.jsonl")[0..<5].joined(separator: "\n") + "\n").utf8))
+        older.size = older.offset
+        earlier.conversations["c1"] = ConversationUsage(projectID: projectID, sessionID: fixture.session.id, sessionName: "Old name",
+                                                        folderID: nil, files: [fixture.file.path: older])
         stuck.saved = earlier
         stuck.isStuck = false
         await readOnly.refreshUsageLedger()
         await readOnly.waitForUsageSaves()
         XCTAssertEqual(stuck.saves, 1)
         XCTAssertEqual(stuck.saved?.conversations.keys.sorted(), ["c-gone", "c1"])
-        XCTAssertGreaterThan(stuck.saved?.conversations["c1"]?.files.first?.value.offset ?? 0, 0)
+        let size = try Data(contentsOf: fixture.file).count
+        XCTAssertEqual(stuck.saved?.conversations["c1"]?.files[fixture.file.path]?.offset, size, "the read since launch is kept")
+        XCTAssertEqual(stuck.saved?.conversations["c1"]?.sessionName, "One")
+        await readOnly.refreshUsageLedger()
         await MainActor.run {
             XCTAssertTrue(readOnly.log.entries.contains { $0.title == "The saved usage figures can be read again" })
+            XCTAssertEqual(readOnly.sessionUsage(fixture.session.id)?.cost ?? 0, 3.307508, accuracy: 0.000001, "nothing counted twice")
         }
     }
 

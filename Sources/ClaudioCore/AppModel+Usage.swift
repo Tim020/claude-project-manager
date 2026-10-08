@@ -80,6 +80,23 @@ extension UsageLedger {
     }
 }
 
+extension UsageLedger {
+    /// Adds what a saved ledger has and this one doesn't: whole
+    /// conversations (a deleted session's, say), and files of shared ones
+    /// this hasn't read. Where both have a file, this one's is kept: it was
+    /// read since, and taking the saved one would read its lines again.
+    mutating func fill(from saved: UsageLedger) {
+        for (id, conversation) in saved.conversations {
+            guard var mine = conversations[id] else {
+                conversations[id] = conversation
+                continue
+            }
+            for (path, file) in conversation.files where mine.files[path] == nil { mine.files[path] = file }
+            conversations[id] = mine
+        }
+    }
+}
+
 extension AppModel {
     /// How often transcripts are read for usage.
     public static let usageScanInterval: TimeInterval = 30
@@ -233,9 +250,7 @@ extension AppModel {
     private func retrySavedUsage() {
         do {
             if let saved = try usageStore.load() {
-                var ledger = saved
-                ledger.merge(usageLedger, since: UsageLedger())
-                usageLedger = ledger
+                usageLedger.fill(from: saved)
                 rebuildUsageEntries()
             }
             isUsageLedgerReadOnly = false
