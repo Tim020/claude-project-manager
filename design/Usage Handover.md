@@ -35,7 +35,7 @@ Rule: tabs only hold session things, so project and folder usage lives in the le
 - a 2×2 grid: Input, Output, Cache write, Cache read
 - By model (bar and legend)
 - THIS WEEK'S LIMIT ≈ n%, with a bar (amber over 15%), and "Its share of the 31% used this week."
-- facts: Turns, Last active, Main model, Assistant follow-ups (cost, or None)
+- facts: Turns, Last active, Main model, Assistant follow-ups (cost, or None) *(Built: a Subagents row before Assistant follow-ups, "$3.88 · 6": their cost, already in the session's total, and how many; or None.)*
 - the footnote "Priced at API rates from the session's transcript. Plans aren't charged per token."
 - Per session it's absolute: there's no range control.
 

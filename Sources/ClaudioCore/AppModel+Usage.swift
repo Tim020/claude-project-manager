@@ -576,7 +576,14 @@ extension AppModel {
         let entries = usageEntries.filter { $0.sessionID == sessionID }
         let own = entries.filter { !$0.isAssistant }
         let followUps = entries.filter(\.isAssistant)
-        let turns = usageLedger.conversations.values.filter { $0.sessionID == sessionID }.reduce(0) { $0 + $1.turns }
+        let conversations = usageLedger.conversations.values.filter { $0.sessionID == sessionID }
+        let turns = conversations.reduce(0) { $0 + $1.turns }
+        // Its subagents' transcripts (`<id>/subagents/agent-*.jsonl`), each
+        // priced as its own replies were.
+        let subagentFiles = conversations.flatMap { $0.files.filter { $0.key.contains("/subagents/") }.values }
+            .filter { !$0.buckets.isEmpty }
+        let subagents = subagentFiles.isEmpty ? nil
+            : SubagentUsage(count: subagentFiles.count, cost: subagentFiles.flatMap(\.buckets).reduce(0) { $0 + $1.cost })
         guard !own.isEmpty || !followUps.isEmpty else { return nil }
 
         var models: [String: Double] = [:]
@@ -598,7 +605,7 @@ extension AppModel {
         return SessionUsage(cost: own.reduce(0) { $0 + $1.cost }, tokens: own.reduce(TokenCounts()) { $0 + $1.tokens },
                             byModel: AppModel.byModel(own), week: week,
                             turns: turns, mainModel: mainModel, followUpCost: followUps.isEmpty ? nil : followUpCost,
-                            fallbackFamilies: AppModel.fallbackFamilies(own))
+                            subagents: subagents, fallbackFamilies: AppModel.fallbackFamilies(own))
     }
 
     /// The assistant's calls across every project, over a range.

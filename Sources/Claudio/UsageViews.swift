@@ -580,6 +580,8 @@ struct SessionUsageTool: View {
             fact("Turns", "\(usage.turns)")
             fact("Last active", lastActive)
             fact("Main model", usage.mainModel ?? "—")
+            fact("Subagents", usage.subagents.map { "\(UsageFormat.cost($0.cost)) · \($0.count)" } ?? "None")
+                .help(usage.subagents.map { "\($0.count) subagent\($0.count == 1 ? "" : "s"), included in the session's cost" } ?? "")
             fact("Assistant follow-ups", usage.followUpCost.map(UsageFormat.cost) ?? "None")
         }
         .overlay(alignment: .top) { HorizontalRule() }

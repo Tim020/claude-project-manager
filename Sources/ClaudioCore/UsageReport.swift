@@ -290,7 +290,16 @@ public struct SessionUsage: Equatable, Sendable {
     public var mainModel: String?
     /// What the assistant's follow-ups on it cost; nil for none.
     public var followUpCost: Double?
+    /// Its subagents' part of `cost`; nil when it ran none.
+    public var subagents: SubagentUsage?
     public var fallbackFamilies: [ModelFamily]
+}
+
+/// What a session's subagents cost, already counted in its own cost.
+public struct SubagentUsage: Equatable, Sendable {
+    /// Subagent transcripts with usage.
+    public var count: Int
+    public var cost: Double
 }
 
 /// A session's part of this week's limit, worked out from its share of the

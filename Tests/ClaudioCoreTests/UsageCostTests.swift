@@ -175,6 +175,39 @@ final class UsageCostTests: XCTestCase {
         XCTAssertEqual(conversation.buckets.reduce(0) { $0 + $1.cost }, 2 * 3.307508, accuracy: 0.000001)
     }
 
+    func testASessionsSubagentsAreBrokenOut() async throws {
+        let home = try makeTemporaryDirectory()
+        let discovery = SessionDiscovery(claudeHome: home)
+        let directory = discovery.projectDirectory(for: "/code/app")
+        let subagents = directory.appendingPathComponent("c1/subagents")
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        let data = try Data(contentsOf: Fixtures.url("transcript-usage.jsonl"))
+        try data.write(to: directory.appendingPathComponent("c1.jsonl"))
+        try data.replacingIDs("msg_", with: "sub_").write(to: subagents.appendingPathComponent("agent-a1.jsonl"))
+        try data.replacingIDs("msg_", with: "two_").write(to: subagents.appendingPathComponent("agent-a2.jsonl"))
+        var state = PersistedState()
+        let project = state.workspace.addProject(path: "/code/app")
+        let session = Session(projectID: project, claudeSessionID: "c1", name: "With help", workingDirectory: "/code/app")
+        let plain = Session(projectID: project, claudeSessionID: "c2", name: "Alone", workingDirectory: "/code/app")
+        try state.workspace.addSession(session)
+        try state.workspace.addSession(plain)
+        try data.replacingIDs("msg_", with: "solo_").write(to: directory.appendingPathComponent("c2.jsonl"))
+        let store = MemoryStore()
+        store.state = state
+        let model = await MainActor.run {
+            AppModel(store: store, discovery: discovery, hookEventsURL: home.appendingPathComponent("h.log"), runner: FakeRunner(),
+                     locateClaude: { _ in nil }, locateGitHubCLI: { nil }, shell: "/bin/sh", home: "/")
+        }
+        await model.refreshUsageLedger()
+        await MainActor.run {
+            let usage = model.sessionUsage(session.id)
+            XCTAssertEqual(usage?.cost ?? 0, 3 * 3.307508, accuracy: 0.000001, "the session's cost includes them")
+            XCTAssertEqual(usage?.subagents?.count, 2)
+            XCTAssertEqual(usage?.subagents?.cost ?? 0, 2 * 3.307508, accuracy: 0.000001)
+            XCTAssertNil(model.sessionUsage(plain.id)?.subagents, "none run")
+        }
+    }
+
     func testALineLongerThanAChunkIsReadWhole() throws {
         let directory = try makeTemporaryDirectory()
         let url = directory.appendingPathComponent("c1.jsonl")
