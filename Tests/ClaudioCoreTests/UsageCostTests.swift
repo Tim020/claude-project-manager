@@ -185,6 +185,9 @@ final class UsageCostTests: XCTestCase {
         try data.write(to: directory.appendingPathComponent("c1.jsonl"))
         try data.replacingIDs("msg_", with: "sub_").write(to: subagents.appendingPathComponent("agent-a1.jsonl"))
         try data.replacingIDs("msg_", with: "two_").write(to: subagents.appendingPathComponent("agent-a2.jsonl"))
+        // One whose replies are all the main transcript's: counted there,
+        // so it adds nothing and isn't one of the subagents with usage.
+        try data.write(to: subagents.appendingPathComponent("agent-a3.jsonl"))
         var state = PersistedState()
         let project = state.workspace.addProject(path: "/code/app")
         let session = Session(projectID: project, claudeSessionID: "c1", name: "With help", workingDirectory: "/code/app")
