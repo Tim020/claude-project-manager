@@ -323,6 +323,10 @@ private struct FolderSection: View {
     @State private var liveEdge: AppModel.SidebarDropEdge?
     /// nil until the current drag's payload has been read; reset per hover.
     @State private var isDraggingFolder: Bool?
+    /// Set alongside `isDraggingFolder` when the drag is a folder, so
+    /// hovering it over itself or one of its own subfolders (an invalid
+    /// drop) shows no highlight instead of one that would just error.
+    @State private var draggedFolderID: UUID?
     @State private var rowHeight: CGFloat = 28
     @State private var confirmDelete = false
 
@@ -390,7 +394,8 @@ private struct FolderSection: View {
         // drop position decides: its top/bottom edge reorders it as a
         // sibling, the rest of the row nests it inside.
         .onDrop(of: [.text], delegate: FolderDropDelegate(group: folder.group, model: model, rowHeight: { rowHeight },
-                                                          liveEdge: $liveEdge, isDraggingFolder: $isDraggingFolder))
+                                                          liveEdge: $liveEdge, isDraggingFolder: $isDraggingFolder,
+                                                          draggedFolderID: $draggedFolderID))
         .contextMenu {
             FolderMenu(group: folder.group, projectID: projectID, confirmDelete: $confirmDelete)
         }
@@ -412,15 +417,17 @@ private struct FolderDropDelegate: DropDelegate {
     let rowHeight: () -> CGFloat
     @Binding var liveEdge: AppModel.SidebarDropEdge?
     @Binding var isDraggingFolder: Bool?
+    @Binding var draggedFolderID: UUID?
 
     func dropEntered(info: DropInfo) {
         isDraggingFolder = nil
+        draggedFolderID = nil
         readKind(info)
-        liveEdge = edge(for: info)
+        liveEdge = liveVisualEdge(for: info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        liveEdge = edge(for: info)
+        liveEdge = liveVisualEdge(for: info)
         return DropProposal(operation: .move)
     }
 
@@ -429,7 +436,13 @@ private struct FolderDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        let edge = edge(for: info)
+        // Computed from the drop location directly, not `isDraggingFolder`:
+        // that flag comes from an async peek that might not have resolved
+        // yet, and a wrong guess here would misfile the drop rather than
+        // just show the wrong hover feedback. `model.drop` ignores `edge`
+        // for anything other than a folder dropped on a folder, so passing
+        // it unconditionally (a session drag, say) is harmless.
+        let edge = dropEdge(for: info)
         liveEdge = nil
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
         _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
@@ -439,19 +452,43 @@ private struct FolderDropDelegate: DropDelegate {
         return true
     }
 
-    private func edge(for info: DropInfo) -> AppModel.SidebarDropEdge {
-        guard isDraggingFolder == true else { return .into }
+    /// The edge a drop at this location would act on. Unfiled has no
+    /// sibling order to reorder within, so it's always "into" (the last
+    /// top-level slot, per `model.drop`).
+    private func dropEdge(for info: DropInfo) -> AppModel.SidebarDropEdge {
+        guard case .folder = group else { return .into }
         return .at(locationY: Double(info.location.y), rowHeight: Double(rowHeight()))
     }
 
-    /// Peeks at the dragged payload once, so a folder drag (edge-sensitive)
-    /// can be told apart from a session drag (always "into").
+    /// The edge to show live, while hovering: nil (no highlight) when a
+    /// dragged folder is hovering over itself or one of its own
+    /// subfolders, since that drop would just error; "into" for a session
+    /// drag (which always files into the row, with no edge to show);
+    /// otherwise the position-based edge, once the peek has told a folder
+    /// drag apart from a session drag.
+    private func liveVisualEdge(for info: DropInfo) -> AppModel.SidebarDropEdge? {
+        if let draggedFolderID, case .folder(let targetID) = group, model.workspace.isFolder(targetID, orDescendantOf: draggedFolderID) {
+            return nil
+        }
+        guard isDraggingFolder == true else { return .into }
+        return dropEdge(for: info)
+    }
+
+    /// Peeks at the dragged payload once, so a folder drag (edge-sensitive,
+    /// and invalid over its own subtree) can be told apart from a session
+    /// drag (always "into").
     private func readKind(_ info: DropInfo) {
         guard let provider = info.itemProviders(for: [.text]).first else { return }
         _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
-            guard let payload = reading as? String else { return }
-            let isFolder = SidebarDragItem(payload: payload).map { if case .folder = $0 { return true } else { return false } } ?? false
-            Task { @MainActor in isDraggingFolder = isFolder }
+            guard let payload = reading as? String, let item = SidebarDragItem(payload: payload) else { return }
+            Task { @MainActor in
+                if case .folder(let id) = item {
+                    isDraggingFolder = true
+                    draggedFolderID = id
+                } else {
+                    isDraggingFolder = false
+                }
+            }
         }
     }
 }
@@ -472,10 +509,14 @@ struct FolderMenu: View {
             Button("Show Pull Requests") { model.showOverview(.folder(group)) }
             // Everything in this project but the folder's own subtree (it
             // can't move into itself or one of its own subfolders).
+            // Its own subtree (can't move into itself or a descendant) and its
+            // current parent (that's where it already is) are left out.
+            let currentParentID = model.workspace.folder(folderID)?.parentID
             let subtree = model.workspace.subtreeFolderIDs(of: folderID)
-            let candidates = model.workspace.foldersInDisplayOrder(projectID: projectID).filter { !subtree.contains($0.folder.id) }
+            let candidates = model.workspace.foldersInDisplayOrder(projectID: projectID)
+                .filter { !subtree.contains($0.folder.id) && $0.folder.id != currentParentID }
             Menu("Move to Folder") {
-                if model.workspace.folder(folderID)?.parentID != nil {
+                if currentParentID != nil {
                     Button("Top Level") { model.moveFolder(folderID, toProject: projectID) }
                     if !candidates.isEmpty { Divider() }
                 }
