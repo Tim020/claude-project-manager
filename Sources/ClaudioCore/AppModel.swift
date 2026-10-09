@@ -1101,7 +1101,7 @@ public final class AppModel {
     /// old free-text roles, a tag no longer in the catalog can't be shown —
     /// there's nothing to read a name from — so removing one from Settings
     /// removes it from every session that had it; see `updateSettings`.)
-    public func roleChoices(for id: UUID) -> [SessionRole] {
+    public func roleChoices() -> [SessionRole] {
         settings.tagNames.map { SessionRole($0) }
     }
 

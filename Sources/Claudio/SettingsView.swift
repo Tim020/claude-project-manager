@@ -428,22 +428,22 @@ private struct AssistantSettingsPage: View {
 
 private struct RoleSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var roles: [String] = []
+    @State private var tags: [Tag] = []
 
     var body: some View {
         SettingsGroup(title: "Roles",
-                      footer: "A new session picks the first role whose name appears in its name. Removing a role doesn't change sessions that already use it.") {
-            ForEach(roles.indices, id: \.self) { index in
+                      footer: "A new session picks the first role whose name appears in its name. Removing a role here removes it from every session and folder that has it.") {
+            ForEach(tags.indices, id: \.self) { index in
                 HStack(spacing: 10) {
                     Image(systemName: "tag")
                         .foregroundStyle(DS.dim)
                         .frame(width: 16)
-                    TextField("Role name", text: $roles[index])
+                    TextField("Role name", text: $tags[index].name)
                         .textFieldStyle(.plain)
                         .font(DS.font(13.5))
                         .onSubmit(save)
                     Button {
-                        roles.remove(at: index)
+                        tags.remove(at: index)
                         save()
                     } label: {
                         Image(systemName: "minus.circle.fill")
@@ -458,7 +458,7 @@ private struct RoleSettings: View {
             }
             HStack {
                 Button {
-                    roles.append("")
+                    tags.append(Tag(name: "", colorHex: Tag.palette[tags.count % Tag.palette.count]))
                 } label: {
                     Label("Add Role", systemImage: "plus.circle.fill")
                         .font(DS.font(13, .semibold))
@@ -466,9 +466,9 @@ private struct RoleSettings: View {
                 .buttonStyle(.borderless)
                 .tint(DS.teal)
                 Spacer()
-                if roles != SessionRole.defaultNames {
+                if tags.map(\.name) != SessionRole.defaultNames {
                     Button("Restore Defaults") {
-                        roles = SessionRole.defaultNames
+                        tags = Tag.defaults
                         save()
                     }
                     .buttonStyle(.borderless)
@@ -477,17 +477,16 @@ private struct RoleSettings: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .onAppear { roles = model.settings.tagNames }
+        .onAppear { tags = model.settings.tags }
         .onDisappear(perform: save)
     }
 
+    /// Edits names on the existing `Tag` values (never recreates them), so
+    /// retyping a name keeps its id and colour instead of orphaning the old
+    /// tag and silently untagging every session that had it.
     private func save() {
         var settings = model.settings
-        let names = AppSettings.cleanRoles(roles)
-        settings.tags = names.enumerated().map { index, name in
-            settings.tags.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-                ?? Tag(name: name, colorHex: Tag.palette[index % Tag.palette.count])
-        }
+        settings.tags = AppSettings.cleanTags(tags)
         if settings != model.settings { model.updateSettings(settings) }
     }
 }

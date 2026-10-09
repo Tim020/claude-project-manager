@@ -28,11 +28,28 @@ final class RoleEditingTests: XCTestCase {
 
     func testRoleChoicesMirrorTheTagCatalog() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: .none)
+            let (model, _) = try model(role: .none)
             var settings = model.settings
             settings.tags = AppSettings.migratedTags(fromRoleNames: ["Code", "Review"])
             model.updateSettings(settings)
-            XCTAssertEqual(model.roleChoices(for: id).map(\.rawValue), ["Code", "Review"])
+            XCTAssertEqual(model.roleChoices().map(\.rawValue), ["Code", "Review"])
+        }
+    }
+
+    /// Renaming a tag in place (same id, new name) must not be treated as
+    /// removing the old one: that would cascade-delete it from every
+    /// session that had it, turning a typo fix into a silent untagging.
+    func testRenamingATagInPlaceKeepsItOnItsSessions() throws {
+        try MainActor.assumeIsolated {
+            let (model, id) = try model(role: SessionRole("Spke"))
+            var settings = model.settings
+            settings.tags = settings.tags.map { tag in
+                var tag = tag
+                if tag.name == "Spke" { tag.name = "Spike" }
+                return tag
+            }
+            model.updateSettings(settings)
+            XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), SessionRole("Spike"))
         }
     }
 

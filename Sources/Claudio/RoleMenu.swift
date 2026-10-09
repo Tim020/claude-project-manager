@@ -9,7 +9,7 @@ struct RoleMenuItems: View {
     let session: Session
 
     var body: some View {
-        ForEach(model.roleChoices(for: session.id), id: \.self) { role in
+        ForEach(model.roleChoices(), id: \.self) { role in
             Button { model.setRole(session.id, to: role) } label: {
                 if isCurrent(role) { Label(role.rawValue, systemImage: "checkmark") } else { Text(role.rawValue) }
             }

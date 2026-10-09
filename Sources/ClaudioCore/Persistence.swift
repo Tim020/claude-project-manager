@@ -61,10 +61,19 @@ public struct AppSettings: Codable, Equatable, Sendable {
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
-    /// Drops blank names and case-insensitive duplicates, keeping the first.
+    /// Trims names, drops blanks and case-insensitive duplicates (keeping
+    /// the first), and re-normalizes colours. Ids and colours survive a
+    /// name edit unchanged, since this never recreates a `Tag`.
     public static func cleanTags(_ tags: [Tag]) -> [Tag] {
         var seen = Set<String>()
-        return tags.filter { !$0.name.isEmpty && seen.insert($0.name.lowercased()).inserted }
+        return tags.compactMap { tag -> Tag? in
+            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { return nil }
+            var cleaned = tag
+            cleaned.name = name
+            cleaned.colorHex = Tag.normalizedHex(tag.colorHex) ?? tag.colorHex
+            return cleaned
+        }
     }
 
     /// Builds a catalog from an older file's plain role names: the three
