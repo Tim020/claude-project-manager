@@ -398,14 +398,6 @@ private struct FolderSection: View {
     }
 }
 
-/// Live drag-and-drop onto a folder row. `.dropDestination` only reports
-/// where a drop landed once it happens, but matching the three-way
-/// before/into/after outcome needs to show which one is live as the drag
-/// moves, and a session dragged over always means "into" (no edge),
-/// unlike a folder. So this reads the drag's payload as it's happening
-/// (`dropEntered`, once per hover) to tell a folder drag from a session
-/// drag, rather than relying on `SidebarDragItem.payload`'s prefix only at
-/// drop time.
 /// What's being dragged, as told apart by `FolderDropDelegate`'s payload
 /// peek: a folder (carrying its id, so a target can tell whether it's its
 /// own descendant) or a session (always "into", never edge-sensitive).
@@ -416,6 +408,14 @@ private enum DraggedKind: Equatable {
     case folder(UUID)
 }
 
+/// Live drag-and-drop onto a folder row. `.dropDestination` only reports
+/// where a drop landed once it happens, but matching the three-way
+/// before/into/after outcome needs to show which one is live as the drag
+/// moves, and a session dragged over always means "into" (no edge),
+/// unlike a folder. So this reads the drag's payload as it's happening
+/// (`dropEntered`, once per hover) to tell a folder drag from a session
+/// drag, rather than relying on `SidebarDragItem.payload`'s prefix only at
+/// drop time.
 private struct FolderDropDelegate: DropDelegate {
     let group: SessionGroup
     let model: AppModel
@@ -440,7 +440,7 @@ private struct FolderDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        // Computed from the drop location directly, not `isDraggingFolder`:
+        // Computed from the drop location directly, not `draggedKind`:
         // that flag comes from an async peek that might not have resolved
         // yet, and a wrong guess here would misfile the drop rather than
         // just show the wrong hover feedback. `model.drop` ignores `edge`

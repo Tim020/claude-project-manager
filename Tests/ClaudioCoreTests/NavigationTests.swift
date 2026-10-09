@@ -291,6 +291,30 @@ final class NavigationModelTests: XCTestCase {
         }
     }
 
+    /// The primary interaction is dragging a folder onto another folder's
+    /// row, not the "Move to Folder" menu — `drop(on:edge:.into)` must
+    /// expand a collapsed destination exactly like `moveFolder(intoFolder:)`
+    /// does, or a folder dropped there nests successfully but stays
+    /// invisible, which looks like the drop silently failed.
+    func testDroppingAFolderIntoACollapsedTargetExpandsIt() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let target = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            let dragged = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+
+            model.toggleCollapsed(.folder(target))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(target)))
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(dragged).payload], on: .group(.folder(target)), edge: .into))
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(target)), "the drop path expands the target too, not just the menu path")
+            XCTAssertEqual(model.workspace.folder(dragged)?.parentID, target)
+        }
+    }
+
     func testDroppingASessionStillFilesIt() throws {
         try MainActor.assumeIsolated {
             let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),

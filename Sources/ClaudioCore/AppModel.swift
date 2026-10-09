@@ -872,7 +872,16 @@ public final class AppModel {
                 // `.before`/`.after` stay a silent no-op, same as reordering
                 // a folder to right before itself always has been.
                 switch edge {
-                case .into: attempt { try state.workspace.moveFolder(id, intoFolder: targetID) }
+                case .into:
+                    // Expands a collapsed destination (matching the
+                    // `moveFolder(intoFolder:)` wrapper's own behavior,
+                    // which this bypasses to share one `save()` with every
+                    // other payload in this drop): otherwise the folder
+                    // just moved vanishes from the sidebar until the
+                    // destination happens to be expanded, which can look
+                    // like the drop silently failed.
+                    guard attempt({ try state.workspace.moveFolder(id, intoFolder: targetID) }) != nil else { continue }
+                    if state.workspace.isCollapsed(.folder(targetID)) { state.workspace.toggleCollapsed(.folder(targetID)) }
                 case .before: attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
                 case .after: attempt { try state.workspace.moveFolder(id, after: targetID, inProject: projectID) }
                 }

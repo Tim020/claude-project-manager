@@ -212,6 +212,47 @@ final class WorkspaceTests: XCTestCase {
         }
     }
 
+    /// `before`/`after` take `projectID` as a separate parameter from the
+    /// sibling, so the two can disagree. That must throw before anything
+    /// moves, not partway through relocating the folder's subtree — a
+    /// throw after the fact would leave it removed from everywhere
+    /// (orphaning its children and their sessions) with no way back.
+    func testMoveFolderBeforeWithSiblingNotInTheGivenProjectThrowsAndChangesNothing() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let moving = try ws.createFolder(in: p1, named: "Moving")
+        let child = try ws.createFolder(in: p1, named: "Child", parentID: moving)
+        let s = makeSession("s", project: p1)
+        try ws.addSession(s, toFolder: child)
+        let siblingInP2 = try ws.createFolder(in: p2, named: "SiblingInP2")
+        let before = ws
+
+        XCTAssertThrowsError(try ws.moveFolder(moving, before: siblingInP2, inProject: p1)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .folderNotFound)
+        }
+        XCTAssertEqual(ws, before, "nothing moved, re-homed, or removed")
+
+        XCTAssertThrowsError(try ws.moveFolder(moving, after: siblingInP2, inProject: p1)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .folderNotFound)
+        }
+        XCTAssertEqual(ws, before)
+    }
+
+    func testMoveToFolderCandidatesExcludeItsOwnSubtreeAndCurrentParent() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let grandparent = try ws.createFolder(in: p, named: "Grandparent")
+        let parent = try ws.createFolder(in: p, named: "Parent", parentID: grandparent)
+        try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let unrelated = try ws.createFolder(in: p, named: "Unrelated")
+
+        XCTAssertEqual(Set(ws.moveToFolderCandidates(for: parent).map(\.folder.id)), [unrelated],
+                       "not its own subtree (parent or child) and not its current parent (grandparent)")
+        XCTAssertEqual(Set(ws.moveToFolderCandidates(for: grandparent).map(\.folder.id)), [unrelated],
+                       "a top-level folder has no current parent to exclude, but still excludes its own subtree")
+    }
+
     func testMoveFolderAfterPutsItRightAfterItsNewSibling() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code/a")

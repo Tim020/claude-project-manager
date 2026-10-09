@@ -537,6 +537,16 @@ public struct Workspace: Codable, Equatable, Sendable {
             guard self.projectID(containingFolder: parentID) == projectID else { throw WorkspaceError.folderNotInProject }
             guard !isFolder(parentID, orDescendantOf: id) else { throw WorkspaceError.cyclicFolderMove }
         }
+        // Validated before anything below mutates state: a sibling id that
+        // doesn't actually resolve in the destination project must throw
+        // here, not partway through relocating the folder's subtree, or it
+        // would be left removed from everywhere (orphaning its children and
+        // their sessions) with no way back.
+        switch placement {
+        case .end: break
+        case .beforeSibling(let siblingID), .afterSibling(let siblingID):
+            guard projects[destination].folders.contains(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+        }
 
         if let (sp, _) = folderIndex(id), projects[sp].id != projectID {
             let subtreeIDs = subtreeFolderIDs(of: id)
