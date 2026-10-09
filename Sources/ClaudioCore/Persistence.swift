@@ -61,17 +61,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
-    /// Trims names, drops blanks and case-insensitive duplicates (keeping
-    /// the first), and re-normalizes colours. Ids and colours survive a
-    /// name edit unchanged, since this never recreates a `Tag`.
+    /// Trims names and re-normalizes colours. A name that collides with an
+    /// earlier tag's gets " 2", " 3", … appended instead of being dropped —
+    /// two *different* tags ending up with the same name (a rename gone
+    /// wrong, say) must never make one vanish and take its sessions'
+    /// assignments with it. Ids and colours survive a name edit unchanged,
+    /// since this never recreates a `Tag`.
     public static func cleanTags(_ tags: [Tag]) -> [Tag] {
         var seen = Set<String>()
         return tags.compactMap { tag -> Tag? in
-            let name = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { return nil }
+            let base = tag.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !base.isEmpty else { return nil }
+            var name = base
+            var suffix = 2
+            while !seen.insert(name.lowercased()).inserted {
+                name = "\(base) \(suffix)"
+                suffix += 1
+            }
             var cleaned = tag
             cleaned.name = name
-            cleaned.colorHex = Tag.normalizedHex(tag.colorHex) ?? tag.colorHex
+            cleaned.colorHex = Tag.normalizedHex(tag.colorHex) ?? Tag.palette[0]
             return cleaned
         }
     }

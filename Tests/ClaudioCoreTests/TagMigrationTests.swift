@@ -19,6 +19,25 @@ final class TagTests: XCTestCase {
         XCTAssertTrue(Tag(name: "light", colorHex: "FFD23F").prefersDarkText)
         XCTAssertFalse(Tag(name: "dark", colorHex: "1A1A1A").prefersDarkText)
     }
+
+    /// A rename that collides with a different, unrelated tag's name must
+    /// not make that other tag disappear (and so lose every session that
+    /// had it): it gets disambiguated instead.
+    func testCleanTagsDisambiguatesACollisionInsteadOfDroppingTheOtherTag() {
+        let a = Tag(name: "Code", colorHex: "111111")
+        let b = Tag(name: "Review", colorHex: "222222")
+        var renamed = b
+        renamed.name = "Code"
+        let cleaned = AppSettings.cleanTags([a, renamed])
+        XCTAssertEqual(cleaned.map(\.id), [a.id, b.id], "both tags survive")
+        XCTAssertEqual(cleaned.map(\.name), ["Code", "Code 2"])
+    }
+
+    func testCleanTagsFallsBackToThePaletteForAnInvalidColour() {
+        var tag = Tag(name: "x", colorHex: "111111")
+        tag.colorHex = "not a colour"
+        XCTAssertEqual(AppSettings.cleanTags([tag]).first?.colorHex, Tag.palette[0])
+    }
 }
 
 final class TagMigrationTests: XCTestCase {
