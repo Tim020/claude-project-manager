@@ -16,7 +16,7 @@ struct RoleMenuItems: View {
         }
         Divider()
         Button { model.setRole(session.id, to: .none) } label: {
-            if session.role.isNone { Label("None", systemImage: "checkmark") } else { Text("None") }
+            if model.role(of: session).isNone { Label("None", systemImage: "checkmark") } else { Text("None") }
         }
         Divider()
         Button("Edit Roles…") {
@@ -26,38 +26,40 @@ struct RoleMenuItems: View {
     }
 
     private func isCurrent(_ role: SessionRole) -> Bool {
-        role.rawValue.caseInsensitiveCompare(session.role.rawValue) == .orderedSame
+        role.rawValue.caseInsensitiveCompare(model.role(of: session).rawValue) == .orderedSame
     }
 }
 
 /// The session's role as a small tag in the header; click to change it. With
 /// no role it offers to add one.
 struct RoleChip: View {
+    @Environment(AppModel.self) private var model
     let session: Session
     var compact = false
     @State private var hovering = false
 
     var body: some View {
+        let role = model.role(of: session)
         Menu {
             RoleMenuItems(session: session)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "tag")
                     .font(.system(size: 9.5, weight: .semibold))
-                Text(session.role.isNone ? (compact ? "Role" : "Add Role") : session.role.label)
-                    .font(DS.font(10.5, session.role.isNone ? .semibold : .extraBold))
-                    .kerning(session.role.isNone ? 0 : 0.6)
+                Text(role.isNone ? (compact ? "Role" : "Add Role") : role.label)
+                    .font(DS.font(10.5, role.isNone ? .semibold : .extraBold))
+                    .kerning(role.isNone ? 0 : 0.6)
             }
-            .foregroundStyle(session.role.isNone ? DS.dim : DS.muted)
+            .foregroundStyle(role.isNone ? DS.dim : DS.muted)
             .padding(.vertical, 2)
             .padding(.horizontal, 7)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(session.role.isNone ? Color.clear : Color.white.opacity(hovering ? 0.12 : 0.07))
+                    .fill(role.isNone ? Color.clear : Color.white.opacity(hovering ? 0.12 : 0.07))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(session.role.isNone ? DS.border.opacity(hovering ? 1 : 0.6) : .clear,
+                    .strokeBorder(role.isNone ? DS.border.opacity(hovering ? 1 : 0.6) : .clear,
                                   style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
             )
         }
@@ -65,7 +67,7 @@ struct RoleChip: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .onHover { hovering = $0 }
-        .help(session.role.isNone ? "Add a role to this session" : "Role: \(session.role.rawValue). Click to change it.")
+        .help(role.isNone ? "Add a role to this session" : "Role: \(role.rawValue). Click to change it.")
     }
 }
 #endif

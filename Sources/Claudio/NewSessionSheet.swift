@@ -64,14 +64,14 @@ struct NewSessionSheet: View {
                     TextField("e.g. pr review inline 1427 (defaults to the prompt)", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: name) { _, value in
-                            if !roleEdited { role = SessionRole.infer(fromName: value, roles: model.settings.roles) }
+                            if !roleEdited { role = SessionRole.infer(fromName: value, roles: model.settings.tagNames) }
                         }
                 }
                 GridRow {
                     label("Role")
                     Picker("", selection: Binding(get: { role }, set: { role = $0; roleEdited = true })) {
                         Text("None").tag(SessionRole.none)
-                        ForEach(model.settings.roles, id: \.self) { name in
+                        ForEach(model.settings.tagNames, id: \.self) { name in
                             Text(name).tag(SessionRole(name))
                         }
                     }
@@ -171,7 +171,7 @@ struct NewSessionSheet: View {
     }
 
     private func applyDefaults() {
-        role = SessionRole.infer(fromName: name, roles: model.settings.roles)
+        role = SessionRole.infer(fromName: name, roles: model.settings.tagNames)
         modelID = model.settings.defaultModel
         permissionMode = model.settings.defaultPermissionMode(background: backgroundMode)
         switch initialGroup {

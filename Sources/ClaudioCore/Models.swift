@@ -16,8 +16,68 @@ public enum SessionStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// What a session is for: a free-form label from the user's role list
-/// (Settings), shown as a small uppercase tag (CODE, REVIEW, …). Empty is none.
+/// A coloured label that can be put on sessions and folders (GitHub-style
+/// issue labels). The catalog lives in `AppSettings.tags`; sessions and
+/// folders hold ids into it, so renaming or recolouring a tag updates
+/// everywhere it's used.
+public struct Tag: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    /// Six hex digits, no "#", always uppercase.
+    public var colorHex: String
+
+    public init(id: UUID = UUID(), name: String, colorHex: String) {
+        self.id = id
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.colorHex = Tag.normalizedHex(colorHex) ?? Tag.palette[0]
+    }
+
+    /// A curated set of colours that read well against the app's dark
+    /// theme; offered as swatches, with a custom hex field as an escape hatch.
+    public static let palette = [
+        "FF5C5C", "FF9F40", "FFD23F", "4CD787", "33C2C2",
+        "4098FF", "7C83FF", "C77DFF", "FF6FB3", "9A9AA2",
+    ]
+
+    /// Normalizes "#abc", "abc", "#aabbcc" or "aabbcc" to six uppercase hex
+    /// digits, or nil if it isn't a valid colour.
+    public static func normalizedHex(_ input: String) -> String? {
+        var hex = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        if hex.count == 3, hex.allSatisfy(\.isHexDigit) {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        guard hex.count == 6, hex.allSatisfy(\.isHexDigit) else { return nil }
+        return hex.uppercased()
+    }
+
+    /// Whether dark text reads better than white on this tag's colour
+    /// (relative luminance, the same idea GitHub uses for label text).
+    public var prefersDarkText: Bool {
+        guard let value = Int(colorHex, radix: 16) else { return true }
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8) & 0xFF) / 255
+        let b = Double(value & 0xFF) / 255
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6
+    }
+}
+
+public extension Tag {
+    // Fixed so a migrated session's tag id always matches its catalog
+    // entry's id, and so tests comparing default catalogs aren't flaky.
+    static let codeID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    static let reviewID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    static let researchID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+
+    static let defaults: [Tag] = [
+        Tag(id: codeID, name: "Code", colorHex: palette[5]),
+        Tag(id: reviewID, name: "Review", colorHex: palette[1]),
+        Tag(id: researchID, name: "Research", colorHex: palette[7]),
+    ]
+}
+
+/// What a session is for: a free-form name, inferred from a tag list and
+/// used while choosing a single tag. Empty is none.
 public struct SessionRole: RawRepresentable, Codable, Hashable, Sendable {
     public var rawValue: String
 
@@ -106,7 +166,12 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     /// The branch Files Changed last compared this session against ("dev"),
     /// so "vs" is right before the next comparison finishes.
     public var lastBaseName: String?
-    public var role: SessionRole
+    public var tags: [Tag.ID]
+    /// Transient: holds an on-disk `role` string during decode of an older
+    /// state file, until `PersistedState`'s v3 migration resolves it against
+    /// the tag catalog and clears it. Never persisted (absent from
+    /// `CodingKeys`), so it plays no part in equality once resolved.
+    public var legacyRoleName: String?
     public var status: SessionStatus
     /// One-line description of where the session is at (card / tooltip text).
     public var summary: String
@@ -147,7 +212,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var replacedConversations: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
+        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, tags, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
         case backgroundTasks, finishedBackgroundTasks, replacedConversations
     }
@@ -158,7 +223,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         claudeSessionID: String? = nil,
         hasConversation: Bool = false,
         name: String,
-        role: SessionRole? = nil,
+        tags: [Tag.ID] = [],
         workingDirectory: String,
         status: SessionStatus = .completed,
         summary: String = "",
@@ -174,7 +239,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         self.claudeSessionID = claudeSessionID
         self.hasConversation = hasConversation
         self.name = name
-        self.role = role ?? SessionRole.infer(fromName: name)
+        self.tags = tags
         self.workingDirectory = workingDirectory
         self.status = status
         self.summary = summary
@@ -214,12 +279,15 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
     /// Ordered session membership. A session is in at most one folder.
     public var sessionIDs: [UUID]
     public var isCollapsed: Bool
+    /// Applied once to a session's own tags when it's created in this folder.
+    public var defaultTags: [Tag.ID]
 
-    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false) {
+    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false, defaultTags: [Tag.ID] = []) {
         self.id = id
         self.name = name
         self.sessionIDs = sessionIDs
         self.isCollapsed = isCollapsed
+        self.defaultTags = defaultTags
     }
 
     public init(from decoder: Decoder) throws {
@@ -227,7 +295,8 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
         self.init(id: try c.decode(UUID.self, forKey: .id),
                   name: try c.decode(String.self, forKey: .name),
                   sessionIDs: try c.decodeIfPresent([UUID].self, forKey: .sessionIDs) ?? [],
-                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false)
+                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
+                  defaultTags: try c.decodeIfPresent([UUID].self, forKey: .defaultTags) ?? [])
     }
 }
 

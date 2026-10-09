@@ -56,7 +56,7 @@ struct PlanSessionSheet: View {
                     label("Role")
                     Picker("", selection: $role) {
                         Text("None").tag(SessionRole.none)
-                        ForEach(model.settings.roles, id: \.self) { name in
+                        ForEach(model.settings.tagNames, id: \.self) { name in
                             Text(name).tag(SessionRole(name))
                         }
                     }

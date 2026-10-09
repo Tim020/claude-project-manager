@@ -1083,20 +1083,37 @@ public final class AppModel {
     }
 
     public func setRole(_ id: UUID, to role: SessionRole) {
-        guard let session = state.workspace.session(id), session.role != role else { return }
-        state.workspace.updateSession(id) { $0.role = role }
+        guard let session = state.workspace.session(id) else { return }
+        let newTags: [Tag.ID] = role.isNone ? [] : [resolvedTag(named: role.rawValue).id]
+        guard session.tags != newTags else { return }
+        state.workspace.updateSession(id) { $0.tags = newTags }
         save()
     }
 
-    /// Roles offered for a session: the Settings list, plus its current role
-    /// if that has since been removed from the list.
+    /// A session's role, read from its first tag (the single-pick model,
+    /// kept while the multi-tag UI lands in a later step).
+    public func role(of session: Session) -> SessionRole {
+        guard let id = session.tags.first, let tag = settings.tags.first(where: { $0.id == id }) else { return .none }
+        return SessionRole(tag.name)
+    }
+
+    /// Roles offered for a session: the tag catalog's names. (Unlike the
+    /// old free-text roles, a tag no longer in the catalog can't be shown —
+    /// there's nothing to read a name from — so removing one from Settings
+    /// removes it from every session that had it; see `updateSettings`.)
     public func roleChoices(for id: UUID) -> [SessionRole] {
-        var choices = settings.roles.map { SessionRole($0) }
-        if let current = state.workspace.session(id)?.role, !current.isNone,
-           !choices.contains(where: { $0.rawValue.caseInsensitiveCompare(current.rawValue) == .orderedSame }) {
-            choices.append(current)
+        settings.tagNames.map { SessionRole($0) }
+    }
+
+    /// Finds a catalog tag by name (case-insensitive), or creates and
+    /// appends one with the next palette colour.
+    private func resolvedTag(named name: String) -> Tag {
+        if let existing = state.settings.tags.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return existing
         }
-        return choices
+        let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        return tag
     }
 
     /// Deletes the session from Claudio, and with `.everywhere` from Claude
@@ -1184,10 +1201,11 @@ public final class AppModel {
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
         let background = runsInBackground(prompt: prompt)
+        let tagID = request.role.isNone ? nil : resolvedTag(named: request.role.rawValue).id
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
-                              role: request.role,
+                              tags: tagID.map { [$0] } ?? [],
                               workingDirectory: project.path,
                               model: request.model ?? state.settings.defaultModel,
                               permissionMode: request.permissionMode,
@@ -1558,7 +1576,7 @@ public final class AppModel {
     private func addCopy(of originalID: UUID, agentID: String) {
         guard let original = state.workspace.session(originalID) else { return }
         var copy = Session(projectID: original.projectID, hasConversation: true, name: "\(original.name) (copy)",
-                           role: original.role, workingDirectory: original.workingDirectory, status: .working,
+                           tags: original.tags, workingDirectory: original.workingDirectory, status: .working,
                            model: original.model, permissionMode: original.permissionMode, createdAt: now())
         copy.agentID = agentID
         copy.hasCustomName = true
@@ -2063,7 +2081,20 @@ public final class AppModel {
 
     public func updateSettings(_ settings: AppSettings) {
         let old = state.settings.assistant
+        let removedTagIDs = Set(state.settings.tags.map(\.id)).subtracting(settings.tags.map(\.id))
         state.settings = settings
+        if !removedTagIDs.isEmpty {
+            // A tag removed from the catalog is removed everywhere it was
+            // used, like deleting a label on GitHub.
+            for session in state.workspace.sessions where session.tags.contains(where: removedTagIDs.contains) {
+                state.workspace.updateSession(session.id) { $0.tags.removeAll(where: removedTagIDs.contains) }
+            }
+            for project in state.workspace.projects {
+                for folder in project.folders where folder.defaultTags.contains(where: removedTagIDs.contains) {
+                    state.workspace.updateFolder(folder.id) { $0.defaultTags.removeAll(where: removedTagIDs.contains) }
+                }
+            }
+        }
         save()
         assistantSettingsChanged(from: old, to: settings.assistant)
     }

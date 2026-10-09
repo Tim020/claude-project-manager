@@ -477,13 +477,17 @@ private struct RoleSettings: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .onAppear { roles = model.settings.roles }
+        .onAppear { roles = model.settings.tagNames }
         .onDisappear(perform: save)
     }
 
     private func save() {
         var settings = model.settings
-        settings.roles = AppSettings.cleanRoles(roles)
+        let names = AppSettings.cleanRoles(roles)
+        settings.tags = names.enumerated().map { index, name in
+            settings.tags.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                ?? Tag(name: name, colorHex: Tag.palette[index % Tag.palette.count])
+        }
         if settings != model.settings { model.updateSettings(settings) }
     }
 }

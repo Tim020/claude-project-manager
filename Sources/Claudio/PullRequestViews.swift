@@ -682,10 +682,11 @@ private struct SessionChips: View {
         } else {
             HStack(spacing: 4) {
                 ForEach(sessions.prefix(3)) { session in
+                    let role = model.role(of: session)
                     Button { model.select(session.id) } label: {
                         HStack(spacing: 5) {
                             StatusDot(status: session.status, size: 6)
-                            Text(session.role.isNone ? "SESSION" : session.role.label)
+                            Text(role.isNone ? "SESSION" : role.label)
                                 .font(DS.font(10, .extraBold))
                                 .kerning(0.4)
                                 .foregroundStyle(DS.muted)
@@ -992,6 +993,7 @@ private struct PullRequestCard: View {
         return VStack(alignment: .leading, spacing: 10) {
             ColumnCaption(text: "SESSIONS")
             ForEach(sessions) { session in
+                let role = model.role(of: session)
                 Button { model.select(session.id) } label: {
                     HStack(alignment: .top, spacing: 9) {
                         StatusDot(status: session.status)
@@ -1002,8 +1004,8 @@ private struct PullRequestCard: View {
                                     .font(DS.font(13.5))
                                     .foregroundStyle(DS.text)
                                     .lineLimit(1)
-                                if !session.role.isNone {
-                                    Text(session.role.label)
+                                if !role.isNone {
+                                    Text(role.label)
                                         .font(DS.font(10.5, .extraBold))
                                         .kerning(0.4)
                                         .foregroundStyle(DS.muted)

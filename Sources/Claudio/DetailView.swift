@@ -405,13 +405,14 @@ private struct TabItem: View {
         icon
         switch tab {
         case .session(let session):
+            let role = model.role(of: session)
             Text(session.name)
                 .lineLimit(1)
-            if !session.role.isNone {
-                Text(session.role.label)
+            if !role.isNone {
+                Text(role.label)
                     .font(DS.font(11))
                     .foregroundStyle(DS.dim)
-                    .help("Role: \(session.role.rawValue)")
+                    .help("Role: \(role.rawValue)")
             }
             if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
                 // Tabs come from several folders: say where this one lives.

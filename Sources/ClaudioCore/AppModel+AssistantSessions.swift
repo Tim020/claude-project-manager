@@ -149,7 +149,7 @@ extension AppModel {
     /// with its skills.
     public func planSessionDraft(forItem item: PlanItem, inProject projectID: UUID) -> PlanSessionDraft {
         PlanSessionDraft(name: item.title, folderID: nil,
-                         role: SessionRole.infer(fromName: item.title, roles: settings.roles),
+                         role: SessionRole.infer(fromName: item.title, roles: settings.tagNames),
                          promptBody: openingPromptBody(forItem: item, inProject: projectID),
                          skills: suggestedSkills(forItem: item, inProject: projectID))
     }

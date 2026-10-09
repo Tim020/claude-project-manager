@@ -14,8 +14,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var useBackgroundAgents: Bool
     /// Width of the resizable sidebar, in points.
     public var sidebarWidth: Double
-    /// The roles offered for new sessions (editable in Settings).
-    public var roles: [String]
+    /// The tag catalog: names and colours offered for sessions and folders.
+    public var tags: [Tag]
+    /// Convenience for code that only needs the names (role inference, the
+    /// transitional single-pick pickers).
+    public var tagNames: [String] { tags.map(\.name) }
     public var notifications = NotificationSettings()
     /// The sidebar only shows sessions active within this many days (plus
     /// ones working, awaiting input or open in a tab). 0 shows every session.
@@ -58,6 +61,22 @@ public struct AppSettings: Codable, Equatable, Sendable {
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 
+    /// Drops blank names and case-insensitive duplicates, keeping the first.
+    public static func cleanTags(_ tags: [Tag]) -> [Tag] {
+        var seen = Set<String>()
+        return tags.filter { !$0.name.isEmpty && seen.insert($0.name.lowercased()).inserted }
+    }
+
+    /// Builds a catalog from an older file's plain role names: the three
+    /// built-in names keep their fixed ids and colours, custom ones get a
+    /// fresh id and a colour from the palette.
+    static func migratedTags(fromRoleNames names: [String]) -> [Tag] {
+        cleanTags(AppSettings.cleanRoles(names).enumerated().map { index, name in
+            Tag.defaults.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                ?? Tag(name: name, colorHex: Tag.palette[index % Tag.palette.count])
+        })
+    }
+
     public static let sidebarWidthRange: ClosedRange<Double> = 220...520
 
     public static func clampSidebarWidth(_ width: Double) -> Double {
@@ -73,28 +92,36 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public init(claudePath: String? = nil, defaultModel: String? = nil, defaultPermissionMode: PermissionMode = .auto,
                 useBackgroundAgents: Bool = true, sidebarWidth: Double = 290,
-                roles: [String] = SessionRole.defaultNames) {
+                tags: [Tag] = Tag.defaults) {
         self.claudePath = claudePath
         self.defaultModel = defaultModel
         self.defaultPermissionMode = defaultPermissionMode
         self.useBackgroundAgents = useBackgroundAgents
         self.sidebarWidth = AppSettings.clampSidebarWidth(sidebarWidth)
-        self.roles = AppSettings.cleanRoles(roles)
+        self.tags = AppSettings.cleanTags(tags)
     }
 
     private enum LegacyKeys: String, CodingKey {
-        case showFilesInspector
+        case showFilesInspector, roles
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let tags: [Tag]
+        if let decoded = try c.decodeIfPresent([Tag].self, forKey: .tags) {
+            tags = decoded
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            let roleNames = try legacy.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames
+            tags = AppSettings.migratedTags(fromRoleNames: roleNames)
+        }
         self.init(
             claudePath: try c.decodeIfPresent(String.self, forKey: .claudePath),
             defaultModel: try c.decodeIfPresent(String.self, forKey: .defaultModel),
             defaultPermissionMode: try c.decodeIfPresent(PermissionMode.self, forKey: .defaultPermissionMode) ?? .auto,
             useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
-            roles: try c.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames)
+            tags: tags)
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
         defaultBackgroundPermissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .defaultBackgroundPermissionMode) ?? .auto
         if let tools = try c.decodeIfPresent(ToolWindows.self, forKey: .toolWindows) {
@@ -160,8 +187,8 @@ public struct AssistantAppSettings: Codable, Equatable, Sendable {
 }
 
 public struct PersistedState: Codable, Equatable, Sendable {
-    /// 2: the default permission mode for new sessions became Auto.
-    public static let currentVersion = 2
+    /// 3: roles became tags (`AppSettings.tags`, `Session.tags`).
+    public static let currentVersion = 3
     public var version = PersistedState.currentVersion
     public var workspace = Workspace()
     public var settings = AppSettings()
@@ -176,6 +203,24 @@ public struct PersistedState: Codable, Equatable, Sendable {
         if version < 2 && settings.defaultPermissionMode == .standard {
             // "Ask" was the old default rather than a choice; Claude agents default to Auto.
             settings.defaultPermissionMode = .auto
+        }
+        if version < 3 {
+            // `AppSettings.init(from:)` has already turned any old `roles`
+            // list into the catalog; resolve each session's stashed legacy
+            // role name against it, growing the catalog for names that
+            // aren't in it (an "orphaned" role, same tolerance as before).
+            var catalog = settings.tags
+            for session in workspace.sessions {
+                guard let legacyName = session.legacyRoleName, !legacyName.isEmpty else { continue }
+                let tag = catalog.first { $0.name.caseInsensitiveCompare(legacyName) == .orderedSame }
+                    ?? { let new = Tag(name: legacyName, colorHex: Tag.palette[catalog.count % Tag.palette.count])
+                         catalog.append(new); return new }()
+                workspace.updateSession(session.id) {
+                    $0.tags = [tag.id]
+                    $0.legacyRoleName = nil
+                }
+            }
+            settings.tags = catalog
         }
         version = PersistedState.currentVersion
     }
@@ -256,18 +301,23 @@ public struct JSONFileStore: StateStore {
 }
 
 extension Session {
+    private enum LegacyKeys: String, CodingKey {
+        case role
+    }
+
     /// Tolerant decoding so state files written by older versions still load.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let name = try c.decode(String.self, forKey: .name)
         let createdAt = try c.decode(Date.self, forKey: .createdAt)
+        let tags = try c.decodeIfPresent([Tag.ID].self, forKey: .tags)
         self.init(
             id: try c.decode(UUID.self, forKey: .id),
             projectID: try c.decode(UUID.self, forKey: .projectID),
             claudeSessionID: try c.decodeIfPresent(String.self, forKey: .claudeSessionID),
             hasConversation: try c.decodeIfPresent(Bool.self, forKey: .hasConversation) ?? false,
             name: name,
-            role: try c.decodeIfPresent(SessionRole.self, forKey: .role),
+            tags: tags ?? [],
             workingDirectory: try c.decode(String.self, forKey: .workingDirectory),
             status: try c.decodeIfPresent(SessionStatus.self, forKey: .status) ?? .completed,
             summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "",
@@ -282,6 +332,16 @@ extension Session {
             createdAt: createdAt,
             lastActivity: try c.decodeIfPresent(Date.self, forKey: .lastActivity) ?? createdAt,
             isArchived: try c.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false)
+        if tags == nil {
+            // No `tags` key: an older file. Stash its `role` string (which
+            // may itself be in the even-older lowercase-fixed-value shape)
+            // for `PersistedState`'s v3 migration to resolve against the
+            // catalog, once it knows what that catalog is.
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            if let role = try legacy.decodeIfPresent(SessionRole.self, forKey: .role), !role.isNone {
+                self.legacyRoleName = role.rawValue
+            }
+        }
         self.needsAction = try c.decodeIfPresent(String.self, forKey: .needsAction)
         self.agentID = try c.decodeIfPresent(String.self, forKey: .agentID)
         self.hasCustomName = try c.decodeIfPresent(Bool.self, forKey: .hasCustomName) ?? false

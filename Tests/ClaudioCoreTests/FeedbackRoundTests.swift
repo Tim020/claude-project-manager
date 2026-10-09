@@ -173,11 +173,11 @@ final class RoleTests: XCTestCase {
     }
 
     func testEditableRoleListInSettings() throws {
-        XCTAssertEqual(AppSettings().roles, ["Code", "Review", "Research"])
+        XCTAssertEqual(AppSettings().tagNames, ["Code", "Review", "Research"])
         var settings = AppSettings()
-        settings.roles = ["Code", "Migration"]
+        settings.tags = AppSettings.migratedTags(fromRoleNames: ["Code", "Migration"])
         let decoded = try JSONFileStore.decoder.decode(AppSettings.self, from: JSONFileStore.encoder.encode(settings))
-        XCTAssertEqual(decoded.roles, ["Code", "Migration"])
+        XCTAssertEqual(decoded.tagNames, ["Code", "Migration"])
         XCTAssertEqual(AppSettings.cleanRoles([" Code ", "", "code", "Ops"]), ["Code", "Ops"], "trimmed, no blanks or duplicates")
     }
 }

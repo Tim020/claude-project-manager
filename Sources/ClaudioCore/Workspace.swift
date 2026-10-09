@@ -367,6 +367,11 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects[p].folders[f].name = newName
     }
 
+    public mutating func updateFolder(_ id: UUID, _ body: (inout Folder) -> Void) {
+        guard let (p, f) = folderIndex(id) else { return }
+        body(&projects[p].folders[f])
+    }
+
     /// Deletes the folder; its sessions become Unfiled.
     public mutating func deleteFolder(_ id: UUID) {
         guard let (p, f) = folderIndex(id) else { return }
