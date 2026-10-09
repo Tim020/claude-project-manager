@@ -239,6 +239,30 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws, before)
     }
 
+    /// The same-project variant above never enters `relocateFolder`'s
+    /// cross-project block at all (the folder's own project already
+    /// matches `projectID`), so it can't by itself prove the validation
+    /// runs before that block's mutations. A third project in the mix does:
+    /// the folder's project, the move's target project and the sibling's
+    /// project are all different, so the sibling check can only pass by
+    /// running (and throwing) before the cross-project relocation starts.
+    func testMoveFolderBeforeAcrossThreeProjectsThrowsBeforeRelocating() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let p3 = ws.addProject(path: "/code/c")
+        let moving = try ws.createFolder(in: p1, named: "Moving")
+        let s = makeSession("s", project: p1)
+        try ws.addSession(s, toFolder: moving)
+        let siblingInP3 = try ws.createFolder(in: p3, named: "SiblingInP3")
+        let before = ws
+
+        XCTAssertThrowsError(try ws.moveFolder(moving, before: siblingInP3, inProject: p2)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .folderNotFound)
+        }
+        XCTAssertEqual(ws, before, "the folder never left its own project, and its session never moved")
+    }
+
     func testMoveToFolderCandidatesExcludeItsOwnSubtreeAndCurrentParent() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code/a")
