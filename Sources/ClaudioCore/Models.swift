@@ -80,50 +80,18 @@ public extension Tag {
     ]
 }
 
-/// What a session is for: a free-form name, inferred from a tag list and
-/// used while choosing a single tag. Empty is none.
-public struct SessionRole: RawRepresentable, Codable, Hashable, Sendable {
-    public var rawValue: String
-
-    public init(rawValue: String) { self.rawValue = rawValue }
-    public init(_ name: String) { self.init(rawValue: name.trimmingCharacters(in: .whitespacesAndNewlines)) }
-
-    public static let code = SessionRole("Code")
-    public static let review = SessionRole("Review")
-    public static let research = SessionRole("Research")
-    public static let none = SessionRole("")
-    public static let defaultNames = ["Code", "Review", "Research"]
-
-    public var label: String { rawValue.uppercased() }
-    public var isNone: Bool { rawValue.isEmpty }
-
-    /// The first role whose name appears in the session name; otherwise Code
-    /// if that's in the list, or no role.
-    public static func infer(fromName name: String, roles: [String] = defaultNames) -> SessionRole {
+public extension Tag {
+    /// The id of the first catalog tag whose name appears in the given
+    /// name (e.g. a session's); otherwise Code's id if that's in the
+    /// catalog, or nil. The same heuristics as the old free-text roles.
+    static func infer(fromName name: String, in tags: [Tag]) -> Tag.ID? {
         let lower = name.lowercased()
-        if let match = roles.first(where: { !$0.isEmpty && lower.contains($0.lowercased()) }) { return SessionRole(match) }
-        if roles.contains(where: { $0.caseInsensitiveCompare("Research") == .orderedSame }),
+        if let match = tags.first(where: { !$0.name.isEmpty && lower.contains($0.name.lowercased()) }) { return match.id }
+        if let research = tags.first(where: { $0.name.caseInsensitiveCompare("Research") == .orderedSame }),
            ["spike", "explore", "options paper", "investigate options"].contains(where: lower.contains) {
-            return .research
+            return research.id
         }
-        return roles.contains(where: { $0.caseInsensitiveCompare("Code") == .orderedSame }) ? .code : .none
-    }
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        // Earlier versions stored a fixed set of lowercase values.
-        switch raw {
-        case "code": self = .code
-        case "review": self = .review
-        case "research": self = .research
-        case "other": self = .none
-        default: self.init(raw)
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
+        return tags.first { $0.name.caseInsensitiveCompare("Code") == .orderedSame }?.id
     }
 }
 

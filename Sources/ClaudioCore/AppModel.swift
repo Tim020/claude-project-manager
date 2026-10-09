@@ -6,7 +6,6 @@ public struct NewSessionRequest: Equatable, Sendable {
     /// Folder to create the session in; Unfiled when nil.
     public var folderID: UUID?
     public var name: String
-    public var role: SessionRole
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
@@ -15,12 +14,13 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var useWorktree = true
     /// The skills its prompt names (Start Session from a plan item).
     public var namedSkills: [String] = []
+    /// Tags to give the new session (already resolved ids, picked in the UI).
+    public var tagIDs: [Tag.ID] = []
 
-    public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
+    public init(projectID: UUID, folderID: UUID?, name: String, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
         self.folderID = folderID
         self.name = name
-        self.role = role
         self.prompt = prompt
         self.model = model
         self.permissionMode = permissionMode
@@ -1113,38 +1113,35 @@ public final class AppModel {
         }
     }
 
-    public func setRole(_ id: UUID, to role: SessionRole) {
-        guard let session = state.workspace.session(id) else { return }
-        let newTags: [Tag.ID] = role.isNone ? [] : [resolvedTag(named: role.rawValue).id]
-        guard session.tags != newTags else { return }
-        state.workspace.updateSession(id) { $0.tags = newTags }
+    /// A session's tags, resolved against the catalog in catalog order. An
+    /// id the catalog doesn't have (deleted since, or — for a discovered
+    /// session — never added) is silently dropped: there's nothing to
+    /// read a name or colour from.
+    public func tags(of session: Session) -> [Tag] {
+        settings.tags.filter { session.tags.contains($0.id) }
+    }
+
+    /// Sets a session's tags outright (the multi-select picker's "apply").
+    public func setTags(_ tagIDs: [Tag.ID], for id: UUID) {
+        guard let session = state.workspace.session(id), session.tags != tagIDs else { return }
+        state.workspace.updateSession(id) { $0.tags = tagIDs }
         save()
     }
 
-    /// A session's role, read from its first tag (the single-pick model,
-    /// kept while the multi-tag UI lands in a later step).
-    public func role(of session: Session) -> SessionRole {
-        guard let id = session.tags.first, let tag = settings.tags.first(where: { $0.id == id }) else { return .none }
-        return SessionRole(tag.name)
-    }
-
-    /// Roles offered for a session: the tag catalog's names. (Unlike the
-    /// old free-text roles, a tag no longer in the catalog can't be shown —
-    /// there's nothing to read a name from — so removing one from Settings
-    /// removes it from every session that had it; see `deleteTag`.)
-    public func roleChoices() -> [SessionRole] {
-        settings.tagNames.map { SessionRole($0) }
-    }
-
-    /// Finds a catalog tag by name (case-insensitive), or creates and
-    /// appends one with the next palette colour.
-    private func resolvedTag(named name: String) -> Tag {
-        if let existing = state.settings.tags.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            return existing
+    /// Adds or removes one tag from a session. Adding requires the id to
+    /// actually be in the catalog (removing never needs to check: a
+    /// dangling id is always safe to drop).
+    public func toggleTag(_ tagID: Tag.ID, on sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID) else { return }
+        var tags = session.tags
+        if let index = tags.firstIndex(of: tagID) {
+            tags.remove(at: index)
+        } else {
+            guard state.settings.tags.contains(where: { $0.id == tagID }) else { return }
+            tags.append(tagID)
         }
-        let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
-        state.settings.tags.append(tag)
-        return tag
+        state.workspace.updateSession(sessionID) { $0.tags = tags }
+        save()
     }
 
     // MARK: - Tag catalog
@@ -1353,11 +1350,11 @@ public final class AppModel {
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
         let background = runsInBackground(prompt: prompt)
-        let tagID = request.role.isNone ? nil : resolvedTag(named: request.role.rawValue).id
+        let catalogIDs = Set(state.settings.tags.map(\.id))
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
-                              tags: tagID.map { [$0] } ?? [],
+                              tags: request.tagIDs.filter(catalogIDs.contains),
                               workingDirectory: project.path,
                               model: request.model ?? state.settings.defaultModel,
                               permissionMode: request.permissionMode,

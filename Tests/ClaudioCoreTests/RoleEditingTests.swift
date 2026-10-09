@@ -2,7 +2,8 @@ import XCTest
 @testable import ClaudioCore
 
 final class RoleEditingTests: XCTestCase {
-    @MainActor private func model(role: SessionRole) throws -> (AppModel, UUID) {
+    /// A session, optionally pre-tagged with a catalog or custom tag name.
+    @MainActor private func model(tagNamed name: String? = nil) throws -> (AppModel, UUID) {
         var state = PersistedState()
         let p = state.workspace.addProject(path: "/code")
         let session = Session(projectID: p, name: "s", workingDirectory: "/code")
@@ -12,27 +13,46 @@ final class RoleEditingTests: XCTestCase {
         let model = AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                              hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
                              locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
-        if !role.isNone { model.setRole(session.id, to: role) }
+        if let name {
+            let tag = model.settings.tags.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                ?? model.addTag(named: name)!
+            model.setTags([tag.id], for: session.id)
+        }
         return (model, session.id)
     }
 
-    func testSetRoleChangesAndClearsTheRole() throws {
+    func testSetTagsAndToggleTag() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: .none)
-            model.setRole(id, to: .review)
-            XCTAssertEqual(model.workspace.session(id).map { model.role(of: $0) }, .review)
-            model.setRole(id, to: .none)
-            XCTAssertEqual(model.workspace.session(id).map { model.role(of: $0) }, SessionRole.none)
+            let (model, id) = try model()
+            model.setTags([Tag.reviewID], for: id)
+            XCTAssertEqual(model.workspace.session(id)?.tags, [Tag.reviewID])
+            model.setTags([], for: id)
+            XCTAssertEqual(model.workspace.session(id)?.tags, [])
+
+            model.toggleTag(Tag.codeID, on: id)
+            XCTAssertEqual(model.workspace.session(id)?.tags, [Tag.codeID])
+            model.toggleTag(Tag.codeID, on: id)
+            XCTAssertEqual(model.workspace.session(id)?.tags, [])
         }
     }
 
-    func testRoleChoicesMirrorTheTagCatalog() throws {
+    /// `toggleTag` adding a dangling id (not in the catalog) is a no-op.
+    func testToggleTagRefusesToAddAnIDNotInTheCatalog() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
-            var settings = model.settings
-            settings.tags = AppSettings.migratedTags(fromRoleNames: ["Code", "Review"])
-            model.updateSettings(settings)
-            XCTAssertEqual(model.roleChoices().map(\.rawValue), ["Code", "Review"])
+            let (model, id) = try model()
+            model.toggleTag(UUID(), on: id)
+            XCTAssertEqual(model.workspace.session(id)?.tags, [])
+        }
+    }
+
+    /// `tags(of:)` resolves against the catalog, in catalog order, and
+    /// drops any id the catalog doesn't have.
+    func testTagsOfResolvesInCatalogOrderAndDropsDanglingIDs() throws {
+        try MainActor.assumeIsolated {
+            let (model, id) = try model()
+            model.setTags([Tag.researchID, Tag.codeID, UUID()], for: id)
+            let session = try XCTUnwrap(model.workspace.session(id))
+            XCTAssertEqual(model.tags(of: session).map(\.name), ["Code", "Research"])
         }
     }
 
@@ -40,11 +60,11 @@ final class RoleEditingTests: XCTestCase {
 
     func testRenameTagKeepsItsIdAndSessionAssignment() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: SessionRole("Spke"))
+            let (model, id) = try model(tagNamed: "Spke")
             let tagID = try XCTUnwrap(model.workspace.session(id)?.tags.first)
             model.renameTag(tagID, to: "Spike")
             XCTAssertEqual(model.workspace.session(id)?.tags, [tagID], "same id, not a new tag")
-            XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), SessionRole("Spike"))
+            XCTAssertEqual(model.tags(of: try XCTUnwrap(model.workspace.session(id))).map(\.name), ["Spike"])
         }
     }
 
@@ -53,7 +73,7 @@ final class RoleEditingTests: XCTestCase {
     /// is expected to prevent this inline, this is just the safety net.
     func testRenameTagRefusesToCollideWithADifferentTag() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: .code)
+            let (model, id) = try model(tagNamed: "Code")
             model.addTag(named: "Spike")
             let codeID = try XCTUnwrap(model.workspace.session(id)?.tags.first)
             model.renameTag(codeID, to: "Spike")
@@ -63,7 +83,7 @@ final class RoleEditingTests: XCTestCase {
 
     func testAddTagRejectsBlankAndDuplicateNames() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
+            let (model, _) = try model()
             XCTAssertNil(model.addTag(named: "   "))
             XCTAssertNil(model.addTag(named: "Code"), "Code is already a default")
             XCTAssertNotNil(model.addTag(named: "Spike"))
@@ -73,7 +93,7 @@ final class RoleEditingTests: XCTestCase {
 
     func testRecolorTagRejectsAnInvalidHexAndKeepsTheOldColour() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
+            let (model, _) = try model()
             model.recolorTag(Tag.codeID, to: "not a colour")
             XCTAssertEqual(model.settings.tags.first { $0.id == Tag.codeID }?.colorHex, Tag.defaults.first { $0.id == Tag.codeID }?.colorHex)
             model.recolorTag(Tag.codeID, to: "#abc123")
@@ -83,7 +103,7 @@ final class RoleEditingTests: XCTestCase {
 
     func testDeleteTagCascadesToSessionsAndFolders() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: SessionRole("Spike"))
+            let (model, id) = try model(tagNamed: "Spike")
             let tagID = try XCTUnwrap(model.workspace.session(id)?.tags.first)
             let projectID = try XCTUnwrap(model.workspace.session(id)?.projectID)
             let folderID = try XCTUnwrap(model.createFolder(in: projectID))
@@ -97,7 +117,7 @@ final class RoleEditingTests: XCTestCase {
 
     func testUsageCountReportsSessionsAndFolders() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: SessionRole("Spike"))
+            let (model, id) = try model(tagNamed: "Spike")
             let tagID = try XCTUnwrap(model.workspace.session(id)?.tags.first)
             XCTAssertEqual(model.usageCount(ofTag: tagID).sessions, 1)
             XCTAssertEqual(model.usageCount(ofTag: tagID).folders, 0)
@@ -110,7 +130,7 @@ final class RoleEditingTests: XCTestCase {
     /// later must bring the session's tag back.
     func testUpdateSettingsNeverCascadesTagDeletion() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: SessionRole("Spike"))
+            let (model, id) = try model(tagNamed: "Spike")
             let tagID = try XCTUnwrap(model.workspace.session(id)?.tags.first)
             let spike = try XCTUnwrap(model.settings.tags.first { $0.id == tagID })
 
@@ -118,11 +138,11 @@ final class RoleEditingTests: XCTestCase {
             settings.tags.removeAll { $0.id == tagID }
             model.updateSettings(settings)
             XCTAssertEqual(model.workspace.session(id)?.tags, [tagID], "the session's own tags are untouched")
-            XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), .none, "but it can't be shown")
+            XCTAssertEqual(model.tags(of: try XCTUnwrap(model.workspace.session(id))), [], "but it can't be shown")
 
             settings.tags.append(spike)
             model.updateSettings(settings)
-            XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), SessionRole("Spike"), "resolves again")
+            XCTAssertEqual(model.tags(of: try XCTUnwrap(model.workspace.session(id))).map(\.name), ["Spike"], "resolves again")
         }
     }
 
@@ -131,12 +151,12 @@ final class RoleEditingTests: XCTestCase {
     /// custom tag as "removed").
     func testRestoreDefaultTagsKeepsCustomTagsAndResetsBuiltins() throws {
         try MainActor.assumeIsolated {
-            let (model, id) = try model(role: SessionRole("Spike"))
+            let (model, id) = try model(tagNamed: "Spike")
             model.renameTag(Tag.codeID, to: "Programming")
             model.restoreDefaultTags()
             XCTAssertTrue(model.settings.tagNames.contains("Spike"), "custom tag survives")
             XCTAssertTrue(model.settings.tagNames.contains("Code"), "built-in renamed back")
-            XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), SessionRole("Spike"))
+            XCTAssertEqual(model.tags(of: try XCTUnwrap(model.workspace.session(id))).map(\.name), ["Spike"])
         }
     }
 
@@ -144,7 +164,7 @@ final class RoleEditingTests: XCTestCase {
     /// even when a custom tag has taken over a built-in's name.
     func testRestoreDefaultTagsDisambiguatesACollidingCustomTag() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
+            let (model, _) = try model()
             model.deleteTag(Tag.codeID)
             model.addTag(named: "Code") // a custom tag now owns the name "Code"
             model.restoreDefaultTags()
@@ -155,15 +175,15 @@ final class RoleEditingTests: XCTestCase {
         }
     }
 
-    /// Adding a role twice without renaming the first must not silently
+    /// Adding a tag twice without renaming the first must not silently
     /// fail the second time: the placeholder name gets disambiguated.
     func testAddTagSuggestingNameDisambiguatesOnRepeatedClicks() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
-            let first = model.addTag(suggestingName: "New Role")
-            let second = model.addTag(suggestingName: "New Role")
-            XCTAssertEqual(first.name, "New Role")
-            XCTAssertEqual(second.name, "New Role 2")
+            let (model, _) = try model()
+            let first = model.addTag(suggestingName: "New Tag")
+            let second = model.addTag(suggestingName: "New Tag")
+            XCTAssertEqual(first.name, "New Tag")
+            XCTAssertEqual(second.name, "New Tag 2")
             XCTAssertNotEqual(first.id, second.id)
         }
     }
@@ -172,7 +192,7 @@ final class RoleEditingTests: XCTestCase {
     /// no churn) rather than writing identical state back out.
     func testRenamingATagToItsOwnNameIsANoOp() throws {
         try MainActor.assumeIsolated {
-            let (model, _) = try model(role: .none)
+            let (model, _) = try model()
             let before = model.settings
             model.renameTag(Tag.codeID, to: "Code")
             XCTAssertEqual(model.settings, before)

@@ -35,8 +35,7 @@ public struct DiscoveredSession: Equatable, Sendable {
     /// The tag inferred from the title, limited to the three built-in names:
     /// a freshly discovered session has no catalog to consult.
     public var inferredTagID: Tag.ID? {
-        let role = SessionRole.infer(fromName: title)
-        return role.isNone ? nil : Tag.defaults.first { $0.name.caseInsensitiveCompare(role.rawValue) == .orderedSame }?.id
+        Tag.infer(fromName: title, in: Tag.defaults)
     }
 
     public func makeSession(projectID: UUID) -> Session {

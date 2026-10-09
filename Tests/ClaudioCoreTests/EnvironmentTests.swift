@@ -229,7 +229,7 @@ final class EnvironmentGatingTests: XCTestCase {
         }
         await model.checkEnvironment()
         await MainActor.run {
-            let request = NewSessionRequest(projectID: project, folderID: nil, name: "x", role: .code, prompt: "hi", model: nil, permissionMode: .auto)
+            let request = NewSessionRequest(projectID: project, folderID: nil, name: "x", prompt: "hi", model: nil, permissionMode: .auto)
             XCTAssertNil(model.createSession(request))
             XCTAssertTrue(model.setupRequested)
             XCTAssertEqual(model.workspace.sessions.count, 1, "nothing half-created")

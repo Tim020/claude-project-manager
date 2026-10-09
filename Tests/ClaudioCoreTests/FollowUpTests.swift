@@ -549,7 +549,7 @@ final class FollowUpModelTests: XCTestCase {
     func testANewSessionsFirstFinishIsOffered() async throws {
         let f = try await makeFixture(mark: true)
         let id = try await MainActor.run { () -> UUID in
-            let request = NewSessionRequest(projectID: f.project, folderID: nil, name: "New", role: .code, prompt: "",
+            let request = NewSessionRequest(projectID: f.project, folderID: nil, name: "New", prompt: "",
                                             model: nil, permissionMode: .standard)
             let id = try XCTUnwrap(f.model.createSession(request))
             XCTAssertEqual(f.model.workspace.session(id)?.followUpMark, FollowUpMark(conversationID: "", offset: 0))

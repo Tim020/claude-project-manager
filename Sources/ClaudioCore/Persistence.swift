@@ -130,7 +130,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             tags = decoded
         } else {
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
-            let roleNames = try legacy.decodeIfPresent([String].self, forKey: .roles) ?? SessionRole.defaultNames
+            let roleNames = try legacy.decodeIfPresent([String].self, forKey: .roles) ?? Tag.defaults.map(\.name)
             tags = AppSettings.migratedTags(fromRoleNames: roleNames)
         }
         self.init(
@@ -356,8 +356,17 @@ extension Session {
             // for `PersistedState`'s v3 migration to resolve against the
             // catalog, once it knows what that catalog is.
             let legacy = try decoder.container(keyedBy: LegacyKeys.self)
-            if let role = try legacy.decodeIfPresent(SessionRole.self, forKey: .role), !role.isNone {
-                self.legacyRoleName = role.rawValue
+            if let raw = try legacy.decodeIfPresent(String.self, forKey: .role) {
+                // Even older files kept a fixed set of lowercase values.
+                let name: String
+                switch raw {
+                case "code": name = "Code"
+                case "review": name = "Review"
+                case "research": name = "Research"
+                case "other": name = ""
+                default: name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if !name.isEmpty { self.legacyRoleName = name }
             }
         }
         self.needsAction = try c.decodeIfPresent(String.self, forKey: .needsAction)

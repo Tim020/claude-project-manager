@@ -582,8 +582,8 @@ struct SessionMenu: View {
             newName = session.name
             renaming = true
         }
-        Menu("Role") {
-            RoleMenuItems(session: session)
+        Menu("Tags") {
+            TagMenuItems(session: session)
         }
         Menu("Move to Folder") {
             if let project = model.workspace.project(session.projectID) {

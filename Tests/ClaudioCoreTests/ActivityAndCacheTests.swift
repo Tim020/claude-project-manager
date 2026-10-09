@@ -96,7 +96,7 @@ final class AppModelActivityTests: XCTestCase {
         let model = try await MainActor.run { () -> AppModel in
             let model = try makeModel()
             let p = model.addProject(path: repo)
-            var request = NewSessionRequest(projectID: p, folderID: nil, name: "fix", role: .code, prompt: "Fix it", model: nil, permissionMode: .standard)
+            var request = NewSessionRequest(projectID: p, folderID: nil, name: "fix", prompt: "Fix it", model: nil, permissionMode: .standard)
             request.useWorktree = false
             model.createSession(request)
             return model
@@ -119,7 +119,7 @@ final class AppModelActivityTests: XCTestCase {
             settings.useBackgroundAgents = false
             model.updateSettings(settings)
             let p = model.addProject(path: repo)
-            let id = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "x", role: .code,
+            let id = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "x",
                                                                           prompt: "hi", model: nil, permissionMode: .standard)))
             _ = model.takePendingLaunch(id)
             model.terminalExited(id, exitCode: 2)
