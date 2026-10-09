@@ -428,23 +428,21 @@ private struct AssistantSettingsPage: View {
 
 private struct RoleSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var tags: [Tag] = []
+    @State private var confirmDelete: Tag?
 
     var body: some View {
         SettingsGroup(title: "Roles",
                       footer: "A new session picks the first role whose name appears in its name. Removing a role here removes it from every session and folder that has it.") {
-            ForEach(tags.indices, id: \.self) { index in
+            ForEach(model.settings.tags) { tag in
                 HStack(spacing: 10) {
                     Image(systemName: "tag")
                         .foregroundStyle(DS.dim)
                         .frame(width: 16)
-                    TextField("Role name", text: $tags[index].name)
+                    TextField("Role name", text: Binding(get: { tag.name }, set: { model.renameTag(tag.id, to: $0) }))
                         .textFieldStyle(.plain)
                         .font(DS.font(13.5))
-                        .onSubmit(save)
                     Button {
-                        tags.remove(at: index)
-                        save()
+                        confirmDelete = tag
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .foregroundStyle(DS.dim)
@@ -458,7 +456,7 @@ private struct RoleSettings: View {
             }
             HStack {
                 Button {
-                    tags.append(Tag(name: "", colorHex: Tag.palette[tags.count % Tag.palette.count]))
+                    model.addTag(named: "New Role")
                 } label: {
                     Label("Add Role", systemImage: "plus.circle.fill")
                         .font(DS.font(13, .semibold))
@@ -466,10 +464,9 @@ private struct RoleSettings: View {
                 .buttonStyle(.borderless)
                 .tint(DS.teal)
                 Spacer()
-                if tags.map(\.name) != SessionRole.defaultNames {
+                if model.settings.tagNames != SessionRole.defaultNames {
                     Button("Restore Defaults") {
-                        tags = Tag.defaults
-                        save()
+                        model.restoreDefaultTags()
                     }
                     .buttonStyle(.borderless)
                 }
@@ -477,17 +474,21 @@ private struct RoleSettings: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .onAppear { tags = model.settings.tags }
-        .onDisappear(perform: save)
+        .confirmationDialog("Remove “\(confirmDelete?.name ?? "")”?",
+                             isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+                             presenting: confirmDelete) { tag in
+            Button("Remove", role: .destructive) { model.deleteTag(tag.id) }
+        } message: { tag in
+            Text(RoleSettings.usageMessage(for: model.usageCount(ofTag: tag.id)))
+        }
     }
 
-    /// Edits names on the existing `Tag` values (never recreates them), so
-    /// retyping a name keeps its id and colour instead of orphaning the old
-    /// tag and silently untagging every session that had it.
-    private func save() {
-        var settings = model.settings
-        settings.tags = AppSettings.cleanTags(tags)
-        if settings != model.settings { model.updateSettings(settings) }
+    static func usageMessage(for usage: (sessions: Int, folders: Int)) -> String {
+        guard usage.sessions + usage.folders > 0 else { return "Not used by any session or folder." }
+        var parts: [String] = []
+        if usage.sessions > 0 { parts.append("\(usage.sessions) session\(usage.sessions == 1 ? "" : "s")") }
+        if usage.folders > 0 { parts.append("\(usage.folders) folder\(usage.folders == 1 ? "" : "s")") }
+        return "Used by \(parts.joined(separator: " and ")). This removes it from \(parts.count == 1 && usage.sessions + usage.folders == 1 ? "it" : "all of them")."
     }
 }
 

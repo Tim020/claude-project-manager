@@ -1100,7 +1100,7 @@ public final class AppModel {
     /// Roles offered for a session: the tag catalog's names. (Unlike the
     /// old free-text roles, a tag no longer in the catalog can't be shown —
     /// there's nothing to read a name from — so removing one from Settings
-    /// removes it from every session that had it; see `updateSettings`.)
+    /// removes it from every session that had it; see `deleteTag`.)
     public func roleChoices() -> [SessionRole] {
         settings.tagNames.map { SessionRole($0) }
     }
@@ -1114,6 +1114,86 @@ public final class AppModel {
         let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
         state.settings.tags.append(tag)
         return tag
+    }
+
+    // MARK: - Tag catalog
+    //
+    // Each of these touches exactly the one tag named, by id, and never
+    // infers a deletion from comparing whole arrays. `updateSettings` used
+    // to apply the whole `AppSettings` and cascade-delete any tag id that
+    // dropped out of the diff — which meant a rename (matched back by
+    // text), a name collision, or Restore Defaults could each silently
+    // strip an unrelated tag from every session and folder that had it.
+    // `deleteTag` is the only one of these that touches sessions/folders.
+
+    /// Appends a new tag with the next palette colour. No-op (returns nil)
+    /// for a blank name or one that collides with an existing tag.
+    @discardableResult
+    public func addTag(named name: String) -> Tag? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !state.settings.tags.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return nil }
+        let tag = Tag(name: trimmed, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// Renames a catalog tag in place, keeping its id and colour. No-op for
+    /// a blank name or one that collides with a *different* existing tag.
+    public func renameTag(_ id: Tag.ID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = state.settings.tags.firstIndex(where: { $0.id == id }),
+              !state.settings.tags.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
+        else { return }
+        state.settings.tags[index].name = trimmed
+        save()
+    }
+
+    /// Recolours a catalog tag in place. No-op for an invalid hex value.
+    public func recolorTag(_ id: Tag.ID, to colorHex: String) {
+        guard let index = state.settings.tags.firstIndex(where: { $0.id == id }), let normalized = Tag.normalizedHex(colorHex) else { return }
+        state.settings.tags[index].colorHex = normalized
+        save()
+    }
+
+    /// Removes a catalog tag and strips it from every session and folder
+    /// that had it, like deleting a label on GitHub. The only tag mutation
+    /// that reaches into sessions/folders.
+    public func deleteTag(_ id: Tag.ID) {
+        guard state.settings.tags.contains(where: { $0.id == id }) else { return }
+        state.settings.tags.removeAll { $0.id == id }
+        for session in state.workspace.sessions where session.tags.contains(id) {
+            state.workspace.updateSession(session.id) { $0.tags.removeAll { $0 == id } }
+        }
+        for project in state.workspace.projects {
+            for folder in project.folders where folder.defaultTags.contains(id) {
+                state.workspace.updateFolder(folder.id) { $0.defaultTags.removeAll { $0 == id } }
+            }
+        }
+        save()
+    }
+
+    /// How many sessions and folders carry a tag, for a delete confirmation.
+    public func usageCount(ofTag id: Tag.ID) -> (sessions: Int, folders: Int) {
+        let sessions = state.workspace.sessions.filter { $0.tags.contains(id) }.count
+        let folders = state.workspace.projects.flatMap(\.folders).filter { $0.defaultTags.contains(id) }.count
+        return (sessions, folders)
+    }
+
+    /// Restores the three built-in tags without touching custom ones:
+    /// missing defaults are re-added, and ones still present are reset to
+    /// their default name and colour.
+    public func restoreDefaultTags() {
+        var tags = state.settings.tags
+        for builtin in Tag.defaults {
+            if let index = tags.firstIndex(where: { $0.id == builtin.id }) {
+                tags[index] = builtin
+            } else {
+                tags.append(builtin)
+            }
+        }
+        state.settings.tags = tags
+        save()
     }
 
     /// Deletes the session from Claudio, and with `.everywhere` from Claude
@@ -1868,6 +1948,12 @@ public final class AppModel {
         state.workspace.updateSession(sessionID, body)
     }
 
+    /// For tests: changes a folder directly (e.g. its `defaultTags`, before
+    /// the real editing UI for them lands).
+    func applyTestFolderChange(_ folderID: UUID, _ body: (inout Folder) -> Void) {
+        state.workspace.updateFolder(folderID, body)
+    }
+
     /// For tests: gives a session a conversation, as its first prompt would.
     func applyTestConversation(_ sessionID: UUID) {
         state.workspace.updateSession(sessionID) { $0.hasConversation = true }
@@ -2079,22 +2165,18 @@ public final class AppModel {
         save()
     }
 
+    /// Applies a whole new `AppSettings`. Deliberately doesn't try to infer
+    /// tag deletions by diffing `tags` against the old value — that doesn't
+    /// distinguish "the user deleted a tag" from "this settings snapshot is
+    /// stale/partial," and treating every dropped id as a deletion is how
+    /// a rename, a name collision, or Restore Defaults each turned into
+    /// mass data loss. Use `addTag`/`renameTag`/`recolorTag`/`deleteTag`
+    /// instead for catalog edits; `deleteTag` is the only one of those that
+    /// touches sessions/folders. A dropped id here just becomes a harmless
+    /// dangling reference (same tolerance as an orphaned id from anywhere else).
     public func updateSettings(_ settings: AppSettings) {
         let old = state.settings.assistant
-        let removedTagIDs = Set(state.settings.tags.map(\.id)).subtracting(settings.tags.map(\.id))
         state.settings = settings
-        if !removedTagIDs.isEmpty {
-            // A tag removed from the catalog is removed everywhere it was
-            // used, like deleting a label on GitHub.
-            for session in state.workspace.sessions where session.tags.contains(where: removedTagIDs.contains) {
-                state.workspace.updateSession(session.id) { $0.tags.removeAll(where: removedTagIDs.contains) }
-            }
-            for project in state.workspace.projects {
-                for folder in project.folders where folder.defaultTags.contains(where: removedTagIDs.contains) {
-                    state.workspace.updateFolder(folder.id) { $0.defaultTags.removeAll(where: removedTagIDs.contains) }
-                }
-            }
-        }
         save()
         assistantSettingsChanged(from: old, to: settings.assistant)
     }
