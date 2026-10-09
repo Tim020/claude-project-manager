@@ -1169,15 +1169,41 @@ public final class AppModel {
         return tag
     }
 
+    /// Appends a new tag named `base`, or `base 2`/`base 3`/… if that's
+    /// taken — for "Add Role"/"Add Tag" buttons, where the name is a
+    /// placeholder the user is about to retype, not something that should
+    /// silently fail to appear on a second click.
+    @discardableResult
+    public func addTag(suggestingName base: String) -> Tag {
+        let name = AppModel.uniqueName(base, avoiding: state.settings.tags)
+        let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
     /// Renames a catalog tag in place, keeping its id and colour. No-op for
     /// a blank name or one that collides with a *different* existing tag.
     public func renameTag(_ id: Tag.ID, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = state.settings.tags.firstIndex(where: { $0.id == id }),
+              state.settings.tags[index].name != trimmed,
               !state.settings.tags.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
         else { return }
         state.settings.tags[index].name = trimmed
         save()
+    }
+
+    /// The first of `base`, `base 2`, `base 3`, … that no tag (other than
+    /// `exceptID`) already has, case-insensitively.
+    private static func uniqueName(_ base: String, avoiding tags: [Tag], exceptID: Tag.ID? = nil) -> String {
+        var name = base
+        var suffix = 2
+        while tags.contains(where: { $0.id != exceptID && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            name = "\(base) \(suffix)"
+            suffix += 1
+        }
+        return name
     }
 
     /// Recolours a catalog tag in place. No-op for an invalid hex value.
@@ -1217,6 +1243,17 @@ public final class AppModel {
     public func restoreDefaultTags() {
         var tags = state.settings.tags
         for builtin in Tag.defaults {
+            // A custom tag may have since taken this built-in's name (via
+            // rename, or because it was deleted and the name freed up):
+            // move it aside first, rather than end up with two tags of the
+            // same name — the one invariant every other tag edit upholds.
+            if let collision = tags.firstIndex(where: { $0.id != builtin.id && $0.name.caseInsensitiveCompare(builtin.name) == .orderedSame }) {
+                // `builtin` doesn't have its own entry in `tags` yet (that's
+                // the point — its name is about to be reclaimed), so its
+                // claim on the name has to be added explicitly or
+                // `uniqueName` would see no collision at all and no-op.
+                tags[collision].name = AppModel.uniqueName(builtin.name, avoiding: tags + [builtin], exceptID: tags[collision].id)
+            }
             if let index = tags.firstIndex(where: { $0.id == builtin.id }) {
                 tags[index] = builtin
             } else {

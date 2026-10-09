@@ -436,9 +436,7 @@ private struct RoleSettings: View {
             ForEach(model.settings.tags) { tag in
                 HStack(spacing: 10) {
                     TagColorButton(tag: tag)
-                    TextField("Role name", text: Binding(get: { tag.name }, set: { model.renameTag(tag.id, to: $0) }))
-                        .textFieldStyle(.plain)
-                        .font(DS.font(13.5))
+                    TagNameField(tag: tag)
                     Button {
                         confirmDelete = tag
                     } label: {
@@ -454,7 +452,7 @@ private struct RoleSettings: View {
             }
             HStack {
                 Button {
-                    model.addTag(named: "New Role")
+                    model.addTag(suggestingName: "New Role")
                 } label: {
                     Label("Add Role", systemImage: "plus.circle.fill")
                         .font(DS.font(13, .semibold))
@@ -494,6 +492,46 @@ private struct RoleSettings: View {
         if usage.sessions > 0 { parts.append("\(usage.sessions) session\(usage.sessions == 1 ? "" : "s")") }
         if usage.folders > 0 { parts.append("\(usage.folders) folder\(usage.folders == 1 ? "" : "s")") }
         return "Used by \(parts.joined(separator: " and ")). This removes it from \(parts.count == 1 && usage.sessions + usage.folders == 1 ? "it" : "all of them")."
+    }
+}
+
+/// A tag's name field. Edits a local buffer and only calls into the model
+/// on Return or on losing focus — not on every keystroke (CLAUDE.md's
+/// "mutate a copy, assign only when it differs" rule), and so a trailing
+/// space while typing a multi-word name isn't trimmed away mid-edit. If
+/// the commit is rejected (blank, or collides with a different tag) the
+/// field snaps back to the catalog's actual value, which is the feedback.
+private struct TagNameField: View {
+    @Environment(AppModel.self) private var model
+    let tag: Tag
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(tag: Tag) {
+        self.tag = tag
+        self._text = State(initialValue: tag.name)
+    }
+
+    var body: some View {
+        TextField("Role name", text: $text)
+            .textFieldStyle(.plain)
+            .font(DS.font(13.5))
+            .focused($isFocused)
+            .onSubmit(commit)
+            .onChange(of: isFocused) { wasFocused, nowFocused in
+                if wasFocused && !nowFocused { commit() }
+            }
+            .onChange(of: tag.name) { _, newValue in
+                // Another edit changed this tag's name (e.g. Restore
+                // Defaults moving a collision aside): follow it, as long
+                // as this field isn't mid-edit.
+                if !isFocused { text = newValue }
+            }
+    }
+
+    private func commit() {
+        model.renameTag(tag.id, to: text)
+        text = model.settings.tags.first { $0.id == tag.id }?.name ?? tag.name
     }
 }
 

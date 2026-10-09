@@ -139,4 +139,43 @@ final class RoleEditingTests: XCTestCase {
             XCTAssertEqual(model.role(of: try XCTUnwrap(model.workspace.session(id))), SessionRole("Spike"))
         }
     }
+
+    /// Restoring defaults must never leave two tags with the same name,
+    /// even when a custom tag has taken over a built-in's name.
+    func testRestoreDefaultTagsDisambiguatesACollidingCustomTag() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try model(role: .none)
+            model.deleteTag(Tag.codeID)
+            model.addTag(named: "Code") // a custom tag now owns the name "Code"
+            model.restoreDefaultTags()
+            XCTAssertEqual(model.settings.tags.filter { $0.name.caseInsensitiveCompare("Code") == .orderedSame }.count, 1,
+                           "exactly one \"Code\" survives: the restored built-in")
+            XCTAssertTrue(model.settings.tagNames.contains("Code 2"), "the custom one was renamed aside")
+            XCTAssertEqual(model.settings.tags.first { $0.id == Tag.codeID }?.name, "Code")
+        }
+    }
+
+    /// Adding a role twice without renaming the first must not silently
+    /// fail the second time: the placeholder name gets disambiguated.
+    func testAddTagSuggestingNameDisambiguatesOnRepeatedClicks() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try model(role: .none)
+            let first = model.addTag(suggestingName: "New Role")
+            let second = model.addTag(suggestingName: "New Role")
+            XCTAssertEqual(first.name, "New Role")
+            XCTAssertEqual(second.name, "New Role 2")
+            XCTAssertNotEqual(first.id, second.id)
+        }
+    }
+
+    /// Renaming a tag to the name it already has must be a no-op (no save,
+    /// no churn) rather than writing identical state back out.
+    func testRenamingATagToItsOwnNameIsANoOp() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try model(role: .none)
+            let before = model.settings
+            model.renameTag(Tag.codeID, to: "Code")
+            XCTAssertEqual(model.settings, before)
+        }
+    }
 }
