@@ -71,6 +71,16 @@ final class RoleEditingTests: XCTestCase {
         }
     }
 
+    func testRecolorTagRejectsAnInvalidHexAndKeepsTheOldColour() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try model(role: .none)
+            model.recolorTag(Tag.codeID, to: "not a colour")
+            XCTAssertEqual(model.settings.tags.first { $0.id == Tag.codeID }?.colorHex, Tag.defaults.first { $0.id == Tag.codeID }?.colorHex)
+            model.recolorTag(Tag.codeID, to: "#abc123")
+            XCTAssertEqual(model.settings.tags.first { $0.id == Tag.codeID }?.colorHex, "ABC123")
+        }
+    }
+
     func testDeleteTagCascadesToSessionsAndFolders() throws {
         try MainActor.assumeIsolated {
             let (model, id) = try model(role: SessionRole("Spike"))

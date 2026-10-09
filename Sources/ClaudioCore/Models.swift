@@ -54,11 +54,15 @@ public struct Tag: Identifiable, Codable, Equatable, Hashable, Sendable {
     /// Whether dark text reads better than white on this tag's colour
     /// (relative luminance, the same idea GitHub uses for label text).
     public var prefersDarkText: Bool {
-        guard let value = Int(colorHex, radix: 16) else { return true }
-        let r = Double((value >> 16) & 0xFF) / 255
-        let g = Double((value >> 8) & 0xFF) / 255
-        let b = Double(value & 0xFF) / 255
+        guard let (r, g, b) = Tag.rgb(ofHex: colorHex) else { return true }
         return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6
+    }
+
+    /// Parses six hex digits (already normalized — no "#") into 0–1 RGB
+    /// components, for any UI layer to turn into its own colour type.
+    public static func rgb(ofHex hex: String) -> (r: Double, g: Double, b: Double)? {
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        return (Double((value >> 16) & 0xFF) / 255, Double((value >> 8) & 0xFF) / 255, Double(value & 0xFF) / 255)
     }
 }
 

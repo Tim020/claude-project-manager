@@ -82,6 +82,13 @@ extension Color {
                   blue: Double(hex & 0xFF) / 255,
                   opacity: opacity)
     }
+
+    /// A tag's stored colour (always valid six-digit hex by the time it's
+    /// on a `Tag`; falls back to grey if it somehow isn't).
+    init(tagHex: String) {
+        guard let (r, g, b) = Tag.rgb(ofHex: tagHex) else { self = DS.dim; return }
+        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
 }
 
 /// Registers the bundled Nunito Sans faces with Core Text at launch.

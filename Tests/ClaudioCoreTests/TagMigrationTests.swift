@@ -15,6 +15,15 @@ final class TagTests: XCTestCase {
         XCTAssertEqual(Tag(name: "x", colorHex: "nope").colorHex, Tag.palette[0])
     }
 
+    func testRGBParsing() throws {
+        let rgb = try XCTUnwrap(Tag.rgb(ofHex: "FF8000"))
+        XCTAssertEqual(rgb.r, 1.0, accuracy: 0.001)
+        XCTAssertEqual(rgb.g, 128.0 / 255, accuracy: 0.001)
+        XCTAssertEqual(rgb.b, 0, accuracy: 0.001)
+        XCTAssertNil(Tag.rgb(ofHex: "not a colour"))
+        XCTAssertNil(Tag.rgb(ofHex: "fff"), "must already be the normalized six-digit form")
+    }
+
     func testPrefersDarkTextOnLightColoursOnly() {
         XCTAssertTrue(Tag(name: "light", colorHex: "FFD23F").prefersDarkText)
         XCTAssertFalse(Tag(name: "dark", colorHex: "1A1A1A").prefersDarkText)

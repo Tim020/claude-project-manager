@@ -435,9 +435,7 @@ private struct RoleSettings: View {
                       footer: "A new session picks the first role whose name appears in its name. Removing a role here removes it from every session and folder that has it.") {
             ForEach(model.settings.tags) { tag in
                 HStack(spacing: 10) {
-                    Image(systemName: "tag")
-                        .foregroundStyle(DS.dim)
-                        .frame(width: 16)
+                    TagColorButton(tag: tag)
                     TextField("Role name", text: Binding(get: { tag.name }, set: { model.renameTag(tag.id, to: $0) }))
                         .textFieldStyle(.plain)
                         .font(DS.font(13.5))
@@ -464,7 +462,7 @@ private struct RoleSettings: View {
                 .buttonStyle(.borderless)
                 .tint(DS.teal)
                 Spacer()
-                if model.settings.tagNames != SessionRole.defaultNames {
+                if !Self.matchesDefaults(model.settings.tags) {
                     Button("Restore Defaults") {
                         model.restoreDefaultTags()
                     }
@@ -483,12 +481,89 @@ private struct RoleSettings: View {
         }
     }
 
+    /// Whether the three built-in tags are all still present with their
+    /// default name *and* colour (custom tags don't affect this — Restore
+    /// Defaults never touches them).
+    static func matchesDefaults(_ tags: [Tag]) -> Bool {
+        Tag.defaults.allSatisfy { builtin in tags.first { $0.id == builtin.id } == builtin }
+    }
+
     static func usageMessage(for usage: (sessions: Int, folders: Int)) -> String {
         guard usage.sessions + usage.folders > 0 else { return "Not used by any session or folder." }
         var parts: [String] = []
         if usage.sessions > 0 { parts.append("\(usage.sessions) session\(usage.sessions == 1 ? "" : "s")") }
         if usage.folders > 0 { parts.append("\(usage.folders) folder\(usage.folders == 1 ? "" : "s")") }
         return "Used by \(parts.joined(separator: " and ")). This removes it from \(parts.count == 1 && usage.sessions + usage.folders == 1 ? "it" : "all of them")."
+    }
+}
+
+/// A tag's colour swatch; click to pick from the palette or type a hex
+/// value. The hex field validates as you type: an invalid value is flagged
+/// and never applied, so the tag's colour can't be left invalid.
+private struct TagColorButton: View {
+    @Environment(AppModel.self) private var model
+    let tag: Tag
+    @State private var showPicker = false
+    @State private var hexInput = ""
+    @State private var hexIsInvalid = false
+
+    private static let columns = Array(repeating: GridItem(.fixed(22), spacing: 6), count: 5)
+
+    var body: some View {
+        Button {
+            hexInput = tag.colorHex
+            hexIsInvalid = false
+            showPicker = true
+        } label: {
+            Circle()
+                .fill(Color(tagHex: tag.colorHex))
+                .frame(width: 16, height: 16)
+                .overlay(Circle().strokeBorder(DS.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Change this role's colour")
+        .popover(isPresented: $showPicker) {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: Self.columns, spacing: 6) {
+                    ForEach(Tag.palette, id: \.self) { hex in
+                        Button {
+                            model.recolorTag(tag.id, to: hex)
+                            hexInput = hex
+                            hexIsInvalid = false
+                        } label: {
+                            Circle()
+                                .fill(Color(tagHex: hex))
+                                .frame(width: 20, height: 20)
+                                .overlay(Circle().strokeBorder(.white, lineWidth: tag.colorHex.caseInsensitiveCompare(hex) == .orderedSame ? 2 : 0))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text("#").foregroundStyle(DS.dim).font(DS.mono(12))
+                    TextField("RRGGBB", text: $hexInput)
+                        .textFieldStyle(.plain)
+                        .font(DS.mono(12))
+                        .onChange(of: hexInput) { _, value in
+                            if let normalized = Tag.normalizedHex(value) {
+                                hexIsInvalid = false
+                                model.recolorTag(tag.id, to: normalized)
+                            } else {
+                                hexIsInvalid = true
+                            }
+                        }
+                }
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 4).strokeBorder(hexIsInvalid ? DS.red : DS.border, lineWidth: 1))
+                if hexIsInvalid {
+                    Text("Not a valid colour — keeping the last one.")
+                        .font(DS.font(10.5))
+                        .foregroundStyle(DS.red)
+                }
+            }
+            .padding(12)
+            .frame(width: 160)
+        }
     }
 }
 
