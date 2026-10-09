@@ -138,8 +138,8 @@ final class GlobalTabsTests: XCTestCase {
             var settings = model.settings
             settings.useBackgroundAgents = false
             model.updateSettings(settings)
-            let inFolder = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: f, name: "in folder", role: .code, prompt: "", model: nil, permissionMode: .auto)))
-            let loose = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "loose", role: .code, prompt: "", model: nil, permissionMode: .auto)))
+            let inFolder = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: f, name: "in folder", prompt: "", model: nil, permissionMode: .auto)))
+            let loose = try XCTUnwrap(model.createSession(NewSessionRequest(projectID: p, folderID: nil, name: "loose", prompt: "", model: nil, permissionMode: .auto)))
             XCTAssertEqual(model.tabs.map(\.id), [inFolder, loose])
             XCTAssertTrue(model.tabsSpanFolders)
             model.splitTab(loose, to: .right, of: model.panes.focusedGroupID)
@@ -152,32 +152,27 @@ final class GlobalTabsTests: XCTestCase {
 }
 
 final class RoleTests: XCTestCase {
-    func testRolesAreFreeformAndInferredFromTheList() {
-        XCTAssertEqual(SessionRole.code.label, "CODE")
-        XCTAssertEqual(SessionRole.none.label, "")
-        XCTAssertEqual(SessionRole.infer(fromName: "pr review inline 1427", roles: ["Code", "Review"]), .review)
-        XCTAssertEqual(SessionRole.infer(fromName: "db migration", roles: ["Code", "Migration"]), SessionRole("Migration"))
-        XCTAssertEqual(SessionRole.infer(fromName: "fix the bug", roles: ["Code", "Review"]), .code, "falls back to Code when listed")
-        XCTAssertEqual(SessionRole.infer(fromName: "fix the bug", roles: ["Review"]), .none)
-    }
+    /// Legacy lowercase role value decoding is covered end-to-end by
+    /// `TagMigrationTests.testMigrationHandlesTheEvenOlderLowercaseRoleValues`
+    /// (there's no standalone `SessionRole` type left to decode directly).
+    func testTagsAreFreeformAndInferredFromTheList() {
+        let codeReview = [Tag(id: Tag.codeID, name: "Code", colorHex: "000000"), Tag(id: Tag.reviewID, name: "Review", colorHex: "000000")]
+        XCTAssertEqual(Tag.infer(fromName: "pr review inline 1427", in: codeReview), Tag.reviewID)
 
-    func testLegacyRoleValuesDecode() throws {
-        func decode(_ raw: String) throws -> SessionRole {
-            try JSONDecoder().decode(SessionRole.self, from: Data("\"\(raw)\"".utf8))
-        }
-        XCTAssertEqual(try decode("code"), .code)
-        XCTAssertEqual(try decode("review"), .review)
-        XCTAssertEqual(try decode("other"), .none)
-        XCTAssertEqual(try decode("Migration"), SessionRole("Migration"))
-        XCTAssertEqual(String(decoding: try JSONEncoder().encode(SessionRole("Migration")), as: UTF8.self), "\"Migration\"")
+        let migration = Tag(name: "Migration", colorHex: "000000")
+        let codeMigration = [Tag(id: Tag.codeID, name: "Code", colorHex: "000000"), migration]
+        XCTAssertEqual(Tag.infer(fromName: "db migration", in: codeMigration), migration.id)
+
+        XCTAssertEqual(Tag.infer(fromName: "fix the bug", in: codeReview), Tag.codeID, "falls back to Code when listed")
+        XCTAssertNil(Tag.infer(fromName: "fix the bug", in: [Tag(id: Tag.reviewID, name: "Review", colorHex: "000000")]))
     }
 
     func testEditableRoleListInSettings() throws {
-        XCTAssertEqual(AppSettings().roles, ["Code", "Review", "Research"])
+        XCTAssertEqual(AppSettings().tagNames, ["Code", "Review", "Research"])
         var settings = AppSettings()
-        settings.roles = ["Code", "Migration"]
+        settings.tags = AppSettings.migratedTags(fromRoleNames: ["Code", "Migration"])
         let decoded = try JSONFileStore.decoder.decode(AppSettings.self, from: JSONFileStore.encoder.encode(settings))
-        XCTAssertEqual(decoded.roles, ["Code", "Migration"])
+        XCTAssertEqual(decoded.tagNames, ["Code", "Migration"])
         XCTAssertEqual(AppSettings.cleanRoles([" Code ", "", "code", "Ops"]), ["Code", "Ops"], "trimmed, no blanks or duplicates")
     }
 }

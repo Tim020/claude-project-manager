@@ -32,11 +32,15 @@ public struct DiscoveredSession: Equatable, Sendable {
         self.customTitle = customTitle
     }
 
-    public var role: SessionRole { SessionRole.infer(fromName: title) }
+    /// The tag inferred from the title, limited to the three built-in names:
+    /// a freshly discovered session has no catalog to consult.
+    public var inferredTagID: Tag.ID? {
+        Tag.infer(fromName: title, in: Tag.defaults)
+    }
 
     public func makeSession(projectID: UUID) -> Session {
         var session = Session(projectID: projectID, claudeSessionID: claudeSessionID, hasConversation: true, name: title,
-                              role: role, workingDirectory: workingDirectory, status: status, summary: summary, model: model,
+                              tags: inferredTagID.map { [$0] } ?? [], workingDirectory: workingDirectory, status: status, summary: summary, model: model,
                               pullRequests: pullRequests, createdAt: lastActivity, lastActivity: lastActivity)
         session.needsAction = status == .awaitingInput ? summary : nil
         return session

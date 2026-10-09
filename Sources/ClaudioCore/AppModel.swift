@@ -6,7 +6,6 @@ public struct NewSessionRequest: Equatable, Sendable {
     /// Folder to create the session in; Unfiled when nil.
     public var folderID: UUID?
     public var name: String
-    public var role: SessionRole
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
@@ -15,12 +14,13 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var useWorktree = true
     /// The skills its prompt names (Start Session from a plan item).
     public var namedSkills: [String] = []
+    /// Tags to give the new session (already resolved ids, picked in the UI).
+    public var tagIDs: [Tag.ID] = []
 
-    public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
+    public init(projectID: UUID, folderID: UUID?, name: String, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
         self.folderID = folderID
         self.name = name
-        self.role = role
         self.prompt = prompt
         self.model = model
         self.permissionMode = permissionMode
@@ -1113,21 +1113,152 @@ public final class AppModel {
         }
     }
 
-    public func setRole(_ id: UUID, to role: SessionRole) {
-        guard let session = state.workspace.session(id), session.role != role else { return }
-        state.workspace.updateSession(id) { $0.role = role }
+    /// A session's tags, resolved against the catalog in catalog order. An
+    /// id the catalog doesn't have (deleted since, or — for a discovered
+    /// session — never added) is silently dropped: there's nothing to
+    /// read a name or colour from.
+    public func tags(of session: Session) -> [Tag] {
+        settings.tags.filter { session.tags.contains($0.id) }
+    }
+
+    /// Sets a session's tags outright (the multi-select picker's "apply").
+    public func setTags(_ tagIDs: [Tag.ID], for id: UUID) {
+        guard let session = state.workspace.session(id), session.tags != tagIDs else { return }
+        state.workspace.updateSession(id) { $0.tags = tagIDs }
         save()
     }
 
-    /// Roles offered for a session: the Settings list, plus its current role
-    /// if that has since been removed from the list.
-    public func roleChoices(for id: UUID) -> [SessionRole] {
-        var choices = settings.roles.map { SessionRole($0) }
-        if let current = state.workspace.session(id)?.role, !current.isNone,
-           !choices.contains(where: { $0.rawValue.caseInsensitiveCompare(current.rawValue) == .orderedSame }) {
-            choices.append(current)
+    /// Adds or removes one tag from a session. Adding requires the id to
+    /// actually be in the catalog (removing never needs to check: a
+    /// dangling id is always safe to drop).
+    public func toggleTag(_ tagID: Tag.ID, on sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID) else { return }
+        var tags = session.tags
+        if let index = tags.firstIndex(of: tagID) {
+            tags.remove(at: index)
+        } else {
+            guard state.settings.tags.contains(where: { $0.id == tagID }) else { return }
+            tags.append(tagID)
         }
-        return choices
+        state.workspace.updateSession(sessionID) { $0.tags = tags }
+        save()
+    }
+
+    // MARK: - Tag catalog
+    //
+    // Each of these touches exactly the one tag named, by id, and never
+    // infers a deletion from comparing whole arrays. `updateSettings` used
+    // to apply the whole `AppSettings` and cascade-delete any tag id that
+    // dropped out of the diff — which meant a rename (matched back by
+    // text), a name collision, or Restore Defaults could each silently
+    // strip an unrelated tag from every session and folder that had it.
+    // `deleteTag` is the only one of these that touches sessions/folders.
+
+    /// Appends a new tag with the next palette colour. No-op (returns nil)
+    /// for a blank name or one that collides with an existing tag.
+    @discardableResult
+    public func addTag(named name: String) -> Tag? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !state.settings.tags.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return nil }
+        let tag = Tag(name: trimmed, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// Appends a new tag named `base`, or `base 2`/`base 3`/… if that's
+    /// taken — for "Add Role"/"Add Tag" buttons, where the name is a
+    /// placeholder the user is about to retype, not something that should
+    /// silently fail to appear on a second click.
+    @discardableResult
+    public func addTag(suggestingName base: String) -> Tag {
+        let name = AppModel.uniqueName(base, avoiding: state.settings.tags)
+        let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// Renames a catalog tag in place, keeping its id and colour. No-op for
+    /// a blank name or one that collides with a *different* existing tag.
+    public func renameTag(_ id: Tag.ID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = state.settings.tags.firstIndex(where: { $0.id == id }),
+              state.settings.tags[index].name != trimmed,
+              !state.settings.tags.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
+        else { return }
+        state.settings.tags[index].name = trimmed
+        save()
+    }
+
+    /// The first of `base`, `base 2`, `base 3`, … that no tag (other than
+    /// `exceptID`) already has, case-insensitively.
+    private static func uniqueName(_ base: String, avoiding tags: [Tag], exceptID: Tag.ID? = nil) -> String {
+        var name = base
+        var suffix = 2
+        while tags.contains(where: { $0.id != exceptID && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            name = "\(base) \(suffix)"
+            suffix += 1
+        }
+        return name
+    }
+
+    /// Recolours a catalog tag in place. No-op for an invalid hex value.
+    public func recolorTag(_ id: Tag.ID, to colorHex: String) {
+        guard let index = state.settings.tags.firstIndex(where: { $0.id == id }), let normalized = Tag.normalizedHex(colorHex) else { return }
+        state.settings.tags[index].colorHex = normalized
+        save()
+    }
+
+    /// Removes a catalog tag and strips it from every session and folder
+    /// that had it, like deleting a label on GitHub. The only tag mutation
+    /// that reaches into sessions/folders.
+    public func deleteTag(_ id: Tag.ID) {
+        guard state.settings.tags.contains(where: { $0.id == id }) else { return }
+        state.settings.tags.removeAll { $0.id == id }
+        for session in state.workspace.sessions where session.tags.contains(id) {
+            state.workspace.updateSession(session.id) { $0.tags.removeAll { $0 == id } }
+        }
+        for project in state.workspace.projects {
+            for folder in project.folders where folder.defaultTags.contains(id) {
+                state.workspace.updateFolder(folder.id) { $0.defaultTags.removeAll { $0 == id } }
+            }
+        }
+        save()
+    }
+
+    /// How many sessions and folders carry a tag, for a delete confirmation.
+    public func usageCount(ofTag id: Tag.ID) -> (sessions: Int, folders: Int) {
+        let sessions = state.workspace.sessions.filter { $0.tags.contains(id) }.count
+        let folders = state.workspace.projects.flatMap(\.folders).filter { $0.defaultTags.contains(id) }.count
+        return (sessions, folders)
+    }
+
+    /// Restores the three built-in tags without touching custom ones:
+    /// missing defaults are re-added, and ones still present are reset to
+    /// their default name and colour.
+    public func restoreDefaultTags() {
+        var tags = state.settings.tags
+        for builtin in Tag.defaults {
+            // A custom tag may have since taken this built-in's name (via
+            // rename, or because it was deleted and the name freed up):
+            // move it aside first, rather than end up with two tags of the
+            // same name — the one invariant every other tag edit upholds.
+            if let collision = tags.firstIndex(where: { $0.id != builtin.id && $0.name.caseInsensitiveCompare(builtin.name) == .orderedSame }) {
+                // `builtin` doesn't have its own entry in `tags` yet (that's
+                // the point — its name is about to be reclaimed), so its
+                // claim on the name has to be added explicitly or
+                // `uniqueName` would see no collision at all and no-op.
+                tags[collision].name = AppModel.uniqueName(builtin.name, avoiding: tags + [builtin], exceptID: tags[collision].id)
+            }
+            if let index = tags.firstIndex(where: { $0.id == builtin.id }) {
+                tags[index] = builtin
+            } else {
+                tags.append(builtin)
+            }
+        }
+        state.settings.tags = tags
+        save()
     }
 
     /// Deletes the session from Claudio, and with `.everywhere` from Claude
@@ -1219,10 +1350,11 @@ public final class AppModel {
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
         let background = runsInBackground(prompt: prompt)
+        let catalogIDs = Set(state.settings.tags.map(\.id))
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
-                              role: request.role,
+                              tags: request.tagIDs.filter(catalogIDs.contains),
                               workingDirectory: project.path,
                               model: request.model ?? state.settings.defaultModel,
                               permissionMode: request.permissionMode,
@@ -1593,7 +1725,7 @@ public final class AppModel {
     private func addCopy(of originalID: UUID, agentID: String) {
         guard let original = state.workspace.session(originalID) else { return }
         var copy = Session(projectID: original.projectID, hasConversation: true, name: "\(original.name) (copy)",
-                           role: original.role, workingDirectory: original.workingDirectory, status: .working,
+                           tags: original.tags, workingDirectory: original.workingDirectory, status: .working,
                            model: original.model, permissionMode: original.permissionMode, createdAt: now())
         copy.agentID = agentID
         copy.hasCustomName = true
@@ -1885,6 +2017,12 @@ public final class AppModel {
         state.workspace.updateSession(sessionID, body)
     }
 
+    /// For tests: changes a folder directly (e.g. its `defaultTags`, before
+    /// the real editing UI for them lands).
+    func applyTestFolderChange(_ folderID: UUID, _ body: (inout Folder) -> Void) {
+        state.workspace.updateFolder(folderID, body)
+    }
+
     /// For tests: a plan usage reading, as `claude /usage` would give.
     func applyTestUsage(_ snapshot: UsageSnapshot?) {
         usage = snapshot
@@ -2101,6 +2239,15 @@ public final class AppModel {
         save()
     }
 
+    /// Applies a whole new `AppSettings`. Deliberately doesn't try to infer
+    /// tag deletions by diffing `tags` against the old value — that doesn't
+    /// distinguish "the user deleted a tag" from "this settings snapshot is
+    /// stale/partial," and treating every dropped id as a deletion is how
+    /// a rename, a name collision, or Restore Defaults each turned into
+    /// mass data loss. Use `addTag`/`renameTag`/`recolorTag`/`deleteTag`
+    /// instead for catalog edits; `deleteTag` is the only one of those that
+    /// touches sessions/folders. A dropped id here just becomes a harmless
+    /// dangling reference (same tolerance as an orphaned id from anywhere else).
     public func updateSettings(_ settings: AppSettings) {
         let old = state.settings.assistant
         state.settings = settings

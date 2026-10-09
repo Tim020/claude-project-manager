@@ -4,7 +4,12 @@ import ClaudioCore
 import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
-    case general, sessions, notifications, roles, assistant, about
+    case general, sessions, notifications
+    // The raw value stays "roles" so a value already saved in the
+    // "settingsPane" UserDefaults key (from before this rename) still
+    // matches this case, instead of falling back to .general.
+    case tags = "roles"
+    case assistant, about
 
     var id: String { rawValue }
 
@@ -13,7 +18,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .sessions: return "New Sessions"
         case .notifications: return "Notifications"
-        case .roles: return "Roles"
+        case .tags: return "Tags"
         case .assistant: return "Assistant"
         case .about: return "About Claudio"
         }
@@ -24,7 +29,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return "Claude Code's setup, which sessions the sidebar shows, and where Claudio keeps its data."
         case .sessions: return "How new sessions start: as background agents or directly, with which model and permissions."
         case .notifications: return "Choose which session changes tap you on the shoulder."
-        case .roles: return "Labels for sessions, offered when you create one and shown on tabs."
+        case .tags: return "Coloured labels for sessions, offered when you create one and shown on tabs."
         case .assistant: return "The Project Assistant, in every project: whether it's on, and when background work pauses."
         case .about: return "A native home for your Claude Code sessions."
         }
@@ -35,7 +40,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return "gearshape.fill"
         case .sessions: return "plus.bubble.fill"
         case .notifications: return "bell.badge.fill"
-        case .roles: return "tag.fill"
+        case .tags: return "tag.fill"
         case .assistant: return "note.text"
         case .about: return "info.circle.fill"
         }
@@ -46,13 +51,13 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: return Color(hex: 0x8E8E93)
         case .sessions: return DS.teal
         case .notifications: return DS.red
-        case .roles: return DS.blue
+        case .tags: return DS.blue
         case .assistant: return Color(hex: 0x5E5CE6)
         case .about: return DS.slate
         }
     }
 
-    static let main: [SettingsPane] = [.general, .sessions, .notifications, .roles, .assistant]
+    static let main: [SettingsPane] = [.general, .sessions, .notifications, .tags, .assistant]
 }
 
 struct SettingsView: View {
@@ -108,7 +113,7 @@ struct SettingsView: View {
         case .general: GeneralSettings()
         case .sessions: SessionSettings()
         case .notifications: NotificationSettingsPage()
-        case .roles: RoleSettings()
+        case .tags: TagSettings()
         case .assistant: AssistantSettingsPage()
         case .about: AboutSettings()
         }
@@ -424,33 +429,27 @@ private struct AssistantSettingsPage: View {
     }
 }
 
-// MARK: - Roles
+// MARK: - Tags
 
-private struct RoleSettings: View {
+private struct TagSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var roles: [String] = []
+    @State private var confirmDelete: Tag?
 
     var body: some View {
-        SettingsGroup(title: "Roles",
-                      footer: "A new session picks the first role whose name appears in its name. Removing a role doesn't change sessions that already use it.") {
-            ForEach(roles.indices, id: \.self) { index in
+        SettingsGroup(title: "Tags",
+                      footer: "A new session picks the first tag whose name appears in its name. Removing a tag here removes it from every session and folder that has it.") {
+            ForEach(model.settings.tags) { tag in
                 HStack(spacing: 10) {
-                    Image(systemName: "tag")
-                        .foregroundStyle(DS.dim)
-                        .frame(width: 16)
-                    TextField("Role name", text: $roles[index])
-                        .textFieldStyle(.plain)
-                        .font(DS.font(13.5))
-                        .onSubmit(save)
+                    TagColorButton(tag: tag)
+                    TagNameField(tag: tag)
                     Button {
-                        roles.remove(at: index)
-                        save()
+                        confirmDelete = tag
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .foregroundStyle(DS.dim)
                     }
                     .buttonStyle(.borderless)
-                    .help("Remove this role")
+                    .help("Remove this tag")
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -458,18 +457,17 @@ private struct RoleSettings: View {
             }
             HStack {
                 Button {
-                    roles.append("")
+                    model.addTag(suggestingName: "New Tag")
                 } label: {
-                    Label("Add Role", systemImage: "plus.circle.fill")
+                    Label("Add Tag", systemImage: "plus.circle.fill")
                         .font(DS.font(13, .semibold))
                 }
                 .buttonStyle(.borderless)
                 .tint(DS.teal)
                 Spacer()
-                if roles != SessionRole.defaultNames {
+                if !Self.matchesDefaults(model.settings.tags) {
                     Button("Restore Defaults") {
-                        roles = SessionRole.defaultNames
-                        save()
+                        model.restoreDefaultTags()
                     }
                     .buttonStyle(.borderless)
                 }
@@ -477,14 +475,139 @@ private struct RoleSettings: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
-        .onAppear { roles = model.settings.roles }
-        .onDisappear(perform: save)
+        .confirmationDialog("Remove “\(confirmDelete?.name ?? "")”?",
+                             isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } }),
+                             presenting: confirmDelete) { tag in
+            Button("Remove", role: .destructive) { model.deleteTag(tag.id) }
+        } message: { tag in
+            Text(TagSettings.usageMessage(for: model.usageCount(ofTag: tag.id)))
+        }
     }
 
-    private func save() {
-        var settings = model.settings
-        settings.roles = AppSettings.cleanRoles(roles)
-        if settings != model.settings { model.updateSettings(settings) }
+    /// Whether the three built-in tags are all still present with their
+    /// default name *and* colour (custom tags don't affect this — Restore
+    /// Defaults never touches them).
+    static func matchesDefaults(_ tags: [Tag]) -> Bool {
+        Tag.defaults.allSatisfy { builtin in tags.first { $0.id == builtin.id } == builtin }
+    }
+
+    static func usageMessage(for usage: (sessions: Int, folders: Int)) -> String {
+        guard usage.sessions + usage.folders > 0 else { return "Not used by any session or folder." }
+        var parts: [String] = []
+        if usage.sessions > 0 { parts.append("\(usage.sessions) session\(usage.sessions == 1 ? "" : "s")") }
+        if usage.folders > 0 { parts.append("\(usage.folders) folder\(usage.folders == 1 ? "" : "s")") }
+        return "Used by \(parts.joined(separator: " and ")). This removes it from \(parts.count == 1 && usage.sessions + usage.folders == 1 ? "it" : "all of them")."
+    }
+}
+
+/// A tag's name field. Edits a local buffer and only calls into the model
+/// on Return or on losing focus — not on every keystroke (CLAUDE.md's
+/// "mutate a copy, assign only when it differs" rule), and so a trailing
+/// space while typing a multi-word name isn't trimmed away mid-edit. If
+/// the commit is rejected (blank, or collides with a different tag) the
+/// field snaps back to the catalog's actual value, which is the feedback.
+private struct TagNameField: View {
+    @Environment(AppModel.self) private var model
+    let tag: Tag
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(tag: Tag) {
+        self.tag = tag
+        self._text = State(initialValue: tag.name)
+    }
+
+    var body: some View {
+        TextField("Tag name", text: $text)
+            .textFieldStyle(.plain)
+            .font(DS.font(13.5))
+            .focused($isFocused)
+            .onSubmit(commit)
+            .onChange(of: isFocused) { wasFocused, nowFocused in
+                if wasFocused && !nowFocused { commit() }
+            }
+            .onChange(of: tag.name) { _, newValue in
+                // Another edit changed this tag's name (e.g. Restore
+                // Defaults moving a collision aside): follow it, as long
+                // as this field isn't mid-edit.
+                if !isFocused { text = newValue }
+            }
+            .onDisappear(perform: commit)
+    }
+
+    private func commit() {
+        model.renameTag(tag.id, to: text)
+        text = model.settings.tags.first { $0.id == tag.id }?.name ?? tag.name
+    }
+}
+
+/// A tag's colour swatch; click to pick from the palette or type a hex
+/// value. The hex field validates as you type: an invalid value is flagged
+/// and never applied, so the tag's colour can't be left invalid.
+private struct TagColorButton: View {
+    @Environment(AppModel.self) private var model
+    let tag: Tag
+    @State private var showPicker = false
+    @State private var hexInput = ""
+    @State private var hexIsInvalid = false
+
+    private static let columns = Array(repeating: GridItem(.fixed(22), spacing: 6), count: 5)
+
+    var body: some View {
+        Button {
+            hexInput = tag.colorHex
+            hexIsInvalid = false
+            showPicker = true
+        } label: {
+            Circle()
+                .fill(Color(tagHex: tag.colorHex))
+                .frame(width: 16, height: 16)
+                .overlay(Circle().strokeBorder(DS.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("Change this tag's colour")
+        .popover(isPresented: $showPicker) {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: Self.columns, spacing: 6) {
+                    ForEach(Tag.palette, id: \.self) { hex in
+                        Button {
+                            model.recolorTag(tag.id, to: hex)
+                            hexInput = hex
+                            hexIsInvalid = false
+                        } label: {
+                            Circle()
+                                .fill(Color(tagHex: hex))
+                                .frame(width: 20, height: 20)
+                                .overlay(Circle().strokeBorder(.white, lineWidth: tag.colorHex.caseInsensitiveCompare(hex) == .orderedSame ? 2 : 0))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text("#").foregroundStyle(DS.dim).font(DS.mono(12))
+                    TextField("RRGGBB", text: $hexInput)
+                        .textFieldStyle(.plain)
+                        .font(DS.mono(12))
+                        .onChange(of: hexInput) { _, value in
+                            if let normalized = Tag.normalizedHex(value) {
+                                hexIsInvalid = false
+                                model.recolorTag(tag.id, to: normalized)
+                            } else {
+                                hexIsInvalid = true
+                            }
+                        }
+                }
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 4).strokeBorder(hexIsInvalid ? DS.red : DS.border, lineWidth: 1))
+                if hexIsInvalid {
+                    Text("Not a valid colour — keeping the last one.")
+                        .font(DS.font(10.5))
+                        .foregroundStyle(DS.red)
+                }
+            }
+            .padding(12)
+            .frame(width: 160)
+        }
     }
 }
 

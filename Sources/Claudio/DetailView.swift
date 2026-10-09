@@ -115,7 +115,7 @@ private struct DetailHeader: View {
                 .font(DS.font(14, .bold))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
-            RoleChip(session: session)
+            TagChipsRow(session: session)
             Spacer(minLength: 10)
             if let context = model.context(for: session.id) {
                 ContextMeter(context: context, compact: false)
@@ -368,7 +368,7 @@ private struct TabItem: View {
                     Button("Close Tab and Stop Session") { model.closeTab(session.id, stop: true) }
                 }
                 Divider()
-                Menu("Role") { RoleMenuItems(session: session) }
+                Menu("Tags") { TagMenuItems(session: session) }
             }
             Divider()
             Button("Split Right") { model.splitTab(tab.id, to: .right, of: group.id) }
@@ -407,12 +407,7 @@ private struct TabItem: View {
         case .session(let session):
             Text(session.name)
                 .lineLimit(1)
-            if !session.role.isNone {
-                Text(session.role.label)
-                    .font(DS.font(11))
-                    .foregroundStyle(DS.dim)
-                    .help("Role: \(session.role.rawValue)")
-            }
+            CompactTagBadge(session: session)
             if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
                 // Tabs come from several folders: say where this one lives.
                 Text(model.workspace.name(of: group))
