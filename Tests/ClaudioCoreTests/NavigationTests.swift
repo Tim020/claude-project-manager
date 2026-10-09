@@ -130,6 +130,20 @@ final class NavigationModelTests: XCTestCase {
         }
     }
 
+    func testSidebarDropEdgeFromRowPosition() {
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 0, rowHeight: 28), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 7, rowHeight: 28), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 8, rowHeight: 28), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 14, rowHeight: 28), .into, "the middle")
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 20, rowHeight: 28), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 21, rowHeight: 28), .after)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 28, rowHeight: 28), .after)
+        // The margin never grows past a third of a very short row.
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 2, rowHeight: 9), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 4.5, rowHeight: 9), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 2, rowHeight: 0), .into, "degenerate row height")
+    }
+
     func testDragPayloadsRoundTrip() {
         let id = UUID()
         for item in [SidebarDragItem.session(id), .folder(id), .project(id)] {
@@ -152,22 +166,38 @@ final class NavigationModelTests: XCTestCase {
             let b = try XCTUnwrap(model.createFolder(in: p1))
             model.cancelRename()
 
-            // A folder on a folder goes just above it; on Unfiled, last.
+            // A folder dropped on another folder's row nests inside it by default.
             XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
-            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
-            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertEqual(model.workspace.folder(b)?.parentID, a)
             XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // Its top/bottom edge reorders it as a sibling instead of nesting it.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a)), edge: .before))
+            XCTAssertNil(model.workspace.folder(b)?.parentID)
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [b, a])
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a)), edge: .after))
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // A folder can't nest into its own child, or drop onto itself.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))), "b back inside a")
+            XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .group(.folder(b))), "into its own child")
             XCTAssertFalse(model.drop([SidebarDragItem.folder(a).payload], on: .group(.folder(a))), "onto itself")
 
-            // A folder on another project's header moves there.
+            // On Unfiled, a folder always goes to the project's top level, last.
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.unfiled(projectID: p1))))
+            XCTAssertNil(model.workspace.folder(b)?.parentID)
+            XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [a, b])
+
+            // A folder on another project's header moves there, to its top level.
             XCTAssertTrue(model.drop([SidebarDragItem.folder(a).payload], on: .project(p2)))
             XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a])
 
-            // A folder on a folder in another project moves there, just above it.
+            // A folder dropped on a folder in another project moves there too, nesting inside it by default.
             let c = try XCTUnwrap(model.createFolder(in: p2))
             model.cancelRename()
             XCTAssertTrue(model.drop([SidebarDragItem.folder(b).payload], on: .group(.folder(a))))
-            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [b, a, c])
+            XCTAssertEqual(model.workspace.folder(b)?.parentID, a)
+            XCTAssertEqual(model.workspace.project(p2)?.folders.map(\.id), [a, c, b])
             XCTAssertEqual(model.workspace.project(p1)?.folders.map(\.id), [])
 
             // A project dropped anywhere in another takes its place.
@@ -206,6 +236,82 @@ final class NavigationModelTests: XCTestCase {
 
             XCTAssertTrue(model.drop([SidebarDragItem.project(p2).payload], on: .session(loose.id)))
             XCTAssertEqual(model.workspace.projects.map(\.id), [p2, p1])
+        }
+    }
+
+    func testFolderHasContents() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let empty = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            XCTAssertFalse(model.folderHasContents(empty))
+
+            let withSubfolder = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            model.createFolder(in: p, parentID: withSubfolder)
+            model.cancelRename()
+            XCTAssertTrue(model.folderHasContents(withSubfolder), "a subfolder, even with no sessions of its own")
+
+            let withSession = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            let request = NewSessionRequest(projectID: p, folderID: withSession, name: "x", role: .code, prompt: "", model: nil, permissionMode: .standard)
+            _ = try XCTUnwrap(model.createSession(request))
+            XCTAssertTrue(model.folderHasContents(withSession))
+        }
+    }
+
+    func testMovingOrCreatingAFolderIntoACollapsedParentExpandsIt() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let parent = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            let other = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+
+            model.toggleCollapsed(.folder(parent))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(parent)))
+            model.createFolder(in: p, parentID: parent)
+            model.cancelRename()
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(parent)), "creating a subfolder expands its new parent")
+
+            model.toggleCollapsed(.folder(parent))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(parent)))
+            model.moveFolder(other, intoFolder: parent)
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(parent)), "moving a folder in expands its new parent too")
+            XCTAssertEqual(model.workspace.folder(other)?.parentID, parent)
+        }
+    }
+
+    /// The primary interaction is dragging a folder onto another folder's
+    /// row, not the "Move to Folder" menu — `drop(on:edge:.into)` must
+    /// expand a collapsed destination exactly like `moveFolder(intoFolder:)`
+    /// does, or a folder dropped there nests successfully but stays
+    /// invisible, which looks like the drop silently failed.
+    func testDroppingAFolderIntoACollapsedTargetExpandsIt() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let target = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            let dragged = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+
+            model.toggleCollapsed(.folder(target))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(target)))
+            XCTAssertTrue(model.drop([SidebarDragItem.folder(dragged).payload], on: .group(.folder(target)), edge: .into))
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(target)), "the drop path expands the target too, not just the menu path")
+            XCTAssertEqual(model.workspace.folder(dragged)?.parentID, target)
         }
     }
 

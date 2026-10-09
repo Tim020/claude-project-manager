@@ -217,8 +217,10 @@ public struct Workspace: Codable, Equatable, Sendable {
         openTabIDs.removeAll { completed.contains($0) }
     }
 
+    /// Closes the completed tabs in a group (a folder's whole subtree, not
+    /// just its direct sessions).
     public mutating func closeCompletedTabs(in group: SessionGroup) {
-        let ids = Set(sessions(in: group).filter { $0.status == .completed }.map(\.id))
+        let ids = Set(sessionsInSubtree(group).filter { $0.status == .completed }.map(\.id))
         openTabIDs.removeAll { ids.contains($0) }
     }
 
@@ -279,8 +281,83 @@ public struct Workspace: Codable, Equatable, Sendable {
         }
     }
 
+    /// A folder's name and every ancestor's, innermost first ("OAuth",
+    /// "Auth", "Backend"). Bounded against a corrupted cycle the same way
+    /// `sanitizedFolders` guards against one existing.
+    public func folderAndAncestorNames(of id: UUID) -> [String] {
+        var names: [String] = []
+        var current: UUID? = id
+        var seen: Set<UUID> = []
+        while let currentID = current, let folder = folder(currentID), seen.insert(currentID).inserted {
+            names.append(folder.name)
+            current = folder.parentID
+        }
+        return names
+    }
+
+    /// A group's full ancestry, outermost first ("Backend › Auth › OAuth"),
+    /// for places with no surrounding tree to show nesting visually
+    /// (breadcrumbs, pickers, PR group headers).
+    public func path(of group: SessionGroup) -> String {
+        switch group {
+        case .unfiled: return Workspace.unfiledName
+        case .folder(let id): return folderAndAncestorNames(of: id).reversed().joined(separator: " › ")
+        }
+    }
+
+    /// A folder's id plus every folder nested under it, at any depth.
+    public func subtreeFolderIDs(of id: UUID) -> Set<UUID> {
+        var result: Set<UUID> = [id]
+        var frontier: Set<UUID> = [id]
+        let all = projects.flatMap(\.folders)
+        while !frontier.isEmpty {
+            let children = Set(all.filter { folder in folder.parentID.map(frontier.contains) ?? false }.map(\.id))
+                .subtracting(result)
+            guard !children.isEmpty else { break }
+            result.formUnion(children)
+            frontier = children
+        }
+        return result
+    }
+
+    /// Whether `candidate` is `ancestor` itself or nested somewhere under it.
+    public func isFolder(_ candidate: UUID, orDescendantOf ancestor: UUID) -> Bool {
+        subtreeFolderIDs(of: ancestor).contains(candidate)
+    }
+
+    /// A project's folders in sidebar order: a pre-order walk of the tree (a
+    /// folder right after its parent, children in their sibling order), with
+    /// each one's nesting depth (0 for top-level). Cycle-safe.
+    public func foldersInDisplayOrder(projectID: UUID) -> [(folder: Folder, depth: Int)] {
+        guard let project = project(projectID) else { return [] }
+        var result: [(Folder, Int)] = []
+        var visited: Set<UUID> = []
+        func visit(parentID: UUID?, depth: Int) {
+            for folder in project.folders where folder.parentID == parentID {
+                guard visited.insert(folder.id).inserted else { continue }
+                result.append((folder, depth))
+                visit(parentID: folder.id, depth: depth + 1)
+            }
+        }
+        visit(parentID: nil, depth: 0)
+        return result
+    }
+
+    /// Where a folder could move via "Move to Folder": its project's
+    /// folders in display order, minus its own subtree (it can't move into
+    /// itself or one of its own subfolders) and its current parent (that's
+    /// already where it is).
+    public func moveToFolderCandidates(for id: UUID) -> [(folder: Folder, depth: Int)] {
+        guard let projectID = projectID(containingFolder: id) else { return [] }
+        let currentParentID = folder(id)?.parentID
+        let subtree = subtreeFolderIDs(of: id)
+        return foldersInDisplayOrder(projectID: projectID).filter { !subtree.contains($0.folder.id) && $0.folder.id != currentParentID }
+    }
+
     /// Visible (non-archived) sessions in a group. Folder order is the user's
-    /// order; Unfiled is newest activity first.
+    /// order; Unfiled is newest activity first. For a folder this is its
+    /// direct sessions only; see `sessionsInSubtree` for everything nested
+    /// underneath it too.
     public func sessions(in group: SessionGroup) -> [Session] {
         switch group {
         case .folder(let id):
@@ -291,6 +368,21 @@ public struct Workspace: Codable, Equatable, Sendable {
             return sessions
                 .filter { $0.projectID == projectID && !filed.contains($0.id) && !$0.isArchived }
                 .sorted { $0.lastActivity > $1.lastActivity }
+        }
+    }
+
+    /// Every (non-archived) session anywhere under a folder: its own direct
+    /// sessions plus every nested subfolder's, at any depth. Unfiled has no
+    /// subtree, so this is the same as `sessions(in:)` for it. Used for
+    /// folder-level aggregates (status pills, pull request chips, Archive
+    /// Completed, Close Completed Tabs), which roll up the whole subtree.
+    public func sessionsInSubtree(_ group: SessionGroup) -> [Session] {
+        switch group {
+        case .unfiled: return sessions(in: group)
+        case .folder(let id):
+            let ids = subtreeFolderIDs(of: id)
+            let filed = Set(projects.flatMap(\.folders).filter { ids.contains($0.id) }.flatMap(\.sessionIDs))
+            return sessions.filter { filed.contains($0.id) && !$0.isArchived }
         }
     }
 
@@ -352,10 +444,18 @@ public struct Workspace: Codable, Equatable, Sendable {
 
     // MARK: - Folders
 
+    /// Creates a folder, nested inside `parentID` or at the project's top
+    /// level when nil. The default name is unique among its siblings, not
+    /// every folder in the project.
     @discardableResult
-    public mutating func createFolder(in projectID: UUID, named name: String, containing sessionID: UUID? = nil) throws -> UUID {
+    public mutating func createFolder(in projectID: UUID, named name: String, containing sessionID: UUID? = nil,
+                                      parentID: UUID? = nil) throws -> UUID {
         guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceError.projectNotFound }
-        let folder = Folder(name: Workspace.trimmed(name) ?? uniqueFolderName(in: projects[index]))
+        if let parentID {
+            guard folder(parentID) != nil else { throw WorkspaceError.folderNotFound }
+            guard self.projectID(containingFolder: parentID) == projectID else { throw WorkspaceError.folderNotInProject }
+        }
+        let folder = Folder(name: Workspace.trimmed(name) ?? uniqueFolderName(in: projects[index], parentID: parentID), parentID: parentID)
         projects[index].folders.append(folder)
         if let sessionID { try moveSession(sessionID, to: .folder(folder.id)) }
         return folder.id
@@ -367,35 +467,146 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects[p].folders[f].name = newName
     }
 
-    /// Deletes the folder; its sessions become Unfiled.
-    public mutating func deleteFolder(_ id: UUID) {
+    /// What happens to a deleted folder's contents.
+    public enum FolderDeletionMode: Sendable {
+        /// Its direct subfolders and sessions move up one level, into its
+        /// parent (or the project's top level / Unfiled, if it had none).
+        case promoteChildren
+        /// Its whole subtree goes: every nested subfolder is gone, and every
+        /// session anywhere inside it (at any depth) becomes Unfiled.
+        case flattenToUnfiled
+    }
+
+    /// Deletes the folder. `mode` decides what happens to anything nested
+    /// inside it; closes the overview tab of every folder removed.
+    public mutating func deleteFolder(_ id: UUID, mode: FolderDeletionMode = .promoteChildren) {
         guard let (p, f) = folderIndex(id) else { return }
-        projects[p].folders.remove(at: f)
-        let overviews = Set(overviewTabs.filter { $0.overview == .folder(.folder(id)) }.map(\.id))
+        let folder = projects[p].folders[f]
+        var removedIDs: Set<UUID> = [id]
+
+        switch mode {
+        case .promoteChildren:
+            // Writes `parentID` directly rather than going through
+            // `relocateFolder`'s validated path: it's safe here only because
+            // the deleted folder's own `parentID` was already validated when
+            // it was placed, and its direct children can't be an ancestor of
+            // anything (so reparenting them to it can't create a cycle). If
+            // that parent has still gone missing somehow, fail loudly in
+            // testing rather than let its sessions vanish from every
+            // folder's `sessionIDs` without a trace.
+            for i in projects[p].folders.indices where projects[p].folders[i].parentID == id {
+                projects[p].folders[i].parentID = folder.parentID
+            }
+            if let parentID = folder.parentID {
+                if let pf = projects[p].folders.firstIndex(where: { $0.id == parentID }) {
+                    projects[p].folders[pf].sessionIDs.append(contentsOf: folder.sessionIDs)
+                } else {
+                    assertionFailure("Folder \(id)'s parent \(parentID) should still exist")
+                }
+            }
+            projects[p].folders.remove(at: f)
+        case .flattenToUnfiled:
+            removedIDs = subtreeFolderIDs(of: id)
+            projects[p].folders.removeAll { removedIDs.contains($0.id) }
+        }
+
+        let overviews = Set(overviewTabs.filter {
+            if case .folder(.folder(let groupID)) = $0.overview { return removedIDs.contains(groupID) }
+            return false
+        }.map(\.id))
         if !overviews.isEmpty { openTabIDs.removeAll { overviews.contains($0) } }
     }
 
-    public mutating func moveFolder(_ id: UUID, toProject projectID: UUID) throws {
-        guard let destination = projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceError.projectNotFound }
-        guard let (p, f) = folderIndex(id) else { throw WorkspaceError.folderNotFound }
-        guard projects[p].id != projectID else { return }
-        let folder = projects[p].folders.remove(at: f)
-        projects[destination].folders.append(folder)
-        for sessionID in folder.sessionIDs {
-            updateSession(sessionID) { $0.projectID = projectID }
-        }
+    /// Where a relocated folder lands among its new siblings.
+    private enum FolderPlacement {
+        case end
+        case beforeSibling(UUID)
+        case afterSibling(UUID)
     }
 
-    /// Puts a folder just before another, moving it (and its sessions) to
-    /// that folder's project if need be. With no target it goes last.
+    /// The shared move: reparents a folder (optionally into a different
+    /// project, carrying its whole subtree and re-homing those sessions),
+    /// then positions it among its new siblings. Guards against moving a
+    /// folder into itself or one of its own subfolders.
+    private mutating func relocateFolder(_ id: UUID, parentID: UUID?, projectID: UUID, placement: FolderPlacement) throws {
+        guard id != parentID else { throw WorkspaceError.cyclicFolderMove }
+        guard folderIndex(id) != nil else { throw WorkspaceError.folderNotFound }
+        guard let destination = projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceError.projectNotFound }
+        if let parentID {
+            guard folder(parentID) != nil else { throw WorkspaceError.folderNotFound }
+            guard self.projectID(containingFolder: parentID) == projectID else { throw WorkspaceError.folderNotInProject }
+            guard !isFolder(parentID, orDescendantOf: id) else { throw WorkspaceError.cyclicFolderMove }
+        }
+        // Validated before anything below mutates state: a sibling id that
+        // doesn't actually resolve in the destination project must throw
+        // here, not partway through relocating the folder's subtree, or it
+        // would be left removed from everywhere (orphaning its children and
+        // their sessions) with no way back.
+        switch placement {
+        case .end: break
+        case .beforeSibling(let siblingID), .afterSibling(let siblingID):
+            guard projects[destination].folders.contains(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+        }
+
+        if let (sp, _) = folderIndex(id), projects[sp].id != projectID {
+            let subtreeIDs = subtreeFolderIDs(of: id)
+            let moving = projects[sp].folders.filter { subtreeIDs.contains($0.id) }
+            projects[sp].folders.removeAll { subtreeIDs.contains($0.id) }
+            projects[destination].folders.append(contentsOf: moving)
+            for folderID in subtreeIDs {
+                for sessionID in folder(folderID)?.sessionIDs ?? [] { updateSession(sessionID) { $0.projectID = projectID } }
+            }
+        }
+
+        guard let (p, f) = folderIndex(id) else { throw WorkspaceError.folderNotFound }
+        var moved = projects[p].folders.remove(at: f)
+        moved.parentID = parentID
+        let index: Int
+        switch placement {
+        case .end:
+            index = projects[p].folders.count
+        case .beforeSibling(let siblingID):
+            guard let siblingIndex = projects[p].folders.firstIndex(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+            index = siblingIndex
+        case .afterSibling(let siblingID):
+            guard let siblingIndex = projects[p].folders.firstIndex(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+            index = siblingIndex + 1
+        }
+        projects[p].folders.insert(moved, at: index)
+    }
+
+    /// Moves a folder (and its whole subtree) to a project's top level, last;
+    /// re-homes its subtree's sessions when that's a different project.
+    public mutating func moveFolder(_ id: UUID, toProject projectID: UUID) throws {
+        try relocateFolder(id, parentID: nil, projectID: projectID, placement: .end)
+    }
+
+    /// Nests a folder (and its whole subtree) inside another, as its last
+    /// child; re-homes it (and its subtree's sessions) if that's a different
+    /// project. Throws `.cyclicFolderMove` for a folder's own descendant.
+    public mutating func moveFolder(_ id: UUID, intoFolder parentID: UUID) throws {
+        guard let projectID = self.projectID(containingFolder: parentID) else { throw WorkspaceError.folderNotFound }
+        try relocateFolder(id, parentID: parentID, projectID: projectID, placement: .end)
+    }
+
+    /// Puts a folder just before another, as its sibling (shares its
+    /// parent), moving it (and its sessions) to that folder's project if
+    /// need be. With no target it goes last at the project's top level.
     public mutating func moveFolder(_ id: UUID, before targetID: UUID?, inProject projectID: UUID) throws {
         guard id != targetID else { return }
-        try moveFolder(id, toProject: projectID)
-        guard let p = projects.firstIndex(where: { $0.id == projectID }),
-              let f = projects[p].folders.firstIndex(where: { $0.id == id }) else { throw WorkspaceError.folderNotFound }
-        let folder = projects[p].folders.remove(at: f)
-        let index = targetID.flatMap { target in projects[p].folders.firstIndex { $0.id == target } } ?? projects[p].folders.count
-        projects[p].folders.insert(folder, at: index)
+        guard let targetID else {
+            try relocateFolder(id, parentID: nil, projectID: projectID, placement: .end)
+            return
+        }
+        guard let target = folder(targetID) else { throw WorkspaceError.folderNotFound }
+        try relocateFolder(id, parentID: target.parentID, projectID: projectID, placement: .beforeSibling(targetID))
+    }
+
+    /// Puts a folder just after another, as its sibling.
+    public mutating func moveFolder(_ id: UUID, after targetID: UUID, inProject projectID: UUID) throws {
+        guard id != targetID else { return }
+        guard let target = folder(targetID) else { throw WorkspaceError.folderNotFound }
+        try relocateFolder(id, parentID: target.parentID, projectID: projectID, placement: .afterSibling(targetID))
     }
 
     /// Moves a project into another's place in the sidebar: just after it when
@@ -407,10 +618,11 @@ public struct Workspace: Codable, Equatable, Sendable {
         projects.insert(projects.remove(at: from), at: to)
     }
 
-    /// Archives the completed sessions in a group. Returns how many were archived.
+    /// Archives the completed sessions in a group (a folder's whole subtree,
+    /// not just its direct sessions). Returns how many were archived.
     @discardableResult
     public mutating func archiveCompleted(in group: SessionGroup) -> Int {
-        let ids = sessions(in: group).filter { $0.status == .completed }.map(\.id)
+        let ids = sessionsInSubtree(group).filter { $0.status == .completed }.map(\.id)
         for id in ids { updateSession(id) { $0.isArchived = true } }
         return ids.count
     }
@@ -582,6 +794,14 @@ public struct Workspace: Codable, Equatable, Sendable {
         return nil
     }
 
+    /// Sets a folder's `parentID` directly, bypassing the cycle guard every
+    /// public move goes through. Only for testing decode-time sanitization
+    /// against a state.json corrupted into a cycle.
+    mutating func setParentIDForTesting(_ id: UUID, to parentID: UUID?) {
+        guard let (p, f) = folderIndex(id) else { return }
+        projects[p].folders[f].parentID = parentID
+    }
+
     private mutating func detachFromFolders(_ sessionID: UUID) {
         for p in projects.indices {
             for f in projects[p].folders.indices {
@@ -590,8 +810,8 @@ public struct Workspace: Codable, Equatable, Sendable {
         }
     }
 
-    private func uniqueFolderName(in project: Project) -> String {
-        let existing = Set(project.folders.map(\.name))
+    private func uniqueFolderName(in project: Project, parentID: UUID?) -> String {
+        let existing = Set(project.folders.filter { $0.parentID == parentID }.map(\.name))
         var candidate = Workspace.defaultFolderName
         var n = 2
         while existing.contains(candidate) {

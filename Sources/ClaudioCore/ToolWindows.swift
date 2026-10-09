@@ -183,7 +183,7 @@ extension AppModel {
             let ordered = PullRequestInfo.mostUrgentFirst(open.map(\.0)).map { ($0, sessionByKey[$0.key] ?? nil) } + done
             let items = ordered.map { pullRequest, session in
                 PullRequestPanelItem(pullRequest: pullRequest, sessionID: session?.id,
-                                     folder: session.flatMap { workspace.group(of: $0.id) }.map(workspace.name(of:)))
+                                     folder: session.flatMap { workspace.group(of: $0.id) }.map(workspace.path(of:)))
             }
             return PullRequestPanelGroup(projectID: project.id, name: project.name, items: items,
                                          hasLoaded: known?.hasLoaded ?? false, error: known?.error,
