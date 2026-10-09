@@ -231,6 +231,14 @@ final class AssistantJobTests: XCTestCase {
         XCTAssertEqual(job.durationMS, 6514)
         XCTAssertEqual(job.costUSD ?? 0, 0.004279, accuracy: 0.000001, "for step 4's Activity Log")
         XCTAssertNil(job.failure)
+        await MainActor.run {
+            // And it's in Usage straight away, against the project.
+            let call = model.usageEntries.first(where: \.isAssistant)
+            XCTAssertEqual(call?.source, .assistant(job: "Promote check", model: "Haiku"))
+            XCTAssertEqual(call?.projectID, project)
+            XCTAssertNil(call?.sessionID, "a note check is the project's")
+            XCTAssertEqual(model.usageReport(.project(project), range: .all).assistantCost, 0.004279, accuracy: 0.000001)
+        }
     }
 
     func testAFailureYouAskedForIsShownAndABackgroundOneIsNot() async throws {

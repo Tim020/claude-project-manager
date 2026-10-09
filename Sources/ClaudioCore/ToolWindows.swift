@@ -3,13 +3,13 @@ import Foundation
 /// A tool on the left rail (design 8c). The left rail's tools cover
 /// projects: the session tree, their pull requests, and the assistant.
 public enum LeftTool: String, Codable, CaseIterable, Sendable {
-    case sessions, pullRequests, assistant
+    case sessions, pullRequests, assistant, usage
 }
 
 /// A tool on the right rail (design 8c). The right rail's tools cover the
 /// selected session: the files it changed, and its pull requests.
 public enum RightTool: String, Codable, CaseIterable, Sendable {
-    case changes, pullRequest
+    case changes, pullRequest, usage
 }
 
 /// Which tool each side of the window shows, and whether that side is open.
@@ -25,6 +25,10 @@ public struct ToolWindows: Codable, Equatable, Sendable {
     public var pullRequestFilter: PullRequestFilter = .open
     /// Projects collapsed in the Pull Requests tool (their headers stay).
     public var collapsedPullRequestProjects: Set<UUID> = []
+    /// Each project's range in the Usage tool (7 days until one's chosen).
+    public var usageRanges: [UUID: UsageRange] = [:]
+    /// The Usage window's range.
+    public var usageWindowRange: UsageRange = .week
 
     public init(left: LeftTool = .sessions, isLeftOpen: Bool = true, right: RightTool = .changes, isRightOpen: Bool = false) {
         self.left = left
@@ -42,6 +46,8 @@ public struct ToolWindows: Codable, Equatable, Sendable {
         isRightOpen = try c.decodeIfPresent(Bool.self, forKey: .isRightOpen) ?? false
         pullRequestFilter = (try? c.decodeIfPresent(PullRequestFilter.self, forKey: .pullRequestFilter)) ?? .open
         collapsedPullRequestProjects = try c.decodeIfPresent(Set<UUID>.self, forKey: .collapsedPullRequestProjects) ?? []
+        usageRanges = (try? c.decodeIfPresent([UUID: UsageRange].self, forKey: .usageRanges)) ?? [:]
+        usageWindowRange = (try? c.decodeIfPresent(UsageRange.self, forKey: .usageWindowRange)) ?? .week
     }
 
     /// The tool showing on the left, or nil when that side is hidden.
