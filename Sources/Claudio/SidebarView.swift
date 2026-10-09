@@ -322,11 +322,7 @@ private struct FolderSection: View {
     /// does (see `FolderDropDelegate`).
     @State private var liveEdge: AppModel.SidebarDropEdge?
     /// nil until the current drag's payload has been read; reset per hover.
-    @State private var isDraggingFolder: Bool?
-    /// Set alongside `isDraggingFolder` when the drag is a folder, so
-    /// hovering it over itself or one of its own subfolders (an invalid
-    /// drop) shows no highlight instead of one that would just error.
-    @State private var draggedFolderID: UUID?
+    @State private var draggedKind: DraggedKind?
     @State private var rowHeight: CGFloat = 28
     @State private var confirmDelete = false
 
@@ -394,8 +390,7 @@ private struct FolderSection: View {
         // drop position decides: its top/bottom edge reorders it as a
         // sibling, the rest of the row nests it inside.
         .onDrop(of: [.text], delegate: FolderDropDelegate(group: folder.group, model: model, rowHeight: { rowHeight },
-                                                          liveEdge: $liveEdge, isDraggingFolder: $isDraggingFolder,
-                                                          draggedFolderID: $draggedFolderID))
+                                                          liveEdge: $liveEdge, draggedKind: $draggedKind))
         .contextMenu {
             FolderMenu(group: folder.group, projectID: projectID, confirmDelete: $confirmDelete)
         }
@@ -411,17 +406,25 @@ private struct FolderSection: View {
 /// (`dropEntered`, once per hover) to tell a folder drag from a session
 /// drag, rather than relying on `SidebarDragItem.payload`'s prefix only at
 /// drop time.
+/// What's being dragged, as told apart by `FolderDropDelegate`'s payload
+/// peek: a folder (carrying its id, so a target can tell whether it's its
+/// own descendant) or a session (always "into", never edge-sensitive).
+/// One optional instead of two kept in sync by convention — "dragging a
+/// folder with no known id" simply isn't representable.
+private enum DraggedKind: Equatable {
+    case session
+    case folder(UUID)
+}
+
 private struct FolderDropDelegate: DropDelegate {
     let group: SessionGroup
     let model: AppModel
     let rowHeight: () -> CGFloat
     @Binding var liveEdge: AppModel.SidebarDropEdge?
-    @Binding var isDraggingFolder: Bool?
-    @Binding var draggedFolderID: UUID?
+    @Binding var draggedKind: DraggedKind?
 
     func dropEntered(info: DropInfo) {
-        isDraggingFolder = nil
-        draggedFolderID = nil
+        draggedKind = nil
         readKind(info)
         liveEdge = liveVisualEdge(for: info)
     }
@@ -433,6 +436,7 @@ private struct FolderDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         liveEdge = nil
+        draggedKind = nil
     }
 
     func performDrop(info: DropInfo) -> Bool {
@@ -445,9 +449,14 @@ private struct FolderDropDelegate: DropDelegate {
         let edge = dropEdge(for: info)
         liveEdge = nil
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
-        _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
-            guard let payload = reading as? String else { return }
-            Task { @MainActor in model.drop([payload], on: .group(group), edge: edge) }
+        _ = provider.loadObject(ofClass: NSString.self) { reading, error in
+            Task { @MainActor in
+                guard let payload = reading as? String else {
+                    model.report("Couldn't read what was dropped: \(error?.localizedDescription ?? "unknown error")")
+                    return
+                }
+                model.drop([payload], on: .group(group), edge: edge)
+            }
         }
         return true
     }
@@ -460,33 +469,31 @@ private struct FolderDropDelegate: DropDelegate {
         return .at(locationY: Double(info.location.y), rowHeight: Double(rowHeight()))
     }
 
-    /// The edge to show live, while hovering: nil (no highlight) when a
-    /// dragged folder is hovering over itself or one of its own
-    /// subfolders, since that drop would just error; "into" for a session
-    /// drag (which always files into the row, with no edge to show);
-    /// otherwise the position-based edge, once the peek has told a folder
-    /// drag apart from a session drag.
+    /// The edge to show live, while hovering: "into" for a session drag
+    /// (which always files into the row, with no edge to show) or while the
+    /// peek hasn't resolved yet; nil (no highlight) when a dragged folder
+    /// is hovering over itself or one of its own subfolders, since that
+    /// drop would just error; otherwise the position-based edge.
     private func liveVisualEdge(for info: DropInfo) -> AppModel.SidebarDropEdge? {
-        if let draggedFolderID, case .folder(let targetID) = group, model.workspace.isFolder(targetID, orDescendantOf: draggedFolderID) {
-            return nil
-        }
-        guard isDraggingFolder == true else { return .into }
+        guard case .folder(let draggedID) = draggedKind else { return .into }
+        if case .folder(let targetID) = group, model.workspace.isFolder(targetID, orDescendantOf: draggedID) { return nil }
         return dropEdge(for: info)
     }
 
     /// Peeks at the dragged payload once, so a folder drag (edge-sensitive,
     /// and invalid over its own subtree) can be told apart from a session
-    /// drag (always "into").
+    /// drag (always "into"). A failed peek only costs the hover feedback —
+    /// `liveVisualEdge` falls back to "into" while `draggedKind` is nil —
+    /// not the drop itself, which `performDrop` resolves independently, so
+    /// this stays silent rather than surfacing an error from a mere hover.
     private func readKind(_ info: DropInfo) {
         guard let provider = info.itemProviders(for: [.text]).first else { return }
         _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
             guard let payload = reading as? String, let item = SidebarDragItem(payload: payload) else { return }
             Task { @MainActor in
-                if case .folder(let id) = item {
-                    isDraggingFolder = true
-                    draggedFolderID = id
-                } else {
-                    isDraggingFolder = false
+                switch item {
+                case .folder(let id): draggedKind = .folder(id)
+                default: draggedKind = .session
                 }
             }
         }
@@ -507,14 +514,8 @@ struct FolderMenu: View {
             Button("New Session in Folder…") { presentNewSession(group) }
             Button("New Subfolder") { model.createFolder(in: projectID, parentID: folderID) }
             Button("Show Pull Requests") { model.showOverview(.folder(group)) }
-            // Everything in this project but the folder's own subtree (it
-            // can't move into itself or one of its own subfolders).
-            // Its own subtree (can't move into itself or a descendant) and its
-            // current parent (that's where it already is) are left out.
             let currentParentID = model.workspace.folder(folderID)?.parentID
-            let subtree = model.workspace.subtreeFolderIDs(of: folderID)
-            let candidates = model.workspace.foldersInDisplayOrder(projectID: projectID)
-                .filter { !subtree.contains($0.folder.id) && $0.folder.id != currentParentID }
+            let candidates = model.workspace.moveToFolderCandidates(for: folderID)
             Menu("Move to Folder") {
                 if currentParentID != nil {
                     Button("Top Level") { model.moveFolder(folderID, toProject: projectID) }
@@ -524,7 +525,7 @@ struct FolderMenu: View {
                     Button(model.workspace.path(of: .folder(entry.folder.id))) { model.moveFolder(folderID, intoFolder: entry.folder.id) }
                 }
             }
-            .disabled(candidates.isEmpty && model.workspace.folder(folderID)?.parentID == nil)
+            .disabled(candidates.isEmpty && currentParentID == nil)
             let others = model.workspace.projects.filter { $0.id != projectID }
             Menu("Move to Project") {
                 ForEach(others) { project in
@@ -565,18 +566,26 @@ private struct DeleteFolderConfirmation: ViewModifier {
         return nil
     }
 
-    /// Where promoted contents land: a parent folder's name, or "Unfiled"
-    /// for a top-level folder's sessions (its subfolders would go to the
-    /// project's top level instead, which the dialog's message covers).
-    private var parentName: String {
-        guard let folderID, let parentID = model.workspace.folder(folderID)?.parentID else { return "Unfiled" }
-        return "“\(model.workspace.folder(parentID)?.name ?? "")”"
+    /// Its parent's full path, when it has one (routed through `path(of:)`,
+    /// like every other folder name shown outside the tree itself).
+    private var parentPath: String? {
+        guard let folderID, let parentID = model.workspace.folder(folderID)?.parentID else { return nil }
+        return model.workspace.path(of: .folder(parentID))
     }
 
     func body(content: Content) -> some View {
-        content.confirmationDialog("Delete “\(folder.name)”?", isPresented: $isPresented, titleVisibility: .visible) {
+        content.confirmationDialog("Delete “\(model.workspace.path(of: folder.group))”?", isPresented: $isPresented, titleVisibility: .visible) {
             if let folderID {
-                Button("Move Contents to \(parentName)") { model.deleteFolder(folderID, mode: .promoteChildren) }
+                // A top-level folder's direct sessions go to Unfiled, not a
+                // parent folder (its subfolders promote to the project's
+                // top level instead), so the button doesn't name a
+                // destination for that case — the dialog's message below
+                // spells out both halves.
+                if let parentPath {
+                    Button("Move Contents to “\(parentPath)”") { model.deleteFolder(folderID, mode: .promoteChildren) }
+                } else {
+                    Button("Move Contents Up") { model.deleteFolder(folderID, mode: .promoteChildren) }
+                }
                 Button("Unfile Everything Inside", role: .destructive) { model.deleteFolder(folderID, mode: .flattenToUnfiled) }
             }
             Button("Cancel", role: .cancel) {}

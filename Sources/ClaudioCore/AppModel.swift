@@ -808,7 +808,10 @@ public final class AppModel {
     /// Nests a folder inside another, as its last child — the non-drag way
     /// to do what dropping one in the middle of a folder row does.
     public func moveFolder(_ id: UUID, intoFolder parentID: UUID) {
-        attempt { try state.workspace.moveFolder(id, intoFolder: parentID) }
+        guard attempt({ try state.workspace.moveFolder(id, intoFolder: parentID) }) != nil else { return }
+        // Otherwise the folder just moved vanishes from the sidebar until the
+        // parent happens to be expanded, which can look like the move failed.
+        if state.workspace.isCollapsed(.folder(parentID)) { state.workspace.toggleCollapsed(.folder(parentID)) }
         save()
     }
 
@@ -862,8 +865,12 @@ public final class AppModel {
             case (.folder(let id), .project(let projectID)), (.folder(let id), .group(.unfiled(let projectID))):
                 attempt { try state.workspace.moveFolder(id, before: nil, inProject: projectID) }
             case (.folder(let id), .group(.folder(let targetID))):
-                guard id != targetID else { continue }
                 guard let projectID = state.workspace.projectID(containingFolder: targetID) else { continue }
+                // Dropping a folder on its own row: `.into` reports the same
+                // `.cyclicFolderMove` error as dropping it on a descendant
+                // (via `relocateFolder`'s own `id != parentID` guard);
+                // `.before`/`.after` stay a silent no-op, same as reordering
+                // a folder to right before itself always has been.
                 switch edge {
                 case .into: attempt { try state.workspace.moveFolder(id, intoFolder: targetID) }
                 case .before: attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
@@ -2114,7 +2121,7 @@ public final class AppModel {
     // MARK: - Helpers
 
     /// Shows an error to the user and records it in the log.
-    func report(_ message: String) {
+    public func report(_ message: String) {
         errorMessage = message
         log.append(.error, message)
     }

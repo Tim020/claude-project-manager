@@ -89,12 +89,11 @@ public enum Sidebar {
     }
 
     /// A folder's build result: its (and its subtree's) flattened rows, plus
-    /// what its ancestor needs to decide its own visibility and pill.
+    /// what its ancestor needs for its own pill and visibility. An ancestor
+    /// that didn't match its own filters still shows when `rows` here is
+    /// non-empty, so something nested inside it is still reachable.
     private struct Built {
         var rows: [SidebarFolder]
-        /// Whether this folder (or something nested inside it) matched, so an
-        /// ancestor that didn't match on its own still shows.
-        var matched: Bool
         /// Every filtered session in its subtree, for the parent's own pill
         /// and, at the top level, the project header's total (counted once
         /// per session, since top-level subtrees never overlap).
@@ -137,7 +136,7 @@ public enum Sidebar {
         // decode-time sanitization (every other tree walk in `Workspace`
         // guards the same way): without it, a cycle would recurse forever.
         func buildFolder(_ folder: Folder, in project: Project, depth: Int, ancestorMatches: Bool, ancestors: Set<UUID>) -> Built {
-            guard !ancestors.contains(folder.id) else { return Built(rows: [], matched: false, subtreeSessions: []) }
+            guard !ancestors.contains(folder.id) else { return Built(rows: [], subtreeSessions: []) }
             let ancestors = ancestors.union([folder.id])
             let nameMatches = ancestorMatches || (textFiltering && matches(folder.name))
             let children = project.folders.filter { $0.parentID == folder.id }
@@ -146,8 +145,14 @@ public enum Sidebar {
             let childSubtreeSessions = builtChildren.flatMap(\.subtreeSessions)
 
             let (direct, hiddenByFilter) = filteredDirect(workspace.sessions(in: .folder(folder.id)), nameMatches: nameMatches)
-            let matched = !hiddenByFilter || !childRows.isEmpty
-            guard matched else { return Built(rows: [], matched: false, subtreeSessions: []) }
+            // An ancestor whose own sessions were filtered away (recency,
+            // status or text alike) still shows, with none of its own rows,
+            // when a descendant anywhere underneath it survived: otherwise
+            // there'd be no path down to that descendant at all. This holds
+            // for every filter, recency included — a folder whose sessions
+            // merely aged out is no different here from one that was always
+            // empty (`testFilterKeepsAncestorsOfASurvivingDeepDescendant`).
+            guard !hiddenByFilter || !childRows.isEmpty else { return Built(rows: [], subtreeSessions: []) }
 
             let subtreeSessions = direct + childSubtreeSessions
             let collapsed = workspace.isCollapsed(.folder(folder.id))
@@ -155,7 +160,7 @@ public enum Sidebar {
             let row = SidebarFolder(id: folder.id.uuidString, group: .folder(folder.id), name: folder.name, isUnfiled: false,
                                     isCollapsed: collapsed, depth: depth, sessions: showContents ? direct : [],
                                     sessionCount: subtreeSessions.count, statusCounts: StatusCounts(subtreeSessions))
-            return Built(rows: [row] + (showContents ? childRows : []), matched: true, subtreeSessions: subtreeSessions)
+            return Built(rows: [row] + (showContents ? childRows : []), subtreeSessions: subtreeSessions)
         }
 
         return workspace.projects.compactMap { project -> SidebarProject? in
@@ -171,7 +176,7 @@ public enum Sidebar {
                 unfiledSessions = unfiledSessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
             }
             if let status { unfiledSessions = unfiledSessions.filter { $0.status == status } }
-            if textFiltering && !projectMatches {
+            if textFiltering && !projectMatches && !matches(Workspace.unfiledName) {
                 unfiledSessions = unfiledSessions.filter { matches($0.name) || matches($0.summary) }
             }
             if !unfiledSessions.isEmpty {

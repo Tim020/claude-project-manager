@@ -153,7 +153,7 @@ final class WorkspaceTests: XCTestCase {
         let parent = try ws.createFolder(in: p, named: "Parent")
         let child = try ws.createFolder(in: p, named: "", parentID: parent)
         XCTAssertEqual(ws.folder(child)?.parentID, parent)
-        XCTAssertEqual(ws.folder(child)?.name, "New Folder", "unique among the project, but no sibling yet")
+        XCTAssertEqual(ws.folder(child)?.name, "New Folder", "unique among its siblings, and it has none yet")
         let sibling = try ws.createFolder(in: p, named: "", parentID: parent)
         XCTAssertEqual(ws.folder(sibling)?.name, "New Folder 2")
         // A top-level folder can reuse "New Folder" since it's a different sibling group.
@@ -190,13 +190,33 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertThrowsError(try ws.moveFolder(parent, intoFolder: child)) { error in
             XCTAssertEqual(error as? WorkspaceError, .cyclicFolderMove)
         }
+        XCTAssertThrowsError(try ws.moveFolder(parent, intoFolder: parent)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .cyclicFolderMove, "into itself")
+        }
+    }
+
+    /// The `before`/`after` sibling-placement path reparents the same way
+    /// `intoFolder` does, so it's just as able to create a cycle, and goes
+    /// through the very same guard.
+    func testMoveFolderBeforeOrAfterADescendantThrows() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let grandparent = try ws.createFolder(in: p, named: "Grandparent")
+        let parent = try ws.createFolder(in: p, named: "Parent", parentID: grandparent)
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        XCTAssertThrowsError(try ws.moveFolder(grandparent, before: child, inProject: p)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .cyclicFolderMove)
+        }
+        XCTAssertThrowsError(try ws.moveFolder(grandparent, after: child, inProject: p)) { error in
+            XCTAssertEqual(error as? WorkspaceError, .cyclicFolderMove)
+        }
     }
 
     func testMoveFolderAfterPutsItRightAfterItsNewSibling() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code/a")
         let a = try ws.createFolder(in: p, named: "A")
-        let b = try ws.createFolder(in: p, named: "B")
+        try ws.createFolder(in: p, named: "B")
         let c = try ws.createFolder(in: p, named: "C")
         try ws.moveFolder(c, after: a, inProject: p)
         XCTAssertEqual(ws.project(p)!.folders.map(\.name), ["A", "C", "B"])
@@ -218,6 +238,53 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.folder(child)?.parentID, parent, "its own nesting under parent is unaffected")
         XCTAssertEqual(ws.session(s.id)?.projectID, p2)
         XCTAssertTrue(ws.project(p1)!.folders.isEmpty)
+    }
+
+    func testMoveFolderToProjectCarriesAMultiLevelBranchingSubtree() throws {
+        var ws = Workspace()
+        let p1 = ws.addProject(path: "/code/a")
+        let p2 = ws.addProject(path: "/code/b")
+        let root = try ws.createFolder(in: p1, named: "Root")
+        let childA = try ws.createFolder(in: p1, named: "ChildA", parentID: root)
+        let childB = try ws.createFolder(in: p1, named: "ChildB", parentID: root)
+        let grandchild = try ws.createFolder(in: p1, named: "Grandchild", parentID: childA)
+        let inRoot = makeSession("in root", project: p1)
+        let inChildB = makeSession("in child B", project: p1)
+        let inGrandchild = makeSession("in grandchild", project: p1)
+        try ws.addSession(inRoot, toFolder: root)
+        try ws.addSession(inChildB, toFolder: childB)
+        try ws.addSession(inGrandchild, toFolder: grandchild)
+        let untouched = try ws.createFolder(in: p1, named: "Untouched")
+
+        try ws.moveFolder(root, toProject: p2)
+
+        XCTAssertEqual(Set(ws.project(p2)!.folders.map(\.id)), [root, childA, childB, grandchild], "the whole subtree moved")
+        XCTAssertEqual(ws.project(p1)!.folders.map(\.id), [untouched], "only the unrelated folder stays behind")
+        XCTAssertNil(ws.folder(root)?.parentID)
+        XCTAssertEqual(ws.folder(childA)?.parentID, root)
+        XCTAssertEqual(ws.folder(childB)?.parentID, root)
+        XCTAssertEqual(ws.folder(grandchild)?.parentID, childA, "nesting within the moved subtree is unaffected")
+        for session in [inRoot, inChildB, inGrandchild] {
+            XCTAssertEqual(ws.session(session.id)?.projectID, p2, "\(session.name) re-homed")
+        }
+    }
+
+    func testMoveFolderBeforeAndAfterAtDepthKeepsTheSharedParent() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let a = try ws.createFolder(in: p, named: "A", parentID: parent)
+        let b = try ws.createFolder(in: p, named: "B", parentID: parent)
+        let c = try ws.createFolder(in: p, named: "C", parentID: parent)
+        try ws.createFolder(in: p, named: "Outsider")
+
+        try ws.moveFolder(c, before: a, inProject: p)
+        XCTAssertEqual(ws.foldersInDisplayOrder(projectID: p).filter { $0.folder.parentID == parent }.map(\.folder.name), ["C", "A", "B"])
+        XCTAssertEqual(ws.folder(c)?.parentID, parent, "reordering among nested siblings keeps their shared parent")
+
+        try ws.moveFolder(a, after: b, inProject: p)
+        XCTAssertEqual(ws.foldersInDisplayOrder(projectID: p).filter { $0.folder.parentID == parent }.map(\.folder.name), ["C", "B", "A"])
+        XCTAssertEqual(ws.folder(a)?.parentID, parent)
     }
 
     func testDeleteFolderPromotesChildrenToItsParent() throws {
@@ -262,6 +329,23 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.group(of: nested.id), .unfiled(projectID: p))
     }
 
+    func testDeleteFolderFlattenToUnfiledClosesEveryOverviewTabInTheSubtree() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        let grandchild = try ws.createFolder(in: p, named: "Grandchild", parentID: child)
+        let parentTab = try XCTUnwrap(ws.openOverview(.folder(.folder(parent))))
+        let childTab = try XCTUnwrap(ws.openOverview(.folder(.folder(child))))
+        let grandchildTab = try XCTUnwrap(ws.openOverview(.folder(.folder(grandchild))))
+        XCTAssertEqual(Set(ws.openTabIDs), [parentTab, childTab, grandchildTab])
+
+        ws.deleteFolder(parent, mode: .flattenToUnfiled)
+
+        XCTAssertTrue(ws.overviewTabs.isEmpty)
+        XCTAssertTrue(ws.openTabIDs.isEmpty)
+    }
+
     func testSubtreeFolderIDsAndSessionsInSubtreeCoverEveryDepth() throws {
         var ws = Workspace()
         let p = ws.addProject(path: "/code/a")
@@ -277,6 +361,36 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.sessionsInSubtree(.folder(child)).map(\.name), ["nested"])
         XCTAssertTrue(ws.isFolder(child, orDescendantOf: grandparent))
         XCTAssertFalse(ws.isFolder(grandparent, orDescendantOf: child))
+    }
+
+    /// "Nest without limit" is the feature's whole premise, so exercise it
+    /// past the 2-3 levels every other test uses: 20 deep.
+    func testNestingHasNoDepthLimit() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code/a")
+        var ids: [UUID] = []
+        var parentID: UUID?
+        for depth in 0..<20 {
+            let id = try ws.createFolder(in: p, named: "L\(depth)", parentID: parentID)
+            ids.append(id)
+            parentID = id
+        }
+        let deepest = ids.last!
+        let s = makeSession("deepest", project: p)
+        try ws.addSession(s, toFolder: deepest)
+
+        XCTAssertEqual(ws.subtreeFolderIDs(of: ids[0]).count, 20, "every level is in the root's subtree")
+        XCTAssertEqual(ws.sessionsInSubtree(.folder(ids[0])).map(\.name), ["deepest"])
+        XCTAssertEqual(ws.path(of: .folder(deepest)), (0..<20).map { "L\($0)" }.joined(separator: " › "))
+        XCTAssertEqual(ws.foldersInDisplayOrder(projectID: p).map(\.depth), Array(0..<20))
+        XCTAssertTrue(ws.isFolder(deepest, orDescendantOf: ids[0]))
+
+        // The deepest folder can still be relocated, and still carries its
+        // one session, like at any other depth.
+        let other = try ws.createFolder(in: p, named: "Other")
+        try ws.moveFolder(deepest, intoFolder: other)
+        XCTAssertEqual(ws.folder(deepest)?.parentID, other)
+        XCTAssertEqual(ws.group(of: s.id), .folder(deepest))
     }
 
     func testPathJoinsAncestorNamesOutermostFirst() throws {

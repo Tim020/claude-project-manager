@@ -239,6 +239,58 @@ final class NavigationModelTests: XCTestCase {
         }
     }
 
+    func testFolderHasContents() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let empty = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            XCTAssertFalse(model.folderHasContents(empty))
+
+            let withSubfolder = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            model.createFolder(in: p, parentID: withSubfolder)
+            model.cancelRename()
+            XCTAssertTrue(model.folderHasContents(withSubfolder), "a subfolder, even with no sessions of its own")
+
+            let withSession = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            var settings = model.settings
+            settings.useBackgroundAgents = false
+            model.updateSettings(settings)
+            let request = NewSessionRequest(projectID: p, folderID: withSession, name: "x", role: .code, prompt: "", model: nil, permissionMode: .standard)
+            _ = try XCTUnwrap(model.createSession(request))
+            XCTAssertTrue(model.folderHasContents(withSession))
+        }
+    }
+
+    func testMovingOrCreatingAFolderIntoACollapsedParentExpandsIt() throws {
+        try MainActor.assumeIsolated {
+            let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                                 hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"),
+                                 locateClaude: { _ in nil }, shell: "/bin/sh", home: "/")
+            let p = model.addProject(path: "/code")
+            let parent = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+            let other = try XCTUnwrap(model.createFolder(in: p))
+            model.cancelRename()
+
+            model.toggleCollapsed(.folder(parent))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(parent)))
+            model.createFolder(in: p, parentID: parent)
+            model.cancelRename()
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(parent)), "creating a subfolder expands its new parent")
+
+            model.toggleCollapsed(.folder(parent))
+            XCTAssertTrue(model.workspace.isCollapsed(.folder(parent)))
+            model.moveFolder(other, intoFolder: parent)
+            XCTAssertFalse(model.workspace.isCollapsed(.folder(parent)), "moving a folder in expands its new parent too")
+            XCTAssertEqual(model.workspace.folder(other)?.parentID, parent)
+        }
+    }
+
     func testDroppingASessionStillFilesIt() throws {
         try MainActor.assumeIsolated {
             let model = AppModel(store: MemoryStore(), discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),

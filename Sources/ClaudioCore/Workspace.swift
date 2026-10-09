@@ -343,6 +343,17 @@ public struct Workspace: Codable, Equatable, Sendable {
         return result
     }
 
+    /// Where a folder could move via "Move to Folder": its project's
+    /// folders in display order, minus its own subtree (it can't move into
+    /// itself or one of its own subfolders) and its current parent (that's
+    /// already where it is).
+    public func moveToFolderCandidates(for id: UUID) -> [(folder: Folder, depth: Int)] {
+        guard let projectID = projectID(containingFolder: id) else { return [] }
+        let currentParentID = folder(id)?.parentID
+        let subtree = subtreeFolderIDs(of: id)
+        return foldersInDisplayOrder(projectID: projectID).filter { !subtree.contains($0.folder.id) && $0.folder.id != currentParentID }
+    }
+
     /// Visible (non-archived) sessions in a group. Folder order is the user's
     /// order; Unfiled is newest activity first. For a folder this is its
     /// direct sessions only; see `sessionsInSubtree` for everything nested
@@ -440,7 +451,10 @@ public struct Workspace: Codable, Equatable, Sendable {
     public mutating func createFolder(in projectID: UUID, named name: String, containing sessionID: UUID? = nil,
                                       parentID: UUID? = nil) throws -> UUID {
         guard let index = projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceError.projectNotFound }
-        if let parentID { guard self.projectID(containingFolder: parentID) == projectID else { throw WorkspaceError.folderNotInProject } }
+        if let parentID {
+            guard folder(parentID) != nil else { throw WorkspaceError.folderNotFound }
+            guard self.projectID(containingFolder: parentID) == projectID else { throw WorkspaceError.folderNotInProject }
+        }
         let folder = Folder(name: Workspace.trimmed(name) ?? uniqueFolderName(in: projects[index], parentID: parentID), parentID: parentID)
         projects[index].folders.append(folder)
         if let sessionID { try moveSession(sessionID, to: .folder(folder.id)) }
@@ -472,11 +486,23 @@ public struct Workspace: Codable, Equatable, Sendable {
 
         switch mode {
         case .promoteChildren:
+            // Writes `parentID` directly rather than going through
+            // `relocateFolder`'s validated path: it's safe here only because
+            // the deleted folder's own `parentID` was already validated when
+            // it was placed, and its direct children can't be an ancestor of
+            // anything (so reparenting them to it can't create a cycle). If
+            // that parent has still gone missing somehow, fail loudly in
+            // testing rather than let its sessions vanish from every
+            // folder's `sessionIDs` without a trace.
             for i in projects[p].folders.indices where projects[p].folders[i].parentID == id {
                 projects[p].folders[i].parentID = folder.parentID
             }
-            if let parentID = folder.parentID, let pf = projects[p].folders.firstIndex(where: { $0.id == parentID }) {
-                projects[p].folders[pf].sessionIDs.append(contentsOf: folder.sessionIDs)
+            if let parentID = folder.parentID {
+                if let pf = projects[p].folders.firstIndex(where: { $0.id == parentID }) {
+                    projects[p].folders[pf].sessionIDs.append(contentsOf: folder.sessionIDs)
+                } else {
+                    assertionFailure("Folder \(id)'s parent \(parentID) should still exist")
+                }
             }
             projects[p].folders.remove(at: f)
         case .flattenToUnfiled:
@@ -503,7 +529,7 @@ public struct Workspace: Codable, Equatable, Sendable {
     /// then positions it among its new siblings. Guards against moving a
     /// folder into itself or one of its own subfolders.
     private mutating func relocateFolder(_ id: UUID, parentID: UUID?, projectID: UUID, placement: FolderPlacement) throws {
-        guard id != parentID else { return }
+        guard id != parentID else { throw WorkspaceError.cyclicFolderMove }
         guard folderIndex(id) != nil else { throw WorkspaceError.folderNotFound }
         guard let destination = projects.firstIndex(where: { $0.id == projectID }) else { throw WorkspaceError.projectNotFound }
         if let parentID {
@@ -530,9 +556,11 @@ public struct Workspace: Codable, Equatable, Sendable {
         case .end:
             index = projects[p].folders.count
         case .beforeSibling(let siblingID):
-            index = projects[p].folders.firstIndex { $0.id == siblingID } ?? projects[p].folders.count
+            guard let siblingIndex = projects[p].folders.firstIndex(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+            index = siblingIndex
         case .afterSibling(let siblingID):
-            index = (projects[p].folders.firstIndex { $0.id == siblingID }).map { $0 + 1 } ?? projects[p].folders.count
+            guard let siblingIndex = projects[p].folders.firstIndex(where: { $0.id == siblingID }) else { throw WorkspaceError.folderNotFound }
+            index = siblingIndex + 1
         }
         projects[p].folders.insert(moved, at: index)
     }

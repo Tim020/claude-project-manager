@@ -85,12 +85,11 @@ final class SidebarTests: XCTestCase {
 
     func testNestedFoldersFlattenInPreOrderWithDepth() throws {
         let child = try ws.createFolder(in: ds, named: "Child", parentID: storageFolder)
-        let grandchild = try ws.createFolder(in: ds, named: "Grandchild", parentID: child)
+        try ws.createFolder(in: ds, named: "Grandchild", parentID: child)
         let tree = Sidebar.build(ws, filter: "", home: home)
         let names = tree[0].folders.map(\.name)
         XCTAssertEqual(names, ["Storage fix — PR #1427", "Child", "Grandchild", "Mic planner perf", "Unfiled"])
         XCTAssertEqual(tree[0].folders.map(\.depth), [0, 1, 2, 0, 0])
-        _ = grandchild
     }
 
     func testCollapsedFolderHidesItsSubfoldersUnlessFiltering() throws {
@@ -127,9 +126,28 @@ final class SidebarTests: XCTestCase {
     }
 
     func testFilterMatchingDescendantFolderNameShowsItsAncestors() throws {
-        let child = try ws.createFolder(in: ds, named: "Deeply Nested Match", parentID: emptyFolder)
+        try ws.createFolder(in: ds, named: "Deeply Nested Match", parentID: emptyFolder)
         let tree = Sidebar.build(ws, filter: "deeply nested", home: home)
         XCTAssertEqual(tree[0].folders.map(\.name), ["Mic planner perf", "Deeply Nested Match"])
-        _ = child
+    }
+
+    func testFilterKeepsAncestorsOfASurvivingDeepDescendant() throws {
+        // A (aged-out session) > B (aged-out session) > C (a Working
+        // session, which always counts as recent regardless of its date).
+        let old = Date(timeIntervalSince1970: 0)
+        let a = try ws.createFolder(in: ds, named: "A")
+        let b = try ws.createFolder(in: ds, named: "B", parentID: a)
+        let c = try ws.createFolder(in: ds, named: "C", parentID: b)
+        try ws.addSession(Session(projectID: ds, name: "old in A", workingDirectory: "/", createdAt: old, lastActivity: old), toFolder: a)
+        try ws.addSession(Session(projectID: ds, name: "old in B", workingDirectory: "/", createdAt: old, lastActivity: old), toFolder: b)
+        try ws.addSession(Session(projectID: ds, name: "live in C", workingDirectory: "/", status: .working), toFolder: c)
+
+        let tree = Sidebar.build(ws, filter: "", activeSince: Date(timeIntervalSince1970: 1), home: home)
+        let names = try XCTUnwrap(tree.first { $0.name == "DigiScript" }).folders.map(\.name)
+        XCTAssertTrue(names.contains("A") && names.contains("B") && names.contains("C"),
+                      "A and B still show, with none of their own sessions, so C stays reachable")
+        let folderB = try XCTUnwrap(tree.first { $0.name == "DigiScript" }?.folders.first { $0.name == "B" })
+        XCTAssertEqual(folderB.sessions, [], "B's own aged-out session is filtered from its row")
+        XCTAssertEqual(folderB.sessionCount, 1, "but its pill still counts C's live session")
     }
 }
