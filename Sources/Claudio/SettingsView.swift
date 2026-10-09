@@ -527,6 +527,7 @@ private struct TagNameField: View {
                 // as this field isn't mid-edit.
                 if !isFocused { text = newValue }
             }
+            .onDisappear(perform: commit)
     }
 
     private func commit() {
