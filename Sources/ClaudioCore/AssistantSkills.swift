@@ -142,17 +142,18 @@ public enum SkillChips {
 
     /// The skills to name in an item's opening prompt, best first. A skill
     /// scores for its `paths` matching files the item's sessions touched, for
-    /// being meant for the item's folder, and for use by sessions in that
-    /// folder (usage counts come with step 5). Skills that score nothing
-    /// aren't suggested.
-    public static func pick(from skills: [ApprovedSkill], touchedFiles: [String], folderName: String?,
+    /// being meant for the item's folder (or one of that folder's
+    /// ancestors, since a nested folder inherits what its parent is for),
+    /// and for use by sessions in that folder (usage counts come with step
+    /// 5). Skills that score nothing aren't suggested.
+    public static func pick(from skills: [ApprovedSkill], touchedFiles: [String], folderNames: [String],
                             usage: [String: Int] = [:], limit: Int = SkillChips.limit) -> [ApprovedSkill] {
-        let folder = folderName?.lowercased()
+        let folders = Set(folderNames.map { $0.lowercased() })
         let scored = skills.map { skill -> (skill: ApprovedSkill, score: Int) in
             var score = 0
             let hits = touchedFiles.filter { file in skill.paths.contains { Glob.matches($0, file) } }.count
             if hits > 0 { score += 2 + min(hits, 3) }
-            if let folder, skill.folders.contains(where: { $0.lowercased() == folder }) { score += 2 }
+            if skill.folders.contains(where: { folders.contains($0.lowercased()) }) { score += 2 }
             score += min(usage[skill.name] ?? 0, 3)
             return (skill, score)
         }

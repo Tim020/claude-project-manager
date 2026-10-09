@@ -133,10 +133,15 @@ public enum Sidebar {
             return (sessions, false)
         }
 
-        func buildFolder(_ folder: Folder, in project: Project, depth: Int, ancestorMatches: Bool) -> Built {
+        // `ancestors` guards against a cycle that somehow made it past
+        // decode-time sanitization (every other tree walk in `Workspace`
+        // guards the same way): without it, a cycle would recurse forever.
+        func buildFolder(_ folder: Folder, in project: Project, depth: Int, ancestorMatches: Bool, ancestors: Set<UUID>) -> Built {
+            guard !ancestors.contains(folder.id) else { return Built(rows: [], matched: false, subtreeSessions: []) }
+            let ancestors = ancestors.union([folder.id])
             let nameMatches = ancestorMatches || (textFiltering && matches(folder.name))
             let children = project.folders.filter { $0.parentID == folder.id }
-            let builtChildren = children.map { buildFolder($0, in: project, depth: depth + 1, ancestorMatches: nameMatches) }
+            let builtChildren = children.map { buildFolder($0, in: project, depth: depth + 1, ancestorMatches: nameMatches, ancestors: ancestors) }
             let childRows = builtChildren.flatMap(\.rows)
             let childSubtreeSessions = builtChildren.flatMap(\.subtreeSessions)
 
@@ -157,7 +162,7 @@ public enum Sidebar {
             let projectMatches = textFiltering && matches(project.name)
 
             let topLevel = project.folders.filter { $0.parentID == nil }
-            let builtTop = topLevel.map { buildFolder($0, in: project, depth: 0, ancestorMatches: projectMatches) }
+            let builtTop = topLevel.map { buildFolder($0, in: project, depth: 0, ancestorMatches: projectMatches, ancestors: []) }
             var folders = builtTop.flatMap(\.rows)
 
             let unfiledGroup = SessionGroup.unfiled(projectID: project.id)

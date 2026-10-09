@@ -53,8 +53,9 @@ struct NewSessionSheet: View {
                     label("Folder")
                     Picker("", selection: $folderID) {
                         Text(Workspace.unfiledName).tag(UUID?.none)
-                        ForEach(folders) { folder in
-                            Text(folder.name).tag(Optional(folder.id))
+                        ForEach(folders, id: \.folder.id) { entry in
+                            // A flat picker, so the full path disambiguates same-named folders at different levels.
+                            Text(model.workspace.path(of: .folder(entry.folder.id))).tag(Optional(entry.folder.id))
                         }
                     }
                     .labelsHidden()
@@ -159,8 +160,8 @@ struct NewSessionSheet: View {
         projectID.flatMap { model.workspace.project($0) }.map { Worktree.isGitRepository($0.path) } ?? false
     }
 
-    private var folders: [Folder] {
-        projectID.flatMap { model.workspace.project($0)?.folders } ?? []
+    private var folders: [(folder: Folder, depth: Int)] {
+        projectID.map { model.workspace.foldersInDisplayOrder(projectID: $0) } ?? []
     }
 
     private func label(_ text: String) -> some View {

@@ -45,7 +45,9 @@ extension AppModel {
     public func title(of overview: Overview) -> (title: String, place: String) {
         switch overview {
         case .project(let id): return ("Pull Requests", workspace.project(id)?.name ?? "")
-        case .folder(let group): return ("Pull Requests", workspace.path(of: group))
+        // Shown in the tab strip, where space is tight: the leaf name, not
+        // the full path (breadcrumbs and pickers use that instead).
+        case .folder(let group): return ("Pull Requests", workspace.name(of: group))
         }
     }
 

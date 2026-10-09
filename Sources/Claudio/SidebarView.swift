@@ -2,6 +2,7 @@
 import AppKit
 import ClaudioCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The left rail's Sessions tool (design 1a, in 8c's rails): the full
 /// Project → Folder → Session tree.
@@ -291,12 +292,22 @@ private struct StatusCountPills: View {
 
 /// Leading offsets for the tree's levels, so each level sits inside its
 /// parent: a project's name starts at 28pt (8 padding + 14 chevron + 6
-/// spacing), and folders start just inside that.
+/// spacing), and folders start just inside that. Nesting steps in by less
+/// than a top-level folder, and stops stepping in past a few levels, so a
+/// deep tree still reads cleanly instead of marching off the edge.
 enum SidebarIndent {
-    static let folder: CGFloat = 22
+    static let folderBase: CGFloat = 22
+    static let perLevelStep: CGFloat = 10
+    static let maxIndentedDepth = 5
+
+    static func folder(depth: Int) -> CGFloat {
+        folderBase + CGFloat(min(depth, maxIndentedDepth)) * perLevelStep
+    }
     /// A session's status dot sits just before its folder's name, which starts
     /// at folder + chevron (8) + spacing (7) + icon (16) + spacing (7).
-    static let session: CGFloat = folder + 8 + 7 + 16 + 7 - 6
+    static func session(depth: Int) -> CGFloat {
+        folder(depth: depth) + 8 + 7 + 16 + 7 - 6
+    }
 }
 
 private struct FolderSection: View {
@@ -305,7 +316,15 @@ private struct FolderSection: View {
     let folder: SidebarFolder
     let projectID: UUID
     let now: Date
-    @State private var isDropTarget = false
+    /// nil while nothing's dropping here. Set live as the drag moves, so the
+    /// row shows a sibling line near its top/bottom edge and a full
+    /// highlight everywhere else — matching what dropping there actually
+    /// does (see `FolderDropDelegate`).
+    @State private var liveEdge: AppModel.SidebarDropEdge?
+    /// nil until the current drag's payload has been read; reset per hover.
+    @State private var isDraggingFolder: Bool?
+    @State private var rowHeight: CGFloat = 28
+    @State private var confirmDelete = false
 
     private var folderID: UUID? {
         if case .folder(let id) = folder.group { return id }
@@ -315,7 +334,7 @@ private struct FolderSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let folderID, model.renamingFolderID == folderID {
-                FolderRenameField(folderID: folderID, initialName: folder.name)
+                FolderRenameField(folderID: folderID, initialName: folder.name, depth: folder.depth)
             } else if let folderID {
                 // Unfiled stays put: it always comes after the folders.
                 row.draggable(SidebarDragItem.folder(folderID).payload) {
@@ -325,7 +344,7 @@ private struct FolderSection: View {
                 row
             }
             ForEach(folder.sessions) { session in
-                SessionRow(session: session, now: now)
+                SessionRow(session: session, now: now, depth: folder.depth)
             }
         }
         .padding(.top, 2)
@@ -351,20 +370,89 @@ private struct FolderSection: View {
             StatusCountPills(counts: folder.statusCounts)
         }
         .padding(.vertical, 5)
-        .padding(.leading, SidebarIndent.folder)
+        .padding(.leading, SidebarIndent.folder(depth: folder.depth))
         .padding(.trailing, 8)
-        .background(RoundedRectangle(cornerRadius: 4).fill(isDropTarget || model.selectedOverview == .folder(folder.group) ? DS.selection : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(isDropTarget ? DS.blue : .clear, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 4).fill(liveEdge == .into || model.selectedOverview == .folder(folder.group) ? DS.selection : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(liveEdge == .into ? DS.blue : .clear, lineWidth: 1))
+        .overlay(alignment: .top) {
+            if liveEdge == .before { Rectangle().fill(DS.blue).frame(height: 2).offset(y: -1) }
+        }
+        .overlay(alignment: .bottom) {
+            if liveEdge == .after { Rectangle().fill(DS.blue).frame(height: 2).offset(y: 1) }
+        }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             if let folderID { model.beginRenaming(folderID: folderID) }
         }
         .onTapGesture { model.toggleCollapsed(folder.group) }
-        // A session dropped here goes into the folder; a folder goes just above it.
-        .dropDestination(for: String.self) { items, _ in
-            model.drop(items, on: .group(folder.group))
-        } isTargeted: { isDropTarget = $0 }
-        .contextMenu { FolderMenu(group: folder.group, projectID: projectID) }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { rowHeight = $0 }
+        // A session dropped here always files into the folder. A folder's
+        // drop position decides: its top/bottom edge reorders it as a
+        // sibling, the rest of the row nests it inside.
+        .onDrop(of: [.text], delegate: FolderDropDelegate(group: folder.group, model: model, rowHeight: { rowHeight },
+                                                          liveEdge: $liveEdge, isDraggingFolder: $isDraggingFolder))
+        .contextMenu {
+            FolderMenu(group: folder.group, projectID: projectID, confirmDelete: $confirmDelete)
+        }
+        .deleteFolderConfirmation(folder: folder, isPresented: $confirmDelete)
+    }
+}
+
+/// Live drag-and-drop onto a folder row. `.dropDestination` only reports
+/// where a drop landed once it happens, but matching the three-way
+/// before/into/after outcome needs to show which one is live as the drag
+/// moves, and a session dragged over always means "into" (no edge),
+/// unlike a folder. So this reads the drag's payload as it's happening
+/// (`dropEntered`, once per hover) to tell a folder drag from a session
+/// drag, rather than relying on `SidebarDragItem.payload`'s prefix only at
+/// drop time.
+private struct FolderDropDelegate: DropDelegate {
+    let group: SessionGroup
+    let model: AppModel
+    let rowHeight: () -> CGFloat
+    @Binding var liveEdge: AppModel.SidebarDropEdge?
+    @Binding var isDraggingFolder: Bool?
+
+    func dropEntered(info: DropInfo) {
+        isDraggingFolder = nil
+        readKind(info)
+        liveEdge = edge(for: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        liveEdge = edge(for: info)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        liveEdge = nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let edge = edge(for: info)
+        liveEdge = nil
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
+            guard let payload = reading as? String else { return }
+            Task { @MainActor in model.drop([payload], on: .group(group), edge: edge) }
+        }
+        return true
+    }
+
+    private func edge(for info: DropInfo) -> AppModel.SidebarDropEdge {
+        guard isDraggingFolder == true else { return .into }
+        return .at(locationY: Double(info.location.y), rowHeight: Double(rowHeight()))
+    }
+
+    /// Peeks at the dragged payload once, so a folder drag (edge-sensitive)
+    /// can be told apart from a session drag (always "into").
+    private func readKind(_ info: DropInfo) {
+        guard let provider = info.itemProviders(for: [.text]).first else { return }
+        _ = provider.loadObject(ofClass: NSString.self) { reading, _ in
+            guard let payload = reading as? String else { return }
+            let isFolder = SidebarDragItem(payload: payload).map { if case .folder = $0 { return true } else { return false } } ?? false
+            Task { @MainActor in isDraggingFolder = isFolder }
+        }
     }
 }
 
@@ -374,12 +462,28 @@ struct FolderMenu: View {
     @Environment(\.presentNewSession) private var presentNewSession
     let group: SessionGroup
     let projectID: UUID
+    @Binding var confirmDelete: Bool
 
     var body: some View {
         if case .folder(let folderID) = group {
             Button("Rename Folder…") { model.beginRenaming(folderID: folderID) }
             Button("New Session in Folder…") { presentNewSession(group) }
+            Button("New Subfolder") { model.createFolder(in: projectID, parentID: folderID) }
             Button("Show Pull Requests") { model.showOverview(.folder(group)) }
+            // Everything in this project but the folder's own subtree (it
+            // can't move into itself or one of its own subfolders).
+            let subtree = model.workspace.subtreeFolderIDs(of: folderID)
+            let candidates = model.workspace.foldersInDisplayOrder(projectID: projectID).filter { !subtree.contains($0.folder.id) }
+            Menu("Move to Folder") {
+                if model.workspace.folder(folderID)?.parentID != nil {
+                    Button("Top Level") { model.moveFolder(folderID, toProject: projectID) }
+                    if !candidates.isEmpty { Divider() }
+                }
+                ForEach(candidates, id: \.folder.id) { entry in
+                    Button(model.workspace.path(of: .folder(entry.folder.id))) { model.moveFolder(folderID, intoFolder: entry.folder.id) }
+                }
+            }
+            .disabled(candidates.isEmpty && model.workspace.folder(folderID)?.parentID == nil)
             let others = model.workspace.projects.filter { $0.id != projectID }
             Menu("Move to Project") {
                 ForEach(others) { project in
@@ -389,7 +493,9 @@ struct FolderMenu: View {
             .disabled(others.isEmpty)
             Divider()
             Button("Archive Completed") { model.archiveCompleted(in: group) }
-            Button("Delete Folder", role: .destructive) { model.deleteFolder(folderID) }
+            Button("Delete Folder…", role: .destructive) {
+                if model.folderHasContents(folderID) { confirmDelete = true } else { model.deleteFolder(folderID) }
+            }
         } else {
             Button("New Session…") { presentNewSession(group) }
             Button("New Folder") { model.createFolder(in: projectID) }
@@ -400,11 +506,51 @@ struct FolderMenu: View {
     }
 }
 
+extension View {
+    /// Confirms deleting a folder that holds something (sessions or
+    /// subfolders, anywhere in its subtree): what happens to its contents.
+    func deleteFolderConfirmation(folder: SidebarFolder, isPresented: Binding<Bool>) -> some View {
+        modifier(DeleteFolderConfirmation(folder: folder, isPresented: isPresented))
+    }
+}
+
+private struct DeleteFolderConfirmation: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let folder: SidebarFolder
+    @Binding var isPresented: Bool
+
+    private var folderID: UUID? {
+        if case .folder(let id) = folder.group { return id }
+        return nil
+    }
+
+    /// Where promoted contents land: a parent folder's name, or "Unfiled"
+    /// for a top-level folder's sessions (its subfolders would go to the
+    /// project's top level instead, which the dialog's message covers).
+    private var parentName: String {
+        guard let folderID, let parentID = model.workspace.folder(folderID)?.parentID else { return "Unfiled" }
+        return "“\(model.workspace.folder(parentID)?.name ?? "")”"
+    }
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Delete “\(folder.name)”?", isPresented: $isPresented, titleVisibility: .visible) {
+            if let folderID {
+                Button("Move Contents to \(parentName)") { model.deleteFolder(folderID, mode: .promoteChildren) }
+                Button("Unfile Everything Inside", role: .destructive) { model.deleteFolder(folderID, mode: .flattenToUnfiled) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This folder has sessions or subfolders in it. Moving contents up promotes subfolders one level and unfiles its direct sessions; unfiling everything inside flattens its whole subtree to Unfiled.")
+        }
+    }
+}
+
 /// Inline folder rename: blue-bordered field with a caret, as in design 1a.
 private struct FolderRenameField: View {
     @Environment(AppModel.self) private var model
     let folderID: UUID
     let initialName: String
+    let depth: Int
     @State private var name = ""
     @FocusState private var focused: Bool
 
@@ -428,7 +574,7 @@ private struct FolderRenameField: View {
         // Clicking a row or empty sidebar space doesn't take the focus, so
         // watch for clicks outside the field too.
         .background(ClickOutsideMonitor(action: commit))
-        .padding(.leading, SidebarIndent.folder)
+        .padding(.leading, SidebarIndent.folder(depth: depth))
         .padding(.top, 4)
         .onAppear {
             name = initialName
@@ -480,6 +626,7 @@ private struct SessionRow: View {
     @Environment(AppModel.self) private var model
     let session: Session
     let now: Date
+    let depth: Int
     @State private var hovering = false
     @State private var renaming = false
     @State private var newName = ""
@@ -515,7 +662,7 @@ private struct SessionRow: View {
                 .help("Last active \(session.lastActivity.formatted(date: .abbreviated, time: .shortened))")
         }
         .padding(.vertical, 5)
-        .padding(.leading, SidebarIndent.session)
+        .padding(.leading, SidebarIndent.session(depth: depth))
         .padding(.trailing, 8)
         .background(RoundedRectangle(cornerRadius: 4).fill(isSelected ? DS.selection : (hovering ? Color.white.opacity(0.04) : .clear)))
         .contentShape(Rectangle())
@@ -535,7 +682,7 @@ private struct SessionRow: View {
         } isTargeted: { isDropTarget = $0 }
         .overlay(alignment: .top) {
             if isDropTarget {
-                Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session - 8).offset(y: -1)
+                Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session(depth: depth) - 8).offset(y: -1)
             }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
@@ -587,10 +734,12 @@ struct SessionMenu: View {
         }
         Menu("Move to Folder") {
             if let project = model.workspace.project(session.projectID) {
-                ForEach(project.folders) { folder in
-                    Button(folder.name) { model.moveSession(session.id, to: .folder(folder.id)) }
+                let folders = model.workspace.foldersInDisplayOrder(projectID: project.id)
+                ForEach(folders, id: \.folder.id) { entry in
+                    // A flat menu, so the full path disambiguates same-named folders at different levels.
+                    Button(model.workspace.path(of: .folder(entry.folder.id))) { model.moveSession(session.id, to: .folder(entry.folder.id)) }
                 }
-                if !project.folders.isEmpty { Divider() }
+                if !folders.isEmpty { Divider() }
                 Button(Workspace.unfiledName) { model.moveSession(session.id, to: .unfiled(projectID: project.id)) }
                 Button("New Folder") { model.createFolder(in: project.id, containing: session.id) }
             }

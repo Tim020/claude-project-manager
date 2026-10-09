@@ -130,6 +130,20 @@ final class NavigationModelTests: XCTestCase {
         }
     }
 
+    func testSidebarDropEdgeFromRowPosition() {
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 0, rowHeight: 28), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 7, rowHeight: 28), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 8, rowHeight: 28), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 14, rowHeight: 28), .into, "the middle")
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 20, rowHeight: 28), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 21, rowHeight: 28), .after)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 28, rowHeight: 28), .after)
+        // The margin never grows past a third of a very short row.
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 2, rowHeight: 9), .before)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 4.5, rowHeight: 9), .into)
+        XCTAssertEqual(AppModel.SidebarDropEdge.at(locationY: 2, rowHeight: 0), .into, "degenerate row height")
+    }
+
     func testDragPayloadsRoundTrip() {
         let id = UUID()
         for item in [SidebarDragItem.session(id), .folder(id), .project(id)] {

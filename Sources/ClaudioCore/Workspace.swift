@@ -281,22 +281,27 @@ public struct Workspace: Codable, Equatable, Sendable {
         }
     }
 
+    /// A folder's name and every ancestor's, innermost first ("OAuth",
+    /// "Auth", "Backend"). Bounded against a corrupted cycle the same way
+    /// `sanitizedFolders` guards against one existing.
+    public func folderAndAncestorNames(of id: UUID) -> [String] {
+        var names: [String] = []
+        var current: UUID? = id
+        var seen: Set<UUID> = []
+        while let currentID = current, let folder = folder(currentID), seen.insert(currentID).inserted {
+            names.append(folder.name)
+            current = folder.parentID
+        }
+        return names
+    }
+
     /// A group's full ancestry, outermost first ("Backend › Auth › OAuth"),
     /// for places with no surrounding tree to show nesting visually
-    /// (breadcrumbs, pickers, PR group headers). Bounded against a corrupted
-    /// cycle the same way `sanitizedFolders` guards against one existing.
+    /// (breadcrumbs, pickers, PR group headers).
     public func path(of group: SessionGroup) -> String {
         switch group {
         case .unfiled: return Workspace.unfiledName
-        case .folder(let id):
-            var names: [String] = []
-            var current: UUID? = id
-            var seen: Set<UUID> = []
-            while let currentID = current, let folder = folder(currentID), seen.insert(currentID).inserted {
-                names.append(folder.name)
-                current = folder.parentID
-            }
-            return names.reversed().joined(separator: " › ")
+        case .folder(let id): return folderAndAncestorNames(of: id).reversed().joined(separator: " › ")
         }
     }
 

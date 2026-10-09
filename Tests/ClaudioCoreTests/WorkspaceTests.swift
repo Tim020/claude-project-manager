@@ -287,6 +287,7 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(ws.path(of: .folder(child)), "Backend › Auth")
         XCTAssertEqual(ws.path(of: .folder(parent)), "Backend")
         XCTAssertEqual(ws.path(of: .unfiled(projectID: p)), "Unfiled")
+        XCTAssertEqual(ws.folderAndAncestorNames(of: child), ["Auth", "Backend"], "innermost first")
     }
 
     func testCorruptedParentIDsAreSanitizedOnDecode() throws {

@@ -805,6 +805,13 @@ public final class AppModel {
         save()
     }
 
+    /// Nests a folder inside another, as its last child — the non-drag way
+    /// to do what dropping one in the middle of a folder row does.
+    public func moveFolder(_ id: UUID, intoFolder parentID: UUID) {
+        attempt { try state.workspace.moveFolder(id, intoFolder: parentID) }
+        save()
+    }
+
     /// Where something was dropped in the sidebar.
     public enum SidebarDropTarget: Sendable {
         case project(UUID)
@@ -819,6 +826,18 @@ public final class AppModel {
     /// other combination ignores it.
     public enum SidebarDropEdge: Sendable {
         case before, into, after
+
+        /// Where a drop at `locationY` within a row of `rowHeight` lands:
+        /// near the top or bottom edge reorders as a sibling before/after,
+        /// the rest of the row nests inside. The edge margin shrinks for a
+        /// very short row, never past a third of it.
+        public static func at(locationY: Double, rowHeight: Double) -> AppModel.SidebarDropEdge {
+            guard rowHeight > 0 else { return .into }
+            let margin = min(8, rowHeight / 3)
+            if locationY < margin { return .before }
+            if locationY > rowHeight - margin { return .after }
+            return .into
+        }
     }
 
     /// Handles sidebar drag and drop (payloads as `SidebarDragItem`s). A
