@@ -49,7 +49,7 @@ Rule: tabs only hold session things, so project and folder usage lives in the le
   - three summary cards: Cost, Tokens and Assistant (with its share)
   - COST OVER TIME · BY PROJECT (stacked bars, plus the assistant)
   - a project table: Sessions, Assistant ("Off" if it isn't on), Total, Share
-  - **ASSISTANT section:** cost, Claude calls and share of all usage; BY JOB (Follow-ups, Skill proposals, Note checks, Ask, Issue triage, each with its model, calls and cost); BY PROJECT; and an **Open Activity Log** link. Its note says things you start yourself are counted too. *(Built: BY JOB lists the jobs that have run, by the names the Activity Log uses; Skill proposals, Ask and Issue triage appear once those steps of the assistant exist.)*
+  - **ASSISTANT section:** cost, Claude calls and share of all usage; BY JOB (Follow-ups, Skill proposals, Note checks, Ask, Issue triage, each with its model, calls and cost); BY PROJECT; and an **Open Activity Log** link. Its note says things you start yourself are counted too. *(Built: BY JOB lists the jobs that have run, by the names the Activity Log uses; Skill proposals, Ask and Issue triage appear once those steps of the assistant exist. Step 5a: skill drafts are listed as "Skill draft", the Activity Log's name, and counted to the project, since a lesson isn't one session's.)*
 
 ## Data (from the repo)
 - **Session cost:** sum the token counts on each assistant message in the session's transcript (`input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` and `output_tokens`, as `SessionDiscovery.swift` already reads), times the price table for that message's model. It's in **USD**, because API prices are. Show it as an estimate (est.) on a plan.

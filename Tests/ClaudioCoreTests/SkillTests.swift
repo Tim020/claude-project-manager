@@ -927,4 +927,40 @@ final class SkillTests: XCTestCase {
             XCTAssertTrue(f.model.log.entries.contains { $0.title == "Assistant: dropped 1 lesson from a follow-up" })
         }
     }
+
+    // MARK: - With main's features (nested folders, usage)
+
+    func testChipUsageCountsSessionsNestedUnderTheFolder() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            f.assistant.skills[f.project] = [ApprovedSkill(name: "used-below")]
+            f.model.refreshApprovedSkills(projectID: f.project)
+            let parent = try XCTUnwrap(f.model.createFolder(in: f.project))
+            let child = try XCTUnwrap(f.model.createFolder(in: f.project, containing: f.session, parentID: parent))
+            f.model.updateSkillsData(f.project) { _ = $0.recordUse(of: "used-below", by: f.session, at: SkillTests.now) }
+            let item = PlanItem(title: "Next", status: .planned, createdAt: SkillTests.now)
+            XCTAssertEqual(f.model.skillUsage(inProject: f.project, folderID: child), ["used-below": 1])
+            XCTAssertEqual(f.model.skillUsage(inProject: f.project, folderID: parent), ["used-below": 1],
+                           "a session in a subfolder counts for the folder above it")
+            XCTAssertEqual(f.model.suggestedSkills(forItem: item, inProject: f.project, folderID: parent), ["used-below"])
+            XCTAssertEqual(f.model.skillUsage(inProject: f.project, folderID: nil), [:], "it isn't Unfiled")
+        }
+    }
+
+    func testASkillDraftsCostIsCountedForTheProject() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        answerFollowUpsAndDrafts(f, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        await MainActor.run {
+            let drafts = f.model.usageEntries.filter {
+                if case .assistant(let job, _) = $0.source { return job == SkillDraftJob.job }
+                return false
+            }
+            XCTAssertEqual(drafts.count, 1, "in Usage's assistant spend, by its Activity Log name")
+            XCTAssertEqual(drafts.first?.cost ?? 0, 0.03, accuracy: 0.0001)
+            XCTAssertEqual(drafts.first?.projectID, f.project)
+            XCTAssertNil(drafts.first?.sessionID, "a lesson isn't a session: it's the project's")
+        }
+    }
 }
