@@ -192,11 +192,13 @@ final class SkillDraftTests: XCTestCase {
         XCTAssertEqual(SkillCheck.problems("No frontmatter at all", context: context()).first, "no frontmatter")
     }
 
-    func testReferencedFilesMustExist() {
-        XCTAssertEqual(SkillCheck.referencedPaths(in: "See `Sources/a.swift:42`, `README.md`, `https://x.io/a`, `Tests/**`, `--flag`, `~/x/y`, `./scripts/b.sh`, `$HOME/a`, `origin/main`"),
-                       ["Sources/a.swift", "README.md", "scripts/b.sh"])
-        XCTAssertEqual(SkillCheck.problems(text(body: "Edit `Sources/Missing.swift`."), context: context()),
-                       ["it refers to Sources/Missing.swift, which isn't in the repository"])
+    func testMissingFilesAreWarningsNotProblems() {
+        XCTAssertEqual(SkillCheck.referencedPaths(in: "See `Sources/a.swift:42`, `README.md`, `https://x.io/a`, `Tests/**`, `--flag`, `~/x/y`, `./scripts/b.sh`, `$HOME/a`, `origin/main`, `./no-such-folder`"),
+                       ["Sources/a.swift", "README.md", "scripts/b.sh"],
+                       "`./no-such-folder` is a bare word once its ./ is off, not a path")
+        let missing = text(body: "Edit `Sources/Missing.swift`.")
+        XCTAssertEqual(SkillCheck.problems(missing, context: context()), [], "a file that isn't there doesn't drop the draft")
+        XCTAssertEqual(SkillCheck.warnings(missing, context: context()), ["It mentions Sources/Missing.swift, which isn't in the repository."])
     }
 
     func testCommandsMustBeOnThePath() {
@@ -211,10 +213,12 @@ final class SkillDraftTests: XCTestCase {
             ```
             """
         XCTAssertEqual(SkillCheck.commands(in: body), ["gh", "jq"])
-        XCTAssertEqual(SkillCheck.problems(text(body: body), context: context(commands: { $0 == "gh" })),
-                       ["it runs jq, which isn't on the PATH"], "a script run by its path isn't looked for on the PATH")
-        XCTAssertEqual(SkillCheck.problems(text(body: body), context: context(commands: nil)), [],
-                       "no PATH to check against: the check is skipped, not failed")
+        XCTAssertEqual(SkillCheck.problems(text(body: body), context: context(commands: { $0 == "gh" })), [])
+        XCTAssertEqual(SkillCheck.warnings(text(body: body), context: context(commands: { $0 == "gh" })),
+                       ["It runs jq, which isn't installed (it's not on your PATH)."],
+                       "a script run by its path isn't looked for on the PATH")
+        XCTAssertEqual(SkillCheck.warnings(text(body: body), context: context(commands: nil)), [],
+                       "no PATH to check against: the check is skipped")
     }
 
     func testSecretsAreRefused() {

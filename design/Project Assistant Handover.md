@@ -69,6 +69,7 @@ What happens in other modes:
   - **Why**
   - skill text as added lines
   - Approve, Edit and Not Now
+  - *(Added in testing: CHECK BEFORE APPROVING, in amber above the text, lists files the skill names that aren't in the repository and commands it runs that aren't installed. The Needs You card says "n to check before approving".)*
   - *(Built in 5a: Edit opens the text, which is checked again on Save and can't rename the skill. Not Now drops the draft; its lesson is drafted again once two more sessions show it. The view ends with "Drafted by <model> · <time>".)*
 - **Changed Skill:**
   - CHANGED SKILL pill and "The current version stays in use until you approve"

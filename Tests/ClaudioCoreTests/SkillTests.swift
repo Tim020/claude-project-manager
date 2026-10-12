@@ -520,16 +520,16 @@ final class SkillTests: XCTestCase {
         }
     }
 
-    func testCommandsOffThePathFailTheChecks() async throws {
+    func testCommandsOffThePathAreWarningsOnTheCard() async throws {
         let f = try await makeFixture()
         await MainActor.run { f.model.commandExistsOverride = { $0 != "frobnicate" } }
         let draft = #"{"action":"new","skill":null,"name":"frob","description":"Frob.","whenToUse":"","paths":[],"body":"```bash\nfrobnicate --all\n```","why":"x"}"#
         answerFollowUpsAndDrafts(f, draft: draft, remember: true)
         await followUp(f, session: f.session, remember: true)
         await MainActor.run {
-            XCTAssertTrue(f.model.skillProposals(inProject: f.project).isEmpty)
-            XCTAssertEqual(f.model.log.entries.last { $0.title.contains("dropped a skill draft") }?.detail,
-                           "it runs frobnicate, which isn't on the PATH")
+            let proposal = f.model.skillProposals(inProject: f.project).first
+            XCTAssertEqual(proposal?.warnings, ["It runs frobnicate, which isn't installed (it's not on your PATH)."], "shown, not dropped")
+            XCTAssertTrue(f.model.log.entries.contains { $0.title == "Assistant: drafted a new skill: frob (1 to check before approving)" })
         }
     }
 
@@ -842,7 +842,6 @@ final class SkillTests: XCTestCase {
             let entry = f.model.log.entries.last { $0.title.contains("dropped a skill draft") }
             XCTAssertNotNil(entry)
             XCTAssertTrue(entry?.detail?.contains("its reason looks like it holds a secret (a GitHub token)") ?? false)
-            XCTAssertTrue(entry?.detail?.contains("secrets/[secret].txt") ?? false, "the path is quoted with the token taken out")
             XCTAssertFalse(f.model.log.entries.contains { !SecretPatterns.matches(in: $0.title + ($0.detail ?? "")).isEmpty },
                            "no log line holds anything like a secret")
         }
@@ -897,8 +896,8 @@ final class SkillTests: XCTestCase {
         XCTAssertFalse(f.runner.scripts[0].contains("touch"))
         await MainActor.run {
             XCTAssertEqual(f.model.loginShellPATH, ["/usr/bin", "/bin"], "the last line, after a profile's own")
-            XCTAssertEqual(f.model.log.entries.last { $0.title.contains("dropped a skill draft") }?.detail,
-                           "it runs notarealcommand, which isn't on the PATH")
+            XCTAssertEqual(f.model.skillProposals(inProject: f.project).first?.warnings,
+                           ["It runs notarealcommand, which isn't installed (it's not on your PATH)."])
         }
     }
 
@@ -961,6 +960,35 @@ final class SkillTests: XCTestCase {
             XCTAssertEqual(drafts.first?.cost ?? 0, 0.03, accuracy: 0.0001)
             XCTAssertEqual(drafts.first?.projectID, f.project)
             XCTAssertNil(drafts.first?.sessionID, "a lesson isn't a session: it's the project's")
+        }
+    }
+
+    // MARK: - Tim's first test (2026-10-12): an example path dropped the draft
+
+    func testAnExamplePathDoesntDropTheDraft() async throws {
+        let f = try await makeFixture()
+        await MainActor.run { f.model.commandExistsOverride = { _ in true } }
+        let draft = #"{"action":"new","skill":null,"name":"check-folder-before-ls","description":"Check a folder exists before listing it.","whenToUse":"","paths":[],"body":"Before `ls ./some-folder`, run `test -d ./some-folder`. For example, `./no-such-folder` fails.\nAlso see `scripts/missing.sh`.","why":"Stops failed ls calls"}"#
+        answerFollowUpsAndDrafts(f, draft: draft, remember: true)
+        await followUp(f, session: f.session, remember: true)
+        try await MainActor.run {
+            let proposal = try XCTUnwrap(f.model.skillProposals(inProject: f.project).first, "it reaches Needs You")
+            XCTAssertEqual(proposal.warnings, ["It mentions scripts/missing.sh, which isn't in the repository."],
+                           "a bare `./no-such-folder` isn't a path; a real-looking one that's missing is a warning")
+            XCTAssertEqual(f.model.needsYouCount(inProject: f.project), 2, "the follow-up and the new skill")
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project), "a warning doesn't stop approval")
+        }
+    }
+
+    func testEditingRecomputesTheWarnings() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run `scripts/missing.sh`."))
+            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: SkillTests.skillText("Run `scripts/gone.sh`."), projectID: f.project), [])
+            XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.warnings,
+                           ["It mentions scripts/gone.sh, which isn't in the repository."])
+            XCTAssertEqual(f.model.editSkillProposal(proposal.id, text: SkillTests.skillText("Run it in Docker."), projectID: f.project), [])
+            XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.warnings, [])
         }
     }
 }

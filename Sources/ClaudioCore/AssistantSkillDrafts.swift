@@ -5,8 +5,12 @@ import Foundation
 // evidence and the approved skills, and must prefer patching one of them to
 // adding a new one. It returns the skill's fields and its whole body, never
 // a diff; code writes the frontmatter and Claudio's metadata, then runs
-// deterministic checks. A draft that fails them is dropped and logged (by
-// name and the checks it failed, never its text), and never shown.
+// deterministic checks. A draft that fails them (its name, length or
+// globs, or a secret) is dropped and logged (by name and the checks it
+// failed, never its text), and never shown. Files it names that aren't in
+// the repository, and commands that aren't installed, are warnings on its
+// card instead: a skill often names an example path, or the file a failure
+// was about, and you decide when you approve it.
 
 /// Writing and reading a `SKILL.md`.
 public enum SkillText {
@@ -144,8 +148,9 @@ public enum SkillCheck {
         }
     }
 
-    /// What's wrong with a skill's text, in words for the log (they name
-    /// the check, a path or a command, never quote the text). Empty: it passes.
+    /// What's wrong with a skill's text, so it can't be shown or approved,
+    /// in words for the log (they name the check, never quote the text).
+    /// Empty: it passes. Files and commands are `warnings`, not problems.
     public static func problems(_ text: String, context: Context) -> [String] {
         var problems: [String] = []
         let fields = SkillFiles.closesFrontmatter(text) ? SkillFiles.frontmatter(text) : [:]
@@ -177,16 +182,22 @@ public enum SkillCheck {
         if body.count > maxBodyCharacters || SkillFiles.lines(body).count > maxBodyLines {
             problems.append("the instructions are over \(maxBodyLines) lines or \(maxBodyCharacters) characters")
         }
-        for path in referencedPaths(in: body) where !context.fileExists(context.projectPath + "/" + path) {
-            problems.append("it refers to \(path), which isn't in the repository")
-        }
-        if let exists = context.commandExists {
-            for command in commands(in: body) where !exists(command) {
-                problems.append("it runs \(command), which isn't on the PATH")
-            }
-        }
         problems += SecretPatterns.matches(in: text).map { "it looks like it holds a secret (\($0))" }
         return problems
+    }
+
+    /// Things to check before approving, shown on the draft's card: files it
+    /// names in backticks that aren't in the repository, and commands in its
+    /// shell blocks that aren't on the login shell's PATH (skipped when that
+    /// couldn't be read).
+    public static func warnings(_ text: String, context: Context) -> [String] {
+        let body = SkillText.body(of: text)
+        var warnings = referencedPaths(in: body).filter { !context.fileExists(context.projectPath + "/" + $0) }
+            .map { "It mentions \($0), which isn't in the repository." }
+        if let exists = context.commandExists {
+            warnings += commands(in: body).filter { !exists($0) }.map { "It runs \($0), which isn't installed (it's not on your PATH)." }
+        }
+        return warnings
     }
 
     /// Relative file paths in backticks: a `/` or a file extension, no
@@ -201,14 +212,16 @@ public enum SkillCheck {
             if let colon = token.lastIndex(of: ":"), Int(token[token.index(after: colon)...]) != nil {
                 token = String(token[..<colon])
             }
-            guard token.contains("/") || token.range(of: #"^[\w.-]+\.(swift|md|json|ya?ml|sh|py|js|ts|tsx|toml|txt|plist)$"#,
-                                                     options: .regularExpression) != nil,
-                  !token.hasPrefix("/"), !token.hasPrefix("~"), !token.hasPrefix("-"), !token.hasPrefix("$"),
-                  !token.contains("://"), !token.contains("*"), !token.contains("<"), !token.contains("{"),
-                  !token.contains("="), !token.contains("("), !token.hasPrefix("@"),
-                  !token.hasPrefix("origin/"), !token.hasPrefix("feature/"), !token.hasPrefix("fix/")
-            else { continue }
+            // Without its `./`, so `./no-such-folder` is the bare word it is,
+            // not a path (Tim's first test draft was dropped for that).
             let path = token.hasPrefix("./") ? String(token.dropFirst(2)) : token
+            guard path.contains("/") || path.range(of: #"^[\w.-]+\.(swift|md|json|ya?ml|sh|py|js|ts|tsx|toml|txt|plist)$"#,
+                                                    options: .regularExpression) != nil,
+                  !path.hasPrefix("/"), !path.hasPrefix("~"), !path.hasPrefix("-"), !path.hasPrefix("$"),
+                  !path.contains("://"), !path.contains("*"), !path.contains("<"), !path.contains("{"),
+                  !path.contains("="), !path.contains("("), !path.hasPrefix("@"),
+                  !path.hasPrefix("origin/"), !path.hasPrefix("feature/"), !path.hasPrefix("fix/")
+            else { continue }
             if !paths.contains(path) { paths.append(path) }
         }
         return paths

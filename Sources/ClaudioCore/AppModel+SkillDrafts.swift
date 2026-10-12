@@ -177,8 +177,9 @@ extension AppModel {
             updateSkillCandidate(id, projectID: projectID) { $0.holdBack(more: 1) }
             return
         }
+        let warnings = await skillWarnings(text, projectID: projectID)
         let proposal = SkillProposal(candidateID: id, name: draft.name, text: text, previousText: patched?.text, why: draft.why,
-                                     createdAt: now(), model: AssistantModels.displayName(model))
+                                     createdAt: now(), model: AssistantModels.displayName(model), warnings: warnings)
         updateSkillsData(projectID) { data in
             data.proposals.removeAll { $0.name == proposal.name || $0.candidateID == id }
             data.proposals.append(proposal)
@@ -190,7 +191,9 @@ extension AppModel {
             // lesson goes back to gathering rather than wait on nothing.
             data.reconcileProposals()
         }
-        log.append(.info, "Assistant: drafted \(patched == nil ? "a new skill" : "a change to a skill"): \(draft.name)")
+        log.append(.info, "Assistant: drafted \(patched == nil ? "a new skill" : "a change to a skill"): \(draft.name)"
+                       + (warnings.isEmpty ? "" : " (\(warnings.count) to check before approving)"),
+                   detail: warnings.isEmpty ? nil : warnings.map(SecretPatterns.redacted).joined(separator: "\n"))
     }
 
     /// The checks, with what Claudio knows of the project: its skills (and
@@ -200,6 +203,25 @@ extension AppModel {
         let context = SkillCheck.Context(projectPath: project.path, existingNames: existingSkillNames(projectID: projectID),
                                          patching: patching, commandExists: await commandCheck())
         return SkillCheck.problems(text, context: context)
+    }
+
+    /// What to check before approving: files and commands it names that
+    /// aren't there.
+    func skillWarnings(_ text: String, projectID: UUID) async -> [String] {
+        guard let project = workspace.project(projectID) else { return [] }
+        let context = SkillCheck.Context(projectPath: project.path, existingNames: [], patching: nil, commandExists: await commandCheck())
+        return SkillCheck.warnings(text, context: context)
+    }
+
+    /// The same, with the PATH as already read (for Edit).
+    func skillWarningsNow(_ text: String, projectID: UUID) -> [String] {
+        guard let project = workspace.project(projectID) else { return [] }
+        var exists = commandExistsOverride
+        if exists == nil, let directories = loginShellPATH, !directories.isEmpty {
+            exists = { name in directories.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") } }
+        }
+        return SkillCheck.warnings(text, context: SkillCheck.Context(projectPath: project.path, existingNames: [], patching: nil,
+                                                                     commandExists: exists))
     }
 
     /// Names a new skill can't take: approved skills' names and folders,
@@ -281,8 +303,12 @@ extension AppModel {
         let name = SkillFiles.skill(fromSkillFile: text, folderName: "").name
         if name != proposal.name { problems.insert("the name can't change while editing (it's \(proposal.name))", at: 0) }
         guard problems.isEmpty else { return problems }
+        let warnings = skillWarningsNow(text, projectID: projectID)
         let saved = updateSkillsData(projectID) { data in
-            if let index = data.proposals.firstIndex(where: { $0.id == id }) { data.proposals[index].text = text }
+            if let index = data.proposals.firstIndex(where: { $0.id == id }) {
+                data.proposals[index].text = text
+                data.proposals[index].warnings = warnings
+            }
         }
         return saved ? [] : ["it couldn't be saved (the app's Activity Log, ⌥⌘L, says why)"]
     }

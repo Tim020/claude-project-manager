@@ -88,6 +88,10 @@ private struct SkillProposalRow: View {
                     if !proposal.why.isEmpty {
                         Text(proposal.why).font(DS.font(11.5)).foregroundStyle(DS.dim).lineLimit(1)
                     }
+                    if !proposal.warnings.isEmpty {
+                        Label("\(proposal.warnings.count) to check before approving", systemImage: "exclamationmark.triangle")
+                            .font(DS.font(11.5)).foregroundStyle(DS.orange)
+                    }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(DS.dim).padding(.top, 3)
@@ -142,6 +146,18 @@ struct SkillProposalView: View {
                 if !proposal.why.isEmpty {
                     Text("WHY").font(DS.font(10.5, .extraBold)).kerning(0.6).foregroundStyle(DS.muted)
                     Text(proposal.why).font(DS.font(12.5)).foregroundStyle(DS.text).fixedSize(horizontal: false, vertical: true)
+                }
+                if !proposal.warnings.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("CHECK BEFORE APPROVING").font(DS.font(10.5, .extraBold)).kerning(0.6).foregroundStyle(DS.orange)
+                        ForEach(proposal.warnings, id: \.self) { warning in
+                            Label(warning, systemImage: "exclamationmark.triangle")
+                                .font(DS.font(12)).foregroundStyle(DS.text).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(DS.orange.opacity(0.12)))
                 }
                 if editing {
                     TextEditor(text: $draft)

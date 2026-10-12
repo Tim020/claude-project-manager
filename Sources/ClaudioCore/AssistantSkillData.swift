@@ -48,8 +48,12 @@ public struct SkillProposal: Codable, Equatable, Identifiable, Sendable {
     public var createdAt: Date
     /// The model that drafted it ("Sonnet").
     public var model: String
+    /// What to check before approving (see `SkillCheck.warnings`), as of the
+    /// draft or the last edit.
+    public var warnings: [String] = []
 
-    public init(candidateID: UUID?, name: String, text: String, previousText: String?, why: String, createdAt: Date, model: String) {
+    public init(candidateID: UUID?, name: String, text: String, previousText: String?, why: String, createdAt: Date, model: String,
+                warnings: [String] = []) {
         self.candidateID = candidateID
         self.name = name
         self.text = text
@@ -57,11 +61,12 @@ public struct SkillProposal: Codable, Equatable, Identifiable, Sendable {
         self.why = why
         self.createdAt = createdAt
         self.model = model
+        self.warnings = warnings
     }
 
     public var isChange: Bool { previousText != nil }
 
-    private enum CodingKeys: String, CodingKey { case id, candidateID, name, text, previousText, why, createdAt, model }
+    private enum CodingKeys: String, CodingKey { case id, candidateID, name, text, previousText, why, createdAt, model, warnings }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -73,6 +78,7 @@ public struct SkillProposal: Codable, Equatable, Identifiable, Sendable {
         why = try c.decodeIfPresent(String.self, forKey: .why) ?? ""
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        warnings = (try? c.decodeIfPresent([String].self, forKey: .warnings)) ?? []
     }
 }
 
