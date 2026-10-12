@@ -16,50 +16,82 @@ public enum SessionStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// What a session is for: a free-form label from the user's role list
-/// (Settings), shown as a small uppercase tag (CODE, REVIEW, …). Empty is none.
-public struct SessionRole: RawRepresentable, Codable, Hashable, Sendable {
-    public var rawValue: String
+/// A coloured label that can be put on sessions and folders (GitHub-style
+/// issue labels). The catalog lives in `AppSettings.tags`; sessions and
+/// folders hold ids into it, so renaming or recolouring a tag updates
+/// everywhere it's used.
+public struct Tag: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    /// Six hex digits, no "#", always uppercase.
+    public var colorHex: String
 
-    public init(rawValue: String) { self.rawValue = rawValue }
-    public init(_ name: String) { self.init(rawValue: name.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    public init(id: UUID = UUID(), name: String, colorHex: String) {
+        self.id = id
+        self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.colorHex = Tag.normalizedHex(colorHex) ?? Tag.palette[0]
+    }
 
-    public static let code = SessionRole("Code")
-    public static let review = SessionRole("Review")
-    public static let research = SessionRole("Research")
-    public static let none = SessionRole("")
-    public static let defaultNames = ["Code", "Review", "Research"]
+    /// A curated set of colours that read well against the app's dark
+    /// theme; offered as swatches, with a custom hex field as an escape hatch.
+    public static let palette = [
+        "FF5C5C", "FF9F40", "FFD23F", "4CD787", "33C2C2",
+        "4098FF", "7C83FF", "C77DFF", "FF6FB3", "9A9AA2",
+    ]
 
-    public var label: String { rawValue.uppercased() }
-    public var isNone: Bool { rawValue.isEmpty }
+    /// Normalizes "#abc", "abc", "#aabbcc" or "aabbcc" to six uppercase hex
+    /// digits, or nil if it isn't a valid colour.
+    public static func normalizedHex(_ input: String) -> String? {
+        var hex = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        if hex.count == 3, hex.allSatisfy(\.isHexDigit) {
+            hex = hex.map { "\($0)\($0)" }.joined()
+        }
+        guard hex.count == 6, hex.allSatisfy(\.isHexDigit) else { return nil }
+        return hex.uppercased()
+    }
 
-    /// The first role whose name appears in the session name; otherwise Code
-    /// if that's in the list, or no role.
-    public static func infer(fromName name: String, roles: [String] = defaultNames) -> SessionRole {
+    /// Whether dark text reads better than white on this tag's colour
+    /// (relative luminance, the same idea GitHub uses for label text).
+    public var prefersDarkText: Bool {
+        guard let (r, g, b) = Tag.rgb(ofHex: colorHex) else { return true }
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6
+    }
+
+    /// Parses six hex digits (already normalized — no "#") into 0–1 RGB
+    /// components, for any UI layer to turn into its own colour type.
+    public static func rgb(ofHex hex: String) -> (r: Double, g: Double, b: Double)? {
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        return (Double((value >> 16) & 0xFF) / 255, Double((value >> 8) & 0xFF) / 255, Double(value & 0xFF) / 255)
+    }
+}
+
+public extension Tag {
+    // Fixed so a migrated session's tag id always matches its catalog
+    // entry's id, and so tests comparing default catalogs aren't flaky.
+    static let codeID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    static let reviewID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    static let researchID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+
+    static let defaults: [Tag] = [
+        Tag(id: codeID, name: "Code", colorHex: palette[5]),
+        Tag(id: reviewID, name: "Review", colorHex: palette[1]),
+        Tag(id: researchID, name: "Research", colorHex: palette[7]),
+    ]
+}
+
+public extension Tag {
+    /// The id of the first catalog tag whose name appears in the given
+    /// name (e.g. a session's); otherwise Code's id if that's in the
+    /// catalog, or nil. The same heuristics as the old free-text roles.
+    static func infer(fromName name: String, in tags: [Tag]) -> Tag.ID? {
         let lower = name.lowercased()
-        if let match = roles.first(where: { !$0.isEmpty && lower.contains($0.lowercased()) }) { return SessionRole(match) }
-        if roles.contains(where: { $0.caseInsensitiveCompare("Research") == .orderedSame }),
+        if let match = tags.first(where: { !$0.name.isEmpty && lower.contains($0.name.lowercased()) }) { return match.id }
+        if let research = tags.first(where: { $0.name.caseInsensitiveCompare("Research") == .orderedSame }),
            ["spike", "explore", "options paper", "investigate options"].contains(where: lower.contains) {
-            return .research
+            return research.id
         }
-        return roles.contains(where: { $0.caseInsensitiveCompare("Code") == .orderedSame }) ? .code : .none
-    }
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        // Earlier versions stored a fixed set of lowercase values.
-        switch raw {
-        case "code": self = .code
-        case "review": self = .review
-        case "research": self = .research
-        case "other": self = .none
-        default: self.init(raw)
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
+        return tags.first { $0.name.caseInsensitiveCompare("Code") == .orderedSame }?.id
     }
 }
 
@@ -106,7 +138,12 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     /// The branch Files Changed last compared this session against ("dev"),
     /// so "vs" is right before the next comparison finishes.
     public var lastBaseName: String?
-    public var role: SessionRole
+    public var tags: [Tag.ID]
+    /// Transient: holds an on-disk `role` string during decode of an older
+    /// state file, until `PersistedState`'s v3 migration resolves it against
+    /// the tag catalog and clears it. Never persisted (absent from
+    /// `CodingKeys`), so it plays no part in equality once resolved.
+    public var legacyRoleName: String?
     public var status: SessionStatus
     /// One-line description of where the session is at (card / tooltip text).
     public var summary: String
@@ -147,7 +184,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var replacedConversations: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, role, status, summary, needsAction
+        case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, tags, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
         case backgroundTasks, finishedBackgroundTasks, replacedConversations
     }
@@ -158,7 +195,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         claudeSessionID: String? = nil,
         hasConversation: Bool = false,
         name: String,
-        role: SessionRole? = nil,
+        tags: [Tag.ID] = [],
         workingDirectory: String,
         status: SessionStatus = .completed,
         summary: String = "",
@@ -174,7 +211,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
         self.claudeSessionID = claudeSessionID
         self.hasConversation = hasConversation
         self.name = name
-        self.role = role ?? SessionRole.infer(fromName: name)
+        self.tags = tags
         self.workingDirectory = workingDirectory
         self.status = status
         self.summary = summary
@@ -207,19 +244,30 @@ extension Session {
     }
 }
 
-/// A user-named group of sessions within a project (e.g. a change and its PR review).
+/// A user-named group of sessions within a project (e.g. a change and its PR
+/// review). Folders nest without limit: `parentID` points at the folder it
+/// sits inside, nil for one at the project's top level. Storage stays flat
+/// (`Project.folders`); sibling order is relative order within that array,
+/// at every depth, same as before nesting existed.
 public struct Folder: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
     /// Ordered session membership. A session is in at most one folder.
     public var sessionIDs: [UUID]
     public var isCollapsed: Bool
+    /// Applied once to a session's own tags when it's created in this folder.
+    public var defaultTags: [Tag.ID]
+    /// The folder it's nested inside; nil for a top-level folder.
+    public var parentID: UUID?
 
-    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false) {
+    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false,
+                defaultTags: [Tag.ID] = [], parentID: UUID? = nil) {
         self.id = id
         self.name = name
         self.sessionIDs = sessionIDs
         self.isCollapsed = isCollapsed
+        self.defaultTags = defaultTags
+        self.parentID = parentID
     }
 
     public init(from decoder: Decoder) throws {
@@ -227,7 +275,9 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
         self.init(id: try c.decode(UUID.self, forKey: .id),
                   name: try c.decode(String.self, forKey: .name),
                   sessionIDs: try c.decodeIfPresent([UUID].self, forKey: .sessionIDs) ?? [],
-                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false)
+                  isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
+                  defaultTags: try c.decodeIfPresent([UUID].self, forKey: .defaultTags) ?? [],
+                  parentID: try c.decodeIfPresent(UUID.self, forKey: .parentID))
     }
 }
 
@@ -259,10 +309,45 @@ public struct Project: Identifiable, Codable, Equatable, Sendable {
         self.init(id: try c.decode(UUID.self, forKey: .id),
                   name: try c.decode(String.self, forKey: .name),
                   path: try c.decode(String.self, forKey: .path),
-                  folders: try c.decodeIfPresent([Folder].self, forKey: .folders) ?? [],
+                  folders: Project.sanitizedFolders(try c.decodeIfPresent([Folder].self, forKey: .folders) ?? []),
                   isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
                   isUnfiledCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isUnfiledCollapsed) ?? false)
         comparisonBranch = try c.decodeIfPresent(String.self, forKey: .comparisonBranch)
+    }
+
+    /// Clears a folder's `parentID` when it points outside this project or
+    /// forms a cycle, so a corrupted file can't hang a tree walk. A cycle
+    /// (each folder has at most one parent, so a cycle is a single loop)
+    /// only loses the one edge that closes the loop; everything else about
+    /// every folder, cyclic or not, is kept as saved.
+    static func sanitizedFolders(_ folders: [Folder]) -> [Folder] {
+        var result = folders
+        let ids = Set(folders.map(\.id))
+        for i in result.indices where result[i].parentID.map({ !ids.contains($0) }) ?? false {
+            result[i].parentID = nil
+        }
+
+        var resolved: Set<UUID> = []
+        for start in result.indices {
+            guard !resolved.contains(result[start].id) else { continue }
+            var onPath: Set<UUID> = []
+            var path: [UUID] = []
+            var index = start
+            while true {
+                let id = result[index].id
+                if resolved.contains(id) { break }
+                if onPath.contains(id) {
+                    result[index].parentID = nil
+                    break
+                }
+                onPath.insert(id)
+                path.append(id)
+                guard let parentID = result[index].parentID, let next = result.firstIndex(where: { $0.id == parentID }) else { break }
+                index = next
+            }
+            resolved.formUnion(path)
+        }
+        return result
     }
 }
 
@@ -317,4 +402,6 @@ public enum WorkspaceError: Error, Equatable {
     case sessionNotFound
     case folderNotInProject
     case emptyName
+    /// A folder was asked to move into itself or into one of its own subfolders.
+    case cyclicFolderMove
 }

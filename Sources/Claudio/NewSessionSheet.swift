@@ -22,8 +22,8 @@ struct NewSessionSheet: View {
     @State private var projectID: UUID?
     @State private var folderID: UUID?
     @State private var name = ""
-    @State private var role: SessionRole = .code
-    @State private var roleEdited = false
+    @State private var tagIDs: Set<Tag.ID> = []
+    @State private var tagsEdited = false
     @State private var modelID: String?
     @State private var permissionMode: PermissionMode = .standard
     @State private var permissionEdited = false
@@ -53,30 +53,35 @@ struct NewSessionSheet: View {
                     label("Folder")
                     Picker("", selection: $folderID) {
                         Text(Workspace.unfiledName).tag(UUID?.none)
-                        ForEach(folders) { folder in
-                            Text(folder.name).tag(Optional(folder.id))
+                        ForEach(folders, id: \.folder.id) { entry in
+                            // A flat picker, so the full path disambiguates same-named folders at different levels.
+                            Text(model.workspace.path(of: .folder(entry.folder.id))).tag(Optional(entry.folder.id))
                         }
                     }
                     .labelsHidden()
+                    .onChange(of: folderID) { _, newFolderID in
+                        if !tagsEdited { tagIDs = Set(model.suggestedTags(name: name, folderID: newFolderID)) }
+                    }
                 }
                 GridRow {
                     label("Name")
                     TextField("e.g. pr review inline 1427 (defaults to the prompt)", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: name) { _, value in
-                            if !roleEdited { role = SessionRole.infer(fromName: value, roles: model.settings.roles) }
+                            if !tagsEdited { tagIDs = Set(model.suggestedTags(name: value, folderID: folderID)) }
                         }
                 }
                 GridRow {
-                    label("Role")
-                    Picker("", selection: Binding(get: { role }, set: { role = $0; roleEdited = true })) {
-                        Text("None").tag(SessionRole.none)
-                        ForEach(model.settings.roles, id: \.self) { name in
-                            Text(name).tag(SessionRole(name))
+                    label("Tags")
+                    WrappingHStack(spacing: 6) {
+                        ForEach(model.settings.tags) { tag in
+                            TagToggleChip(tag: tag, isOn: tagIDs.contains(tag.id)) {
+                                if tagIDs.contains(tag.id) { tagIDs.remove(tag.id) } else { tagIDs.insert(tag.id) }
+                                tagsEdited = true
+                            }
                         }
                     }
-                    .labelsHidden()
-                    .help("A label for the session's tab. Edit the list in Settings.")
+                    .help("Labels for the session's tab. Edit the list in Settings.")
                 }
                 GridRow {
                     label("Model")
@@ -159,8 +164,8 @@ struct NewSessionSheet: View {
         projectID.flatMap { model.workspace.project($0) }.map { Worktree.isGitRepository($0.path) } ?? false
     }
 
-    private var folders: [Folder] {
-        projectID.flatMap { model.workspace.project($0)?.folders } ?? []
+    private var folders: [(folder: Folder, depth: Int)] {
+        projectID.map { model.workspace.foldersInDisplayOrder(projectID: $0) } ?? []
     }
 
     private func label(_ text: String) -> some View {
@@ -171,7 +176,6 @@ struct NewSessionSheet: View {
     }
 
     private func applyDefaults() {
-        role = SessionRole.infer(fromName: name, roles: model.settings.roles)
         modelID = model.settings.defaultModel
         permissionMode = model.settings.defaultPermissionMode(background: backgroundMode)
         switch initialGroup {
@@ -183,13 +187,15 @@ struct NewSessionSheet: View {
         case nil:
             projectID = model.selectedSession?.projectID ?? model.workspace.projects.first?.id
         }
+        tagIDs = Set(model.suggestedTags(name: name, folderID: folderID))
     }
 
     private func create() {
         guard let projectID else { return }
-        var request = NewSessionRequest(projectID: projectID, folderID: folderID, name: name, role: role,
+        var request = NewSessionRequest(projectID: projectID, folderID: folderID, name: name,
                                         prompt: prompt, model: modelID, permissionMode: permissionMode)
         request.useWorktree = useWorktree
+        request.tagIDs = Array(tagIDs)
         model.createSession(request)
         dismiss()
     }

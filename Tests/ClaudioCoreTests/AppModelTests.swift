@@ -53,7 +53,7 @@ final class AppModelTests: XCTestCase {
 
     @MainActor
     private func request(project: UUID, folder: UUID? = nil, prompt: String = "Fix the storage bug") -> NewSessionRequest {
-        NewSessionRequest(projectID: project, folderID: folder, name: "storage fix", role: .code, prompt: prompt, model: nil, permissionMode: .standard)
+        NewSessionRequest(projectID: project, folderID: folder, name: "storage fix", prompt: prompt, model: nil, permissionMode: .standard)
     }
 
     private func appendHook(_ id: UUID, _ json: String) throws {

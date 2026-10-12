@@ -69,7 +69,7 @@ final class AgentModelTests: XCTestCase {
 
     @MainActor
     private func request(_ project: UUID, name: String = "storage fix", prompt: String = "Fix it", worktree: Bool = true) -> NewSessionRequest {
-        var r = NewSessionRequest(projectID: project, folderID: nil, name: name, role: .code, prompt: prompt, model: nil, permissionMode: .standard)
+        var r = NewSessionRequest(projectID: project, folderID: nil, name: name, prompt: prompt, model: nil, permissionMode: .standard)
         r.useWorktree = worktree
         return r
     }

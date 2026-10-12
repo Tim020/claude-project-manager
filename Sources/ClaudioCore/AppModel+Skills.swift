@@ -84,12 +84,15 @@ extension AppModel {
     }
 
     /// How many sessions used each skill, counting only sessions in a folder
-    /// (nil: Unfiled), for chips: "how often it was used by sessions in that folder".
+    /// or nested under it (nil: Unfiled, sessions in no folder), for chips:
+    /// "how often it was used by sessions in that folder".
     public func skillUsage(inProject projectID: UUID, folderID: UUID?) -> [String: Int] {
         guard let project = workspace.project(projectID) else { return [:] }
         let filed = Set(project.folders.flatMap(\.sessionIDs))
+        let subtree = folderID.map { workspace.subtreeFolderIDs(of: $0) } ?? []
+        let inSubtree = Set(project.folders.filter { subtree.contains($0.id) }.flatMap(\.sessionIDs))
         let inFolder: (UUID) -> Bool = { id in
-            if let folderID { return project.folders.first { $0.id == folderID }?.sessionIDs.contains(id) ?? false }
+            if folderID != nil { return inSubtree.contains(id) }
             return !filed.contains(id) && self.workspace.session(id)?.projectID == projectID
         }
         var counts: [String: Int] = [:]

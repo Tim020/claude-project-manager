@@ -6,7 +6,6 @@ public struct NewSessionRequest: Equatable, Sendable {
     /// Folder to create the session in; Unfiled when nil.
     public var folderID: UUID?
     public var name: String
-    public var role: SessionRole
     public var prompt: String
     public var model: String?
     public var permissionMode: PermissionMode
@@ -15,12 +14,13 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var useWorktree = true
     /// The skills its prompt names (Start Session from a plan item).
     public var namedSkills: [String] = []
+    /// Tags to give the new session (already resolved ids, picked in the UI).
+    public var tagIDs: [Tag.ID] = []
 
-    public init(projectID: UUID, folderID: UUID?, name: String, role: SessionRole, prompt: String, model: String?, permissionMode: PermissionMode) {
+    public init(projectID: UUID, folderID: UUID?, name: String, prompt: String, model: String?, permissionMode: PermissionMode) {
         self.projectID = projectID
         self.folderID = folderID
         self.name = name
-        self.role = role
         self.prompt = prompt
         self.model = model
         self.permissionMode = permissionMode
@@ -235,6 +235,34 @@ public final class AppModel {
     public var includeUnlinkedPullRequests = true
     /// Each project's assistant data, as saved (see AppModel+Assistant).
     public internal(set) var assistantData: [UUID: AssistantData] = [:]
+    // Usage (design 11a; see AppModel+Usage).
+    @ObservationIgnored let usageStore: UsageStoring
+    /// What's been read from every conversation's transcripts.
+    @ObservationIgnored var usageLedger = UsageLedger()
+    @ObservationIgnored var isScanningUsage = false
+    /// Scans finished since launch (the first one shows its progress).
+    @ObservationIgnored var usageScans = 0
+    /// Transcripts already reported as unreadable in the Activity Log.
+    @ObservationIgnored var reportedUnreadableTranscripts = Set<String>()
+    /// Transcripts reported as having lines that couldn't be read, and how many.
+    @ObservationIgnored var reportedUnreadableLines: [String: Int] = [:]
+    /// Projects whose assistant calls couldn't be read (tried again each scan).
+    @ObservationIgnored var unreadableAssistantCosts = Set<UUID>()
+    /// The saved ledger couldn't be read or moved aside, so it isn't overwritten.
+    @ObservationIgnored var isUsageLedgerReadOnly = false
+    /// Saves the ledger one at a time, in order.
+    @ObservationIgnored let usageSaveQueue = DispatchQueue(label: "Claudio.usage-save", qos: .utility)
+    /// The assistant's priced calls, per project, from its audit log.
+    @ObservationIgnored var assistantJobCosts: [UUID: [AssistantJobCost]] = [:]
+    /// Every hour of every conversation, and every assistant call, priced:
+    /// what the Usage views add up.
+    public internal(set) var usageEntries: [UsageEntry] = []
+    /// Transcripts being read, and ones that couldn't be.
+    public internal(set) var usageScan = UsageScanStatus()
+    /// The Usage tool's folder, when drilled into one.
+    public internal(set) var usageFolder: SessionGroup?
+    /// The time zone days are counted in (tests set one).
+    @ObservationIgnored public var timeZone = TimeZone.current
     /// The capture box's target, while a note is being written.
     public internal(set) var noteCapture: NoteCapture?
     /// What's typed in the capture box.
@@ -354,6 +382,7 @@ public final class AppModel {
         statusDirectory: URL? = nil,
         runner: CommandRunning = ProcessCommandRunner(),
         assistantStore: AssistantStoring = MemoryAssistantStore(),
+        usageStore: UsageStoring = MemoryUsageStore(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
         locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
@@ -371,6 +400,7 @@ public final class AppModel {
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
         self.runner = runner
         self.assistantStore = assistantStore
+        self.usageStore = usageStore
         self.gitExecutable = git
         self.locateClaude = locateClaude
         self.locateGitHubCLI = locateGitHubCLI
@@ -389,6 +419,7 @@ public final class AppModel {
         restoreBackgroundTasks()
         loadAssistantData()
         prepareAssistantFiles()
+        loadUsage()
     }
 
     // MARK: - Derived state
@@ -474,7 +505,7 @@ public final class AppModel {
     public var breadcrumb: Breadcrumb? {
         guard let session = selectedSession, let group = selectedGroup else { return nil }
         return Breadcrumb(project: state.workspace.project(session.projectID)?.name ?? "",
-                          folder: state.workspace.name(of: group),
+                          folder: state.workspace.path(of: group),
                           session: session.name)
     }
 
@@ -785,11 +816,14 @@ public final class AppModel {
 
     // MARK: - Folders
 
-    /// Creates a folder (optionally holding a dropped session) and starts inline rename.
+    /// Creates a folder (nested inside `parentID`, or at the project's top
+    /// level), optionally holding a dropped session, and starts inline rename.
     @discardableResult
-    public func createFolder(in projectID: UUID, containing sessionID: UUID? = nil) -> UUID? {
-        guard let id = attempt({ try state.workspace.createFolder(in: projectID, named: "", containing: sessionID) }) else { return nil }
+    public func createFolder(in projectID: UUID, containing sessionID: UUID? = nil, parentID: UUID? = nil) -> UUID? {
+        guard let id = attempt({ try state.workspace.createFolder(in: projectID, named: "", containing: sessionID, parentID: parentID) })
+        else { return nil }
         if state.workspace.project(projectID)?.isCollapsed == true { state.workspace.toggleCollapsed(projectID) }
+        if let parentID, state.workspace.isCollapsed(.folder(parentID)) { state.workspace.toggleCollapsed(.folder(parentID)) }
         renamingFolderID = id
         save()
         return id
@@ -811,13 +845,30 @@ public final class AppModel {
         renamingFolderID = nil
     }
 
-    public func deleteFolder(_ id: UUID) {
-        state.workspace.deleteFolder(id)
+    /// Whether a folder holds anything of its own: direct sessions, or
+    /// subfolders nested anywhere underneath it. Used to decide whether
+    /// deleting it needs to ask what happens to its contents.
+    public func folderHasContents(_ id: UUID) -> Bool {
+        !(state.workspace.folder(id)?.sessionIDs.isEmpty ?? true) || state.workspace.subtreeFolderIDs(of: id).count > 1
+    }
+
+    public func deleteFolder(_ id: UUID, mode: Workspace.FolderDeletionMode = .promoteChildren) {
+        state.workspace.deleteFolder(id, mode: mode)
         save()
     }
 
     public func moveFolder(_ id: UUID, toProject projectID: UUID) {
         attempt { try state.workspace.moveFolder(id, toProject: projectID) }
+        save()
+    }
+
+    /// Nests a folder inside another, as its last child — the non-drag way
+    /// to do what dropping one in the middle of a folder row does.
+    public func moveFolder(_ id: UUID, intoFolder parentID: UUID) {
+        guard attempt({ try state.workspace.moveFolder(id, intoFolder: parentID) }) != nil else { return }
+        // Otherwise the folder just moved vanishes from the sidebar until the
+        // parent happens to be expanded, which can look like the move failed.
+        if state.workspace.isCollapsed(.folder(parentID)) { state.workspace.toggleCollapsed(.folder(parentID)) }
         save()
     }
 
@@ -828,15 +879,36 @@ public final class AppModel {
         case session(UUID)
     }
 
+    /// Where a dragged folder lands relative to the folder it's dropped on,
+    /// from the drop's position within that row: its top or bottom edge
+    /// reorders as a sibling before/after it, the rest of the row nests
+    /// inside it. Only meaningful for a folder dropped on a folder; every
+    /// other combination ignores it.
+    public enum SidebarDropEdge: Sendable {
+        case before, into, after
+
+        /// Where a drop at `locationY` within a row of `rowHeight` lands:
+        /// near the top or bottom edge reorders as a sibling before/after,
+        /// the rest of the row nests inside. The edge margin shrinks for a
+        /// very short row, never past a third of it.
+        public static func at(locationY: Double, rowHeight: Double) -> AppModel.SidebarDropEdge {
+            guard rowHeight > 0 else { return .into }
+            let margin = min(8, rowHeight / 3)
+            if locationY < margin { return .before }
+            if locationY > rowHeight - margin { return .after }
+            return .into
+        }
+    }
+
     /// Handles sidebar drag and drop (payloads as `SidebarDragItem`s). A
     /// session goes into the group, or just above the session, it's dropped on
-    /// (Unfiled for a project header). A folder goes just above the folder
-    /// it's dropped on (or the folder of the session it's dropped on), or last
-    /// when dropped on a project header or Unfiled (which always comes last).
-    /// A project dropped anywhere in another takes that project's place.
-    /// Returns whether anything moved.
+    /// (Unfiled for a project header). A folder dropped on another folder is
+    /// placed by `edge`; dropped on a project header, Unfiled, or the folder
+    /// of a session it's dropped on, it goes last/just above that folder
+    /// instead. A project dropped anywhere in another takes that project's
+    /// place. Returns whether anything moved.
     @discardableResult
-    public func drop(_ payloads: [String], on target: SidebarDropTarget) -> Bool {
+    public func drop(_ payloads: [String], on target: SidebarDropTarget, edge: SidebarDropEdge = .into) -> Bool {
         let before = state.workspace
         for item in payloads.compactMap(SidebarDragItem.init(payload:)) {
             switch (item, target) {
@@ -851,7 +923,25 @@ public final class AppModel {
                 attempt { try state.workspace.moveFolder(id, before: nil, inProject: projectID) }
             case (.folder(let id), .group(.folder(let targetID))):
                 guard let projectID = state.workspace.projectID(containingFolder: targetID) else { continue }
-                attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+                // Dropping a folder on its own row: `.into` reports the same
+                // `.cyclicFolderMove` error as dropping it on a descendant
+                // (via `relocateFolder`'s own `id != parentID` guard);
+                // `.before`/`.after` stay a silent no-op, same as reordering
+                // a folder to right before itself always has been.
+                switch edge {
+                case .into:
+                    // Expands a collapsed destination (matching the
+                    // `moveFolder(intoFolder:)` wrapper's own behavior,
+                    // which this bypasses to share one `save()` with every
+                    // other payload in this drop): otherwise the folder
+                    // just moved vanishes from the sidebar until the
+                    // destination happens to be expanded, which can look
+                    // like the drop silently failed.
+                    guard attempt({ try state.workspace.moveFolder(id, intoFolder: targetID) }) != nil else { continue }
+                    if state.workspace.isCollapsed(.folder(targetID)) { state.workspace.toggleCollapsed(.folder(targetID)) }
+                case .before: attempt { try state.workspace.moveFolder(id, before: targetID, inProject: projectID) }
+                case .after: attempt { try state.workspace.moveFolder(id, after: targetID, inProject: projectID) }
+                }
             case (.folder(let id), .session(let sessionID)):
                 // Session rows fill an open folder, so go by the session's group.
                 guard let session = state.workspace.session(sessionID) else { continue }
@@ -881,7 +971,7 @@ public final class AppModel {
     }
 
     public func archiveCompleted(in group: SessionGroup) {
-        let archived = state.workspace.sessions(in: group).filter { $0.status == .completed }.map(\.id)
+        let archived = state.workspace.sessionsInSubtree(group).filter { $0.status == .completed }.map(\.id)
         state.workspace.archiveCompleted(in: group)
         // Archived sessions leave the panes.
         archived.forEach { state.workspace.closeTab($0) }
@@ -1108,21 +1198,208 @@ public final class AppModel {
         }
     }
 
-    public func setRole(_ id: UUID, to role: SessionRole) {
-        guard let session = state.workspace.session(id), session.role != role else { return }
-        state.workspace.updateSession(id) { $0.role = role }
+    /// A session's tags, resolved against the catalog in catalog order. An
+    /// id the catalog doesn't have (deleted since, or — for a discovered
+    /// session — never added) is silently dropped: there's nothing to
+    /// read a name or colour from.
+    public func tags(of session: Session) -> [Tag] {
+        settings.tags.filter { session.tags.contains($0.id) }
+    }
+
+    /// Sets a session's tags outright (the multi-select picker's "apply").
+    /// Only ids actually in the catalog are kept.
+    public func setTags(_ tagIDs: [Tag.ID], for id: UUID) {
+        guard let session = state.workspace.session(id) else { return }
+        let catalogIDs = Set(state.settings.tags.map(\.id))
+        let filtered = tagIDs.filter(catalogIDs.contains)
+        guard session.tags != filtered else { return }
+        state.workspace.updateSession(id) { $0.tags = filtered }
         save()
     }
 
-    /// Roles offered for a session: the Settings list, plus its current role
-    /// if that has since been removed from the list.
-    public func roleChoices(for id: UUID) -> [SessionRole] {
-        var choices = settings.roles.map { SessionRole($0) }
-        if let current = state.workspace.session(id)?.role, !current.isNone,
-           !choices.contains(where: { $0.rawValue.caseInsensitiveCompare(current.rawValue) == .orderedSame }) {
-            choices.append(current)
+    /// Adds or removes one tag from a session. Adding requires the id to
+    /// actually be in the catalog (removing never needs to check: a
+    /// dangling id is always safe to drop).
+    public func toggleTag(_ tagID: Tag.ID, on sessionID: UUID) {
+        guard let session = state.workspace.session(sessionID) else { return }
+        var tags = session.tags
+        if let index = tags.firstIndex(of: tagID) {
+            tags.remove(at: index)
+        } else {
+            guard state.settings.tags.contains(where: { $0.id == tagID }) else { return }
+            tags.append(tagID)
         }
-        return choices
+        state.workspace.updateSession(sessionID) { $0.tags = tags }
+        save()
+    }
+
+    // MARK: - Folder default tags
+
+    /// The tags a new session in this folder would start with: the union
+    /// of the folder's own `defaultTags` and every ancestor's, deduplicated
+    /// and limited to the catalog, in catalog order. A snapshot taken once
+    /// at creation — nothing here keeps a session in sync with its
+    /// folder's defaults afterwards, and moving a session or folder never
+    /// retags anything.
+    public func inheritedDefaultTags(forFolder folderID: UUID) -> [Tag] {
+        let ids = Set(state.workspace.folderAndAncestorIDs(of: folderID).flatMap { state.workspace.folder($0)?.defaultTags ?? [] })
+        return state.settings.tags.filter { ids.contains($0.id) }
+    }
+
+    /// What a new session should start with: the name-based guess (if
+    /// any) alongside the folder's inherited defaults, for the "new
+    /// session" sheets to seed their tag picker with before the user has
+    /// touched it.
+    public func suggestedTags(name: String, folderID: UUID?) -> [Tag.ID] {
+        var ids = folderID.map { inheritedDefaultTags(forFolder: $0).map(\.id) } ?? []
+        if let inferred = Tag.infer(fromName: name, in: state.settings.tags), !ids.contains(inferred) {
+            ids.append(inferred)
+        }
+        return ids
+    }
+
+    /// Sets a folder's own default tags outright. Only ids in the catalog
+    /// are kept.
+    public func setDefaultTags(_ tagIDs: [Tag.ID], forFolder folderID: UUID) {
+        guard let folder = state.workspace.folder(folderID) else { return }
+        let catalogIDs = Set(state.settings.tags.map(\.id))
+        let filtered = tagIDs.filter(catalogIDs.contains)
+        guard folder.defaultTags != filtered else { return }
+        state.workspace.updateFolder(folderID) { $0.defaultTags = filtered }
+        save()
+    }
+
+    /// Adds or removes one of a folder's own default tags (not its
+    /// inherited ones — a folder can't un-inherit an ancestor's default;
+    /// it would have to stop being nested inside it).
+    public func toggleDefaultTag(_ tagID: Tag.ID, onFolder folderID: UUID) {
+        guard let folder = state.workspace.folder(folderID) else { return }
+        var tags = folder.defaultTags
+        if let index = tags.firstIndex(of: tagID) {
+            tags.remove(at: index)
+        } else {
+            guard state.settings.tags.contains(where: { $0.id == tagID }) else { return }
+            tags.append(tagID)
+        }
+        state.workspace.updateFolder(folderID) { $0.defaultTags = tags }
+        save()
+    }
+
+    // MARK: - Tag catalog
+    //
+    // Each of these touches exactly the one tag named, by id, and never
+    // infers a deletion from comparing whole arrays. `updateSettings` used
+    // to apply the whole `AppSettings` and cascade-delete any tag id that
+    // dropped out of the diff — which meant a rename (matched back by
+    // text), a name collision, or Restore Defaults could each silently
+    // strip an unrelated tag from every session and folder that had it.
+    // `deleteTag` is the only one of these that touches sessions/folders.
+
+    /// Appends a new tag with the next palette colour. No-op (returns nil)
+    /// for a blank name or one that collides with an existing tag.
+    @discardableResult
+    public func addTag(named name: String) -> Tag? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !state.settings.tags.contains(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return nil }
+        let tag = Tag(name: trimmed, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// Appends a new tag named `base`, or `base 2`/`base 3`/… if that's
+    /// taken — for "Add Role"/"Add Tag" buttons, where the name is a
+    /// placeholder the user is about to retype, not something that should
+    /// silently fail to appear on a second click.
+    @discardableResult
+    public func addTag(suggestingName base: String) -> Tag {
+        let name = AppModel.uniqueName(base, avoiding: state.settings.tags)
+        let tag = Tag(name: name, colorHex: Tag.palette[state.settings.tags.count % Tag.palette.count])
+        state.settings.tags.append(tag)
+        save()
+        return tag
+    }
+
+    /// Renames a catalog tag in place, keeping its id and colour. No-op for
+    /// a blank name or one that collides with a *different* existing tag.
+    public func renameTag(_ id: Tag.ID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = state.settings.tags.firstIndex(where: { $0.id == id }),
+              state.settings.tags[index].name != trimmed,
+              !state.settings.tags.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame })
+        else { return }
+        state.settings.tags[index].name = trimmed
+        save()
+    }
+
+    /// The first of `base`, `base 2`, `base 3`, … that no tag (other than
+    /// `exceptID`) already has, case-insensitively.
+    private static func uniqueName(_ base: String, avoiding tags: [Tag], exceptID: Tag.ID? = nil) -> String {
+        var name = base
+        var suffix = 2
+        while tags.contains(where: { $0.id != exceptID && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            name = "\(base) \(suffix)"
+            suffix += 1
+        }
+        return name
+    }
+
+    /// Recolours a catalog tag in place. No-op for an invalid hex value.
+    public func recolorTag(_ id: Tag.ID, to colorHex: String) {
+        guard let index = state.settings.tags.firstIndex(where: { $0.id == id }), let normalized = Tag.normalizedHex(colorHex) else { return }
+        state.settings.tags[index].colorHex = normalized
+        save()
+    }
+
+    /// Removes a catalog tag and strips it from every session and folder
+    /// that had it, like deleting a label on GitHub. The only tag mutation
+    /// that reaches into sessions/folders.
+    public func deleteTag(_ id: Tag.ID) {
+        guard state.settings.tags.contains(where: { $0.id == id }) else { return }
+        state.settings.tags.removeAll { $0.id == id }
+        for session in state.workspace.sessions where session.tags.contains(id) {
+            state.workspace.updateSession(session.id) { $0.tags.removeAll { $0 == id } }
+        }
+        for project in state.workspace.projects {
+            for folder in project.folders where folder.defaultTags.contains(id) {
+                state.workspace.updateFolder(folder.id) { $0.defaultTags.removeAll { $0 == id } }
+            }
+        }
+        save()
+    }
+
+    /// How many sessions and folders carry a tag, for a delete confirmation.
+    public func usageCount(ofTag id: Tag.ID) -> (sessions: Int, folders: Int) {
+        let sessions = state.workspace.sessions.filter { $0.tags.contains(id) }.count
+        let folders = state.workspace.projects.flatMap(\.folders).filter { $0.defaultTags.contains(id) }.count
+        return (sessions, folders)
+    }
+
+    /// Restores the three built-in tags without touching custom ones:
+    /// missing defaults are re-added, and ones still present are reset to
+    /// their default name and colour.
+    public func restoreDefaultTags() {
+        var tags = state.settings.tags
+        for builtin in Tag.defaults {
+            // A custom tag may have since taken this built-in's name (via
+            // rename, or because it was deleted and the name freed up):
+            // move it aside first, rather than end up with two tags of the
+            // same name — the one invariant every other tag edit upholds.
+            if let collision = tags.firstIndex(where: { $0.id != builtin.id && $0.name.caseInsensitiveCompare(builtin.name) == .orderedSame }) {
+                // `builtin` doesn't have its own entry in `tags` yet (that's
+                // the point — its name is about to be reclaimed), so its
+                // claim on the name has to be added explicitly or
+                // `uniqueName` would see no collision at all and no-op.
+                tags[collision].name = AppModel.uniqueName(builtin.name, avoiding: tags + [builtin], exceptID: tags[collision].id)
+            }
+            if let index = tags.firstIndex(where: { $0.id == builtin.id }) {
+                tags[index] = builtin
+            } else {
+                tags.append(builtin)
+            }
+        }
+        state.settings.tags = tags
+        save()
     }
 
     /// Deletes the session from Claudio, and with `.everywhere` from Claude
@@ -1138,7 +1415,11 @@ public final class AppModel {
             // the conversations `/clear` left behind.
             let projectPath = state.workspace.project(session.projectID)?.path ?? session.workingDirectory
             for claudeID in state.workspace.ownedConversations(of: session) {
-                enqueue { self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath) }
+                enqueue {
+                    // What it used still counts once its transcripts have gone.
+                    await self.recordUsageBeforeDeleting(session, conversationID: claudeID, projectPath: projectPath)
+                    self.removeHistory(of: session, claudeSessionID: claudeID, projectPath: projectPath)
+                }
             }
         }
         log.append(.info, scope == .everywhere ? "Deleted “\(session.name)” from Claude Code and Claudio"
@@ -1210,10 +1491,11 @@ public final class AppModel {
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
         let background = runsInBackground(prompt: prompt)
+        let catalogIDs = Set(state.settings.tags.map(\.id))
         var session = Session(projectID: project.id,
                               claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
                               name: name.isEmpty ? "New session" : name,
-                              role: request.role,
+                              tags: request.tagIDs.filter(catalogIDs.contains),
                               workingDirectory: project.path,
                               model: request.model ?? state.settings.defaultModel,
                               permissionMode: request.permissionMode,
@@ -1584,7 +1866,7 @@ public final class AppModel {
     private func addCopy(of originalID: UUID, agentID: String) {
         guard let original = state.workspace.session(originalID) else { return }
         var copy = Session(projectID: original.projectID, hasConversation: true, name: "\(original.name) (copy)",
-                           role: original.role, workingDirectory: original.workingDirectory, status: .working,
+                           tags: original.tags, workingDirectory: original.workingDirectory, status: .working,
                            model: original.model, permissionMode: original.permissionMode, createdAt: now())
         copy.agentID = agentID
         copy.hasCustomName = true
@@ -1877,6 +2159,17 @@ public final class AppModel {
         state.workspace.updateSession(sessionID, body)
     }
 
+    /// For tests: changes a folder directly (e.g. its `defaultTags`, before
+    /// the real editing UI for them lands).
+    func applyTestFolderChange(_ folderID: UUID, _ body: (inout Folder) -> Void) {
+        state.workspace.updateFolder(folderID, body)
+    }
+
+    /// For tests: a plan usage reading, as `claude /usage` would give.
+    func applyTestUsage(_ snapshot: UsageSnapshot?) {
+        usage = snapshot
+    }
+
     /// For tests: gives a session a conversation, as its first prompt would.
     func applyTestConversation(_ sessionID: UUID) {
         state.workspace.updateSession(sessionID) { $0.hasConversation = true }
@@ -2088,6 +2381,15 @@ public final class AppModel {
         save()
     }
 
+    /// Applies a whole new `AppSettings`. Deliberately doesn't try to infer
+    /// tag deletions by diffing `tags` against the old value — that doesn't
+    /// distinguish "the user deleted a tag" from "this settings snapshot is
+    /// stale/partial," and treating every dropped id as a deletion is how
+    /// a rename, a name collision, or Restore Defaults each turned into
+    /// mass data loss. Use `addTag`/`renameTag`/`recolorTag`/`deleteTag`
+    /// instead for catalog edits; `deleteTag` is the only one of those that
+    /// touches sessions/folders. A dropped id here just becomes a harmless
+    /// dangling reference (same tolerance as an orphaned id from anywhere else).
     public func updateSettings(_ settings: AppSettings) {
         let old = state.settings.assistant
         state.settings = settings
@@ -2098,7 +2400,7 @@ public final class AppModel {
     // MARK: - Helpers
 
     /// Shows an error to the user and records it in the log.
-    func report(_ message: String) {
+    public func report(_ message: String) {
         errorMessage = message
         log.append(.error, message)
     }
@@ -2131,6 +2433,7 @@ public final class AppModel {
             case .folderNotFound: return "That folder no longer exists."
             case .sessionNotFound: return "That session no longer exists."
             case .folderNotInProject: return "That folder belongs to a different project."
+            case .cyclicFolderMove: return "A folder can't be moved into itself or one of its own subfolders."
             }
         }
         return String(describing: error)

@@ -315,6 +315,34 @@ final class PullRequestOverviewTests: XCTestCase {
         XCTAssertEqual(PullRequestOverview.pullRequests(of: code, known: loaded).map(\.number), [3, 1, 2])
         XCTAssertEqual(PullRequestOverview.pullRequests(of: code, known: nil), [])
     }
+
+    func testPullRequestsInAFolderRollUpItsNestedSubfolders() throws {
+        let child = try workspace.createFolder(in: project, named: "Nested", parentID: folder)
+        let grandchild = try workspace.createFolder(in: project, named: "Deeper", parentID: child)
+        try session("direct", opened: [1], in: folder)
+        try session("one level down", opened: [2], in: child)
+        try session("two levels down", opened: [3], in: grandchild)
+        let loaded = known([item(1, updated: 1), item(2, updated: 2), item(3, updated: 3)])
+
+        XCTAssertEqual(PullRequestOverview.pullRequests(in: .folder(folder), workspace: workspace, known: loaded).map(\.number), [3, 2, 1],
+                       "the parent folder's list covers its whole subtree, most recently updated first")
+        XCTAssertEqual(PullRequestOverview.pullRequests(in: .folder(child), workspace: workspace, known: loaded).map(\.number), [3, 2],
+                       "a middle folder covers its own subtree, not its ancestor's")
+        XCTAssertEqual(PullRequestOverview.pullRequests(in: .folder(grandchild), workspace: workspace, known: loaded).map(\.number), [3])
+    }
+
+    func testGroupsNameNestedFoldersByFullPath() throws {
+        let child = try workspace.createFolder(in: project, named: "Nested", parentID: folder)
+        try session("parent", opened: [1], in: folder)
+        try session("child", opened: [2], in: child)
+        let loaded = known([item(1), item(2)])
+
+        let groups = PullRequestOverview.groups(loaded, workspace: workspace, projectID: project, filter: .all, includeUnlinked: true)
+        // Each pull request groups by the session's own (most specific)
+        // folder — the rollup is `pullRequests(in:)`'s job, not `groups()`'s.
+        XCTAssertEqual(groups.map(\.name), ["Websocket Close State", "Websocket Close State › Nested"])
+        XCTAssertEqual(groups.map { $0.pullRequests.map(\.number) }, [[1], [2]])
+    }
 }
 
 /// Answers gh the way a signed-in gh would, from canned output.

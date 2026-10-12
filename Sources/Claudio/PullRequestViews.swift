@@ -305,7 +305,8 @@ struct OverviewHeader: View {
     private func folderHeader(_ group: SessionGroup) -> some View {
         let projectID = model.workspace.projectID(of: group)
         let isUnfiled: Bool = { if case .unfiled = group { return true } else { return false } }()
-        let sessions = model.workspace.sessions(in: group).count
+        // Its whole subtree, matching the pull requests below (which roll up too).
+        let sessions = model.workspace.sessionsInSubtree(group).count
         let pullRequests = model.pullRequests(in: group).count
         return HStack(spacing: 10) {
             if let projectID, let project = model.workspace.project(projectID) {
@@ -321,7 +322,7 @@ struct OverviewHeader: View {
             Image(systemName: isUnfiled ? "tray" : "folder")
                 .font(.system(size: 14))
                 .foregroundStyle(isUnfiled ? DS.dim : DS.blue)
-            Text(model.workspace.name(of: group))
+            Text(model.workspace.path(of: group))
                 .font(DS.font(14, .bold, italic: isUnfiled))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
@@ -669,7 +670,7 @@ private struct ProjectPullRequestRow: View {
     }
 }
 
-/// Role chips for the sessions on a pull request; click one to open it.
+/// Tag chips for the sessions on a pull request; click one to open it.
 private struct SessionChips: View {
     @Environment(AppModel.self) private var model
     let sessions: [Session]
@@ -685,11 +686,15 @@ private struct SessionChips: View {
                     Button { model.select(session.id) } label: {
                         HStack(spacing: 5) {
                             StatusDot(status: session.status, size: 6)
-                            Text(session.role.isNone ? "SESSION" : session.role.label)
-                                .font(DS.font(10, .extraBold))
-                                .kerning(0.4)
-                                .foregroundStyle(DS.muted)
-                                .lineLimit(1)
+                            if model.tags(of: session).isEmpty {
+                                Text("SESSION")
+                                    .font(DS.font(10, .extraBold))
+                                    .kerning(0.4)
+                                    .foregroundStyle(DS.muted)
+                                    .lineLimit(1)
+                            } else {
+                                CompactTagBadge(session: session)
+                            }
                         }
                         .padding(.vertical, 1)
                         .padding(.leading, 6)
@@ -1002,14 +1007,7 @@ private struct PullRequestCard: View {
                                     .font(DS.font(13.5))
                                     .foregroundStyle(DS.text)
                                     .lineLimit(1)
-                                if !session.role.isNone {
-                                    Text(session.role.label)
-                                        .font(DS.font(10.5, .extraBold))
-                                        .kerning(0.4)
-                                        .foregroundStyle(DS.muted)
-                                        .padding(.horizontal, 5)
-                                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(DS.border, lineWidth: 1))
-                                }
+                                CompactTagBadge(session: session)
                             }
                             Text(did(session))
                                 .font(DS.font(12))

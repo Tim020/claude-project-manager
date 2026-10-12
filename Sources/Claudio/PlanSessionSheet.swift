@@ -17,7 +17,8 @@ struct PlanSessionSheet: View {
     @State private var folderID: UUID?
     /// Chips you removed, kept out when the folder changes the picks.
     @State private var removedSkills = Set<String>()
-    @State private var role: SessionRole = .code
+    @State private var tagIDs: Set<Tag.ID> = []
+    @State private var tagsEdited = false
     @State private var useWorktree = true
     @State private var promptBody = ""
     @State private var skills: [String] = []
@@ -36,13 +37,17 @@ struct PlanSessionSheet: View {
                     label("Name")
                     TextField("Session name", text: $name)
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: name) { _, value in
+                            if !tagsEdited { tagIDs = Set(model.suggestedTags(name: value, folderID: folderID)) }
+                        }
                 }
                 GridRow {
                     label("Folder")
                     Picker("", selection: $folderID) {
                         Text(Workspace.unfiledName).tag(UUID?.none)
-                        ForEach(folders) { folder in
-                            Text(folder.name).tag(Optional(folder.id))
+                        ForEach(folders, id: \.folder.id) { entry in
+                            // A flat picker, so the full path disambiguates same-named folders at different levels.
+                            Text(model.workspace.path(of: .folder(entry.folder.id))).tag(Optional(entry.folder.id))
                         }
                     }
                     .labelsHidden()
@@ -50,17 +55,19 @@ struct PlanSessionSheet: View {
                     .onChange(of: folderID) { _, folder in
                         skills = model.suggestedSkills(forItem: item, inProject: projectID, folderID: folder)
                             .filter { !removedSkills.contains($0) }
+                        if !tagsEdited { tagIDs = Set(model.suggestedTags(name: name, folderID: folder)) }
                     }
                 }
                 GridRow {
-                    label("Role")
-                    Picker("", selection: $role) {
-                        Text("None").tag(SessionRole.none)
-                        ForEach(model.settings.roles, id: \.self) { name in
-                            Text(name).tag(SessionRole(name))
+                    label("Tags")
+                    WrappingHStack(spacing: 6) {
+                        ForEach(model.settings.tags) { tag in
+                            TagToggleChip(tag: tag, isOn: tagIDs.contains(tag.id)) {
+                                if tagIDs.contains(tag.id) { tagIDs.remove(tag.id) } else { tagIDs.insert(tag.id) }
+                                tagsEdited = true
+                            }
                         }
                     }
-                    .labelsHidden()
                 }
                 if model.runsInBackground(prompt: promptBody) {
                     GridRow {
@@ -135,8 +142,8 @@ struct PlanSessionSheet: View {
         }
     }
 
-    private var folders: [Folder] {
-        model.workspace.project(projectID)?.folders ?? []
+    private var folders: [(folder: Folder, depth: Int)] {
+        model.workspace.foldersInDisplayOrder(projectID: projectID)
     }
 
     private var isGitProject: Bool {
@@ -162,13 +169,13 @@ struct PlanSessionSheet: View {
         let draft = model.planSessionDraft(forItem: item, inProject: projectID)
         name = draft.name
         folderID = draft.folderID
-        role = draft.role
+        tagIDs = Set(draft.tagIDs)
         promptBody = draft.promptBody
         skills = draft.skills
     }
 
     private func start() {
-        model.startSession(fromItem: item.id, projectID: projectID, name: name, folderID: folderID, role: role,
+        model.startSession(fromItem: item.id, projectID: projectID, name: name, folderID: folderID, tagIDs: Array(tagIDs),
                            skills: skills, useWorktree: useWorktree)
         dismiss()
     }

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css"><style>html{background:#1a1a1a}body{margin:0;background:#1a1a1a;font-family:"Nunito Sans",Avenir,Helvetica,Arial,sans-serif;color:#fff;-webkit-font-smoothing:antialiased}a{color:#00bc8c;text-decoration:none}a:hover{color:#00997a}</style></helmet>
+<section id="t11" style="padding:40px 44px;display:flex;flex-direction:column;gap:22px">
+<div style="display:flex;align-items:baseline;gap:10px"><a href="#t11" style="font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#00bc8c;color:#fff;border-radius:4px">11</a><span style="font-weight:700;font-size:14px">Usage: cost, tokens and plan share per session, folder and project</span></div>
+<p style="margin:0;max-width:1100px;color:#adb5bd;font-size:13px;line-height:1.55;text-wrap:pretty">Claudio adds up the token counts in each session's transcript and prices them at API rates. On a plan that's an estimate (<b style="color:#fff">est.</b>), since plans aren't charged per token. A session's usage shows its all-time figures on the right rail, under a new <b style="color:#fff">Usage</b> tool. Projects and folders get a new left-rail tool, <b style="color:#fff">Usage</b> (⌘4), with ranges of 24h, 7d, 30d, All or custom dates. The status-bar usage figures now open a popover with an <b style="color:#fff">Open Usage Window</b> link, which goes to the <a href="#usage-window">Usage window</a>: every project, plan limits, and the assistant's own section. <b style="color:#fff"><a href="#11a">11a</a> is chosen</b>: tabs stay for session things only. <a href="#11b">11b</a> is kept for reference. The handover is in <b style="color:#fff">Usage Handover.md</b>. Rows, tabs, ranges, rails, the panel states and the status-bar figures are all clickable.</p>
+<div style="display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start">
+
+<div id="11a" style="display:flex;flex-direction:column;gap:12px;flex:none;width:1280px">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:#adb5bd"><a href="#11a" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#00bc8c;color:#fff;border-radius:5px">11a</a><span style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#00bc8c">CHOSEN</span><span><b style="color:#fff">In the panel.</b> The Usage tool works like Sessions: the project's charts and a folder list sit in the left panel. Click a folder to drill in, or a session to see its all-time usage on the right.</span></div>
+<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#adb5bd;flex-wrap:wrap"><span>Panel state:</span><sc-for list="{{ a.demos }}" as="d" hint-placeholder-count="4"><span onClick="{{ d.onClick }}" style="padding:2px 10px;border-radius:12px;border:1px solid {{ d.bd }};background:{{ d.bg }};color:{{ d.fg }};cursor:pointer">{{ d.t }}</span></sc-for></div>
+<div style="width:1280px;height:800px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column;position:relative">
+  <div style="height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#2b2b2b;border-bottom:1px solid #444"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span><span style="flex:1;text-align:center;font-size:12px;color:#adb5bd;margin-right:52px">Claudio</span></div>
+  <div style="flex:1;min-height:0;display:flex">
+    <div style="width:44px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+      <sc-for list="{{ a.rail }}" as="it" hint-placeholder-count="4"><div onClick="{{ it.onClick }}" title="{{ it.label }}" style="height:44px;display:flex;align-items:center;justify-content:center;color:{{ it.fg }};background:{{ it.bg }};cursor:{{ it.cur }}"><i class="mdi {{ it.icon }}" style="font-size:19px"></i></div></sc-for>
+      <span style="flex:1"></span>
+      <div title="Shell (⌃`)" style="height:44px;display:flex;align-items:center;justify-content:center;color:#6c757d"><i class="mdi mdi-console" style="font-size:19px"></i></div>
+    </div>
+    <sc-if value="{{ a.showSessions }}" hint-placeholder-val="{{ false }}">
+    <div style="width:300px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;padding:0 14px 0 22px"><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">SESSIONS</b></div>
+      <div style="padding:0 14px 8px;font-size:11.5px;font-weight:800;letter-spacing:.06em;color:#adb5bd">CLAUDE-PROJECT-MANAGER</div>
+      <sc-for list="{{ a.tree }}" as="f" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:1px;margin-bottom:6px"><div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 14px;font-size:13px;font-weight:700"><i class="mdi mdi-chevron-down" style="font-size:13px;color:#6c757d"></i><i class="mdi mdi-folder-outline" style="font-size:15px;color:#3498db"></i>{{ f.name }}</div><sc-for list="{{ f.sessions }}" as="r" hint-placeholder-count="2"><div onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:8px;height:26px;margin:0 6px;padding:0 10px 0 34px;border-radius:4px;background:{{ r.bg }};font-size:13px;cursor:pointer"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }}"></span><span style="flex:1">{{ r.name }}</span><span style="font-size:11.5px;color:#6c757d">{{ r.age }}</span></div></sc-for></div></sc-for>
+    </div>
+    </sc-if>
+    <sc-if value="{{ a.showUsage }}" hint-placeholder-val="{{ true }}">
+    <div style="width:300px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;gap:8px;padding:0 14px 0 22px"><sc-if value="{{ a.scoped }}" hint-placeholder-val="{{ false }}"><span onClick="{{ a.onBack }}" title="Back" style="display:flex;margin-left:-8px;cursor:pointer;color:#adb5bd"><i class="mdi mdi-chevron-left" style="font-size:18px"></i></span></sc-if><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">USAGE</b></div>
+      <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:0 14px 14px">
+        <div style="display:flex;gap:6px">
+          <div style="flex:1;display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><sc-for list="{{ a.ranges }}" as="g" hint-placeholder-count="4"><span onClick="{{ g.onClick }}" style="flex:1;text-align:center;padding:3px 0;background:{{ g.bg }};color:{{ g.fg }};cursor:pointer">{{ g.t }}</span></sc-for></div>
+          <span onClick="{{ a.onCustom }}" title="Custom Dates…" style="display:flex;align-items:center;justify-content:center;width:28px;border:1px solid #444;border-radius:4px;background:{{ a.calBg }};color:{{ a.calFg }};cursor:pointer"><i class="mdi mdi-calendar-range" style="font-size:14px"></i></span>
+        </div>
+        <sc-if value="{{ a.isCustom }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#adb5bd;margin-top:-6px"><span style="flex:1;padding:3px 8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff">22 Sep 2026</span>–<span style="flex:1;padding:3px 8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff">28 Sep 2026</span></div></sc-if>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <span style="font-size:11.5px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ a.scopeUpper }}</span>
+          <span style="font-size:11.5px;color:#6c757d">{{ a.rangeLabel }}</span>
+        </div>
+        <sc-if value="{{ a.reading }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#adb5bd;margin-top:-6px"><i class="mdi mdi-loading mdi-spin" style="color:#3498db;font-size:14px"></i>Reading transcripts… 4 of 7. Figures will rise.</div></sc-if>
+        <sc-if value="{{ a.unreadable }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:flex-start;gap:7px;font-size:12px;color:#f39c12;line-height:1.45;margin-top:-6px"><i class="mdi mdi-alert-outline" style="font-size:14px"></i><span>1 session's transcript couldn't be read, so it isn't counted. The Activity Log (⌥⌘L) says why.</span></div></sc-if>
+        <sc-if value="{{ a.noData }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:6px;padding:10px;border:1px dashed #444;border-radius:4px;font-size:12.5px"><span style="color:#adb5bd">No usage in this range.</span><span style="color:#6c757d;line-height:1.45">Sessions and assistant calls in this project show here as they run. Try a longer range.</span></div></sc-if>
+        <sc-if value="{{ a.hasData }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:26px;font-weight:700;letter-spacing:-.01em">{{ a.D.total }}</span><span style="font-size:11px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px">est.</span></div>
+          <span style="font-size:12px;color:#adb5bd">{{ a.D.tokens }} tokens · {{ a.D.share }} of all usage</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <div style="height:84px;display:flex;align-items:flex-end;gap:2px;border-bottom:1px solid #444"><sc-for list="{{ a.D.bars }}" as="b" hint-placeholder-count="7"><div title="{{ b.tip }}" style="flex:1;min-width:0;display:flex;flex-direction:column-reverse"><sc-for list="{{ b.segs }}" as="g" hint-placeholder-count="2"><div style="height:{{ g.h }}px;background:{{ g.c }};opacity:{{ g.o }}"></div></sc-for></div></sc-for></div>
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#6c757d"><span>{{ a.D.x0 }}</span><span>{{ a.D.x1 }}</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">SESSIONS AND ASSISTANT</div>
+          <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:#444"><div style="width:{{ a.D.sw }};background:#adb5bd"></div><div style="width:{{ a.D.aw }};background:#3498db"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px"><span style="display:flex;align-items:center;gap:5px;color:#adb5bd"><span style="width:7px;height:7px;border-radius:2px;background:#adb5bd"></span>Sessions <b style="color:#fff">{{ a.D.sess }}</b></span><span style="display:flex;align-items:center;gap:5px;color:#adb5bd"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db"></i>{{ a.D.asstLabel }} <b style="color:#fff">{{ a.D.asst }}</b></span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY MODEL</div>
+          <div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:#444"><sc-for list="{{ a.D.models }}" as="m" hint-placeholder-count="3"><div style="width:{{ m.w }};background:{{ m.c }}"></div></sc-for></div>
+          <div style="display:flex;gap:12px;font-size:12px;color:#adb5bd;flex-wrap:wrap"><sc-for list="{{ a.D.models }}" as="m" hint-placeholder-count="3"><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:2px;background:{{ m.c }}"></span>{{ m.name }} <b style="color:#fff">{{ m.v }}</b></span></sc-for></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd;padding-bottom:4px"><span>{{ a.kidsTitle }}</span><span>COST</span></div>
+          <sc-for list="{{ a.kids }}" as="r" hint-placeholder-count="3"><div onClick="{{ r.onClick }}" style="display:flex;flex-direction:column;gap:4px;padding:6px 8px;margin:0 -8px;border-radius:4px;background:{{ r.bg }};cursor:{{ r.cur }}" style-hover="background:#303030"><div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.c }};opacity:{{ r.o }}"></span><span style="flex:1;min-width:0;color:{{ r.fg }}">{{ r.name }}</span><sc-if value="{{ r.removed }}" hint-placeholder-val="{{ false }}"><span style="font-size:10.5px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px">Removed</span></sc-if><b style="font-size:12.5px">{{ r.v }}</b><sc-if value="{{ r.chev }}" hint-placeholder-val="{{ true }}"><i class="mdi mdi-chevron-right" style="font-size:14px;color:#6c757d"></i></sc-if></div><div style="height:3px;border-radius:2px;background:#444;margin-left:16px"><div style="height:3px;border-radius:2px;width:{{ r.w }};background:{{ r.c }};opacity:{{ r.o }}"></div></div></div></sc-for>
+          <sc-if value="{{ a.notScoped }}" hint-placeholder-val="{{ true }}"><div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;border-top:1px solid #444;margin-top:4px"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db;width:8px"></i><span style="flex:1">Assistant</span><b style="font-size:12.5px">{{ a.D.asst }}</b><a href="#usage-window" title="Open Usage Window" style="display:flex;color:#6c757d"><i class="mdi mdi-open-in-new" style="font-size:13px"></i></a></div></sc-if>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+    </sc-if>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <div style="height:34px;flex:none;display:flex;background:#2b2b2b;border-bottom:1px solid #444"><sc-for list="{{ a.tabs }}" as="t" hint-placeholder-count="3"><div onClick="{{ t.onClick }}" style="display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12.5px;color:{{ t.fg }};background:{{ t.bg }};box-shadow:inset 0 -2px 0 {{ t.line }};border-right:1px solid #444;cursor:pointer;white-space:nowrap"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.dot }}"></span>{{ t.name }}</div></sc-for></div>
+      <div style="height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #444;font-size:12.5px"><span style="color:#adb5bd;white-space:nowrap">{{ a.P.folder }}</span><i class="mdi mdi-chevron-right" style="color:#6c757d;font-size:13px"></i><b style="font-size:13.5px;white-space:nowrap">{{ a.P.name }}</b><span style="flex:1"></span><i class="mdi mdi-dots-horizontal" style="font-size:17px;color:#adb5bd"></i></div>
+      <div style="flex:1;min-height:0;padding:14px 16px;font:12.5px/1.6 ui-monospace,Menlo,monospace;color:#adb5bd;display:flex;flex-direction:column;overflow:hidden"><sc-for list="{{ a.term }}" as="l" hint-placeholder-count="6"><div style="white-space:pre-wrap;color:{{ l.c }}">{{ l.t }}</div></sc-for></div>
+    </div>
+    <sc-if value="{{ a.showRight }}" hint-placeholder-val="{{ true }}">
+    <div style="width:320px;flex:none;background:#2b2b2b;border-left:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;padding:0 10px 0 22px"><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">{{ a.rTitle }}</b><span style="flex:1"></span><span onClick="{{ a.onHideRight }}" title="Hide" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-minus" style="font-size:16px"></i></span></div>
+      <sc-if value="{{ a.rUsage }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:0 16px 16px">
+        <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">{{ a.P.name }}</b><span style="font-size:11.5px;color:#6c757d">All time · started {{ a.P.started }}</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px"><div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:26px;font-weight:700">{{ a.P.cost }}</span><span style="font-size:11px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px">est.</span></div><span style="font-size:12px;color:#adb5bd">{{ a.P.tokens }} tokens</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#444;border:1px solid #444;border-radius:4px;overflow:hidden"><sc-for list="{{ a.P.tok }}" as="t" hint-placeholder-count="4"><div style="background:#303030;padding:7px 10px;display:flex;flex-direction:column;gap:1px"><span style="font-size:11px;color:#adb5bd">{{ t.k }}</span><b style="font-size:13.5px">{{ t.v }}</b></div></sc-for></div>
+        <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY MODEL</div><div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:#444"><sc-for list="{{ a.P.models }}" as="m" hint-placeholder-count="3"><div style="width:{{ m.w }};background:{{ m.c }}"></div></sc-for></div><div style="display:flex;gap:12px;font-size:12px;color:#adb5bd;flex-wrap:wrap"><sc-for list="{{ a.P.models }}" as="m" hint-placeholder-count="3"><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:2px;background:{{ m.c }}"></span>{{ m.name }} <b style="color:#fff">{{ m.v }}</b></span></sc-for></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd"><span>THIS WEEK'S LIMIT</span><span style="color:#fff">≈ {{ a.P.week }}</span></div><div style="height:6px;border-radius:3px;background:#444"><div style="height:6px;border-radius:3px;width:{{ a.P.week }};background:{{ a.P.weekC }}"></div></div><span style="font-size:11.5px;color:#6c757d">Its share of the 31% used this week.</span></div>
+        <div style="display:flex;flex-direction:column;border-top:1px solid #444"><sc-for list="{{ a.P.facts }}" as="f" hint-placeholder-count="4"><div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #444;font-size:12.5px"><span style="color:#adb5bd">{{ f.k }}</span><span>{{ f.v }}</span></div></sc-for></div>
+        <span style="font-size:11.5px;color:#6c757d;line-height:1.45">Priced at API rates from the session's transcript. Plans aren't charged per token.</span>
+      </div>
+      </sc-if>
+      <sc-if value="{{ a.rChanges }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:1px;padding:0 8px;font-size:12.5px"><sc-for list="{{ a.files }}" as="f" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:8px;padding:5px 8px"><i class="mdi mdi-file-document-outline" style="color:#adb5bd"></i><span style="flex:1">{{ f.n }}</span><span style="color:#00bc8c">{{ f.a }}</span><span style="color:#e74c3c">{{ f.d }}</span></div></sc-for></div></sc-if>
+    </div>
+    </sc-if>
+    <div style="width:44px;flex:none;background:#2b2b2b;border-left:1px solid #444;display:flex;flex-direction:column"><sc-for list="{{ a.rrail }}" as="it" hint-placeholder-count="3"><div onClick="{{ it.onClick }}" title="{{ it.label }}" style="height:44px;display:flex;align-items:center;justify-content:center;color:{{ it.fg }};background:{{ it.bg }};cursor:{{ it.cur }}"><i class="mdi {{ it.icon }}" style="font-size:19px"></i></div></sc-for></div>
+  </div>
+  <div style="height:28px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px;background:#2b2b2b;border-top:1px solid #444;font-size:12px;color:#adb5bd">
+    <sc-for list="{{ a.counts }}" as="c" hint-placeholder-count="3"><span style="display:flex;align-items:center;gap:5px;padding:2px 6px"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.c }}"></span>{{ c.t }}</span></sc-for>
+    <span style="flex:1"></span>
+    <span onClick="{{ a.onPop }}" style="display:flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;background:{{ a.popBg }};cursor:pointer">Session <b style="color:#f39c12">62%</b><span style="color:#6c757d">·</span>Week <b style="color:#00bc8c">31%</b><i class="mdi mdi-chevron-up" style="font-size:12px;color:#6c757d"></i></span>
+  </div>
+  <sc-if value="{{ a.pop }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;right:10px;bottom:36px;width:290px;z-index:20;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:14px;display:flex;flex-direction:column;gap:12px;font-size:12.5px">
+    <sc-for list="{{ a.meters }}" as="m" hint-placeholder-count="2"><div style="display:flex;flex-direction:column;gap:5px"><div style="display:flex;justify-content:space-between"><b>{{ m.t }}</b><b style="color:{{ m.c }}">{{ m.v }}</b></div><div style="height:6px;border-radius:3px;background:#444"><div style="height:6px;border-radius:3px;width:{{ m.v }};background:{{ m.c }}"></div></div><span style="font-size:11.5px;color:#6c757d">{{ m.sub }}</span></div></sc-for>
+    <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #444;color:#adb5bd"><span>Today, all projects</span><span style="color:#fff">{{ a.today }} est.</span></div>
+    <a href="#usage-window" style="align-self:flex-start;display:flex;align-items:center;gap:6px;font-weight:700"><i class="mdi mdi-chart-bar" style="font-size:14px"></i>Open Usage Window</a>
+  </div></sc-if>
+</div>
+</div>
+
+<div id="11b" style="display:flex;flex-direction:column;gap:12px;flex:none;width:1280px">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:#adb5bd"><a href="#11b" style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">11b</a><span style="font-size:10.5px;font-weight:800;letter-spacing:.05em;color:#6c757d">FOR REFERENCE</span><span><b style="color:#fff">As a tab.</b> The Usage tool lists the project, its folders and its sessions with their costs. Picking the project or a folder opens a <b style="color:#fff">Usage</b> tab with full-size charts. Picking a session opens that session, with its usage on the right rail.</span></div>
+<div style="width:1280px;height:800px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column;position:relative">
+  <div style="height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#2b2b2b;border-bottom:1px solid #444"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span><span style="flex:1;text-align:center;font-size:12px;color:#adb5bd;margin-right:52px">Claudio</span></div>
+  <div style="flex:1;min-height:0;display:flex">
+    <div style="width:44px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column">
+      <sc-for list="{{ b.rail }}" as="it" hint-placeholder-count="4"><div onClick="{{ it.onClick }}" title="{{ it.label }}" style="height:44px;display:flex;align-items:center;justify-content:center;color:{{ it.fg }};background:{{ it.bg }};cursor:{{ it.cur }}"><i class="mdi {{ it.icon }}" style="font-size:19px"></i></div></sc-for>
+      <span style="flex:1"></span>
+      <div title="Shell (⌃`)" style="height:44px;display:flex;align-items:center;justify-content:center;color:#6c757d"><i class="mdi mdi-console" style="font-size:19px"></i></div>
+    </div>
+    <sc-if value="{{ b.showSessions }}" hint-placeholder-val="{{ false }}">
+    <div style="width:300px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;padding:0 14px 0 22px"><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">SESSIONS</b></div>
+      <div style="padding:0 14px 8px;font-size:11.5px;font-weight:800;letter-spacing:.06em;color:#adb5bd">CLAUDE-PROJECT-MANAGER</div>
+      <sc-for list="{{ b.tree }}" as="f" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:1px;margin-bottom:6px"><div style="display:flex;align-items:center;gap:7px;height:26px;padding:0 14px;font-size:13px;font-weight:700"><i class="mdi mdi-chevron-down" style="font-size:13px;color:#6c757d"></i><i class="mdi mdi-folder-outline" style="font-size:15px;color:#3498db"></i>{{ f.name }}</div><sc-for list="{{ f.sessions }}" as="r" hint-placeholder-count="2"><div onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:8px;height:26px;margin:0 6px;padding:0 10px 0 34px;border-radius:4px;background:{{ r.bg }};font-size:13px;cursor:pointer"><span style="width:7px;height:7px;border-radius:50%;background:{{ r.dot }}"></span><span style="flex:1">{{ r.name }}</span><span style="font-size:11.5px;color:#6c757d">{{ r.age }}</span></div></sc-for></div></sc-for>
+    </div>
+    </sc-if>
+    <sc-if value="{{ b.showUsage }}" hint-placeholder-val="{{ true }}">
+    <div style="width:300px;flex:none;background:#2b2b2b;border-right:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;padding:0 14px 0 22px"><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">USAGE</b></div>
+      <div style="display:flex;gap:6px;padding:0 14px 6px">
+        <div style="flex:1;display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><sc-for list="{{ b.ranges }}" as="g" hint-placeholder-count="4"><span onClick="{{ g.onClick }}" style="flex:1;text-align:center;padding:3px 0;background:{{ g.bg }};color:{{ g.fg }};cursor:pointer">{{ g.t }}</span></sc-for></div>
+        <span onClick="{{ b.onCustom }}" title="Custom Dates…" style="display:flex;align-items:center;justify-content:center;width:28px;border:1px solid #444;border-radius:4px;background:{{ b.calBg }};color:{{ b.calFg }};cursor:pointer"><i class="mdi mdi-calendar-range" style="font-size:14px"></i></span>
+      </div>
+      <sc-if value="{{ b.isCustom }}" hint-placeholder-val="{{ false }}"><div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#adb5bd;padding:0 14px 6px"><span style="flex:1;padding:3px 8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff">22 Sep 2026</span>–<span style="flex:1;padding:3px 8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff">28 Sep 2026</span></div></sc-if>
+      <div style="padding:2px 14px 8px;font-size:11.5px;color:#6c757d">{{ b.rangeLabel }}</div>
+      <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:1px;padding:0 6px 12px">
+        <sc-for list="{{ b.rows }}" as="r" hint-placeholder-count="10"><div onClick="{{ r.onClick }}" style="display:flex;align-items:center;gap:7px;height:{{ r.h }};padding:0 8px 0 {{ r.pad }};border-radius:4px;background:{{ r.bg }};font-size:{{ r.fs }};font-weight:{{ r.fw }};color:{{ r.fg }};letter-spacing:{{ r.ls }};margin-top:{{ r.mt }};cursor:{{ r.cur }}"><sc-if value="{{ r.isFolder }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-folder-outline" style="font-size:15px;color:#3498db"></i></sc-if><sc-if value="{{ r.isSession }}" hint-placeholder-val="{{ false }}"><span style="flex:none;width:7px;height:7px;border-radius:50%;background:{{ r.dot }}"></span></sc-if><sc-if value="{{ r.isAsst }}" hint-placeholder-val="{{ false }}"><i class="mdi mdi-creation" style="font-size:13px;color:#3498db"></i></sc-if><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.label }}</span><sc-if value="{{ r.removed }}" hint-placeholder-val="{{ false }}"><span style="font-size:10.5px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px;letter-spacing:0">Removed</span></sc-if><span style="font-size:12px;font-weight:700;color:#fff;letter-spacing:0">{{ r.v }}</span></div></sc-for>
+      </div>
+    </div>
+    </sc-if>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <div style="height:34px;flex:none;display:flex;background:#2b2b2b;border-bottom:1px solid #444"><sc-for list="{{ b.tabs }}" as="t" hint-placeholder-count="3"><div onClick="{{ t.onClick }}" style="display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12.5px;color:{{ t.fg }};background:{{ t.bg }};box-shadow:inset 0 -2px 0 {{ t.line }};border-right:1px solid #444;cursor:pointer;white-space:nowrap"><span style="width:7px;height:7px;border-radius:50%;background:{{ t.dot }}"></span>{{ t.name }}</div></sc-for><div onClick="{{ b.uTab.onClick }}" style="display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12.5px;color:{{ b.uTab.fg }};background:{{ b.uTab.bg }};box-shadow:inset 0 -2px 0 {{ b.uTab.line }};border-right:1px solid #444;cursor:pointer;white-space:nowrap"><i class="mdi mdi-chart-bar" style="font-size:14px;color:#3498db"></i>{{ b.uTab.name }}</div></div>
+      <sc-if value="{{ b.showTerm }}" hint-placeholder-val="{{ false }}">
+      <div style="height:38px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #444;font-size:12.5px"><span style="color:#adb5bd;white-space:nowrap">{{ b.P.folder }}</span><i class="mdi mdi-chevron-right" style="color:#6c757d;font-size:13px"></i><b style="font-size:13.5px;white-space:nowrap">{{ b.P.name }}</b><span style="flex:1"></span><i class="mdi mdi-dots-horizontal" style="font-size:17px;color:#adb5bd"></i></div>
+      <div style="flex:1;min-height:0;padding:14px 16px;font:12.5px/1.6 ui-monospace,Menlo,monospace;color:#adb5bd;display:flex;flex-direction:column;overflow:hidden"><sc-for list="{{ b.term }}" as="l" hint-placeholder-count="6"><div style="white-space:pre-wrap;color:{{ l.c }}">{{ l.t }}</div></sc-for></div>
+      </sc-if>
+      <sc-if value="{{ b.showPage }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;overflow:auto;padding:18px 20px 20px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><sc-if value="{{ b.scoped }}" hint-placeholder-val="{{ false }}"><span onClick="{{ b.onBack }}" style="font-size:13px;color:#adb5bd;cursor:pointer" style-hover="color:#fff">claude-project-manager ›</span></sc-if><span style="font-size:20px;font-weight:700">{{ b.scopeName }}</span><span style="font-size:12.5px;color:#6c757d">{{ b.rangeLabel }}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px"><sc-for list="{{ b.kpis }}" as="c" hint-placeholder-count="4"><div style="padding:11px 13px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:3px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ c.t }}</span><span style="font-size:22px;font-weight:700">{{ c.v }}</span><span style="font-size:11.5px;color:#6c757d">{{ c.sub }}</span></div></sc-for></div>
+        <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd;flex:1">COST OVER TIME · {{ b.byLabel }}</span><sc-for list="{{ b.legend }}" as="l" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:5px;font-size:12px;color:#adb5bd"><span style="width:8px;height:8px;border-radius:2px;background:{{ l.c }};opacity:{{ l.o }}"></span>{{ l.name }}</span></sc-for></div>
+          <div style="height:150px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #444"><sc-for list="{{ b.D.bars }}" as="x" hint-placeholder-count="10"><div title="{{ x.tip }}" style="flex:1;min-width:0;display:flex;flex-direction:column-reverse"><sc-for list="{{ x.segs }}" as="g" hint-placeholder-count="2"><div style="height:{{ g.h }}px;background:{{ g.c }};opacity:{{ g.o }}"></div></sc-for></div></sc-for></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6c757d"><span>{{ b.D.x0 }}</span><span>{{ b.D.xm }}</span><span>{{ b.D.x1 }}</span></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+          <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:9px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY MODEL</span><sc-for list="{{ b.D.models }}" as="m" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:center;gap:7px;font-size:12.5px"><span style="width:8px;height:8px;border-radius:2px;background:{{ m.c }}"></span><span style="flex:1">{{ m.name }}</span><span style="color:#adb5bd">{{ m.w }}</span><b style="min-width:64px;text-align:right">{{ m.v }}</b></div><div style="height:4px;border-radius:2px;background:#444"><div style="height:4px;border-radius:2px;width:{{ m.w }};background:{{ m.c }}"></div></div></div></sc-for></div>
+          <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:9px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">SESSIONS AND ASSISTANT</span><div style="display:flex;height:8px;border-radius:4px;overflow:hidden;background:#444"><div style="width:{{ b.D.sw }};background:#adb5bd"></div><div style="width:{{ b.D.aw }};background:#3498db"></div></div><div style="display:flex;flex-direction:column;gap:5px;font-size:12.5px"><div style="display:flex;align-items:center;gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:#adb5bd"></span><span style="flex:1">Sessions</span><span style="color:#adb5bd">{{ b.D.sw }}</span><b style="min-width:64px;text-align:right">{{ b.D.sess }}</b></div><div style="display:flex;align-items:center;gap:7px"><i class="mdi mdi-creation" style="font-size:12px;color:#3498db;width:8px"></i><span style="flex:1">{{ b.D.asstLabel }}</span><span style="color:#adb5bd">{{ b.D.aw }}</span><b style="min-width:64px;text-align:right">{{ b.D.asst }}</b></div></div><span style="font-size:11.5px;color:#6c757d;line-height:1.45">The assistant's calls are counted apart from sessions. <a href="#usage-window">Open Usage Window</a> for its breakdown by job.</span></div>
+        </div>
+        <div style="border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;font-size:12.5px">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 90px 150px;gap:10px;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd"><span>{{ b.kidsTitle }}</span><span style="text-align:right">COST</span><span style="text-align:right">TOKENS</span><span>SHARE</span></div>
+          <sc-for list="{{ b.kids }}" as="r" hint-placeholder-count="3"><div onClick="{{ r.onClick }}" style="display:grid;grid-template-columns:minmax(0,1fr) 90px 90px 150px;gap:10px;align-items:center;padding:8px 14px;border-top:1px solid #444;cursor:{{ r.cur }}" style-hover="background:#383838"><span style="display:flex;align-items:center;gap:8px;min-width:0"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.c }};opacity:{{ r.o }}"></span><span style="color:{{ r.fg }}">{{ r.name }}</span><sc-if value="{{ r.removed }}" hint-placeholder-val="{{ false }}"><span style="font-size:10.5px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px">Removed</span></sc-if></span><b style="text-align:right">{{ r.v }}</b><span style="text-align:right;color:#adb5bd">{{ r.tok }}</span><span style="display:flex;align-items:center;gap:8px"><span style="flex:1;height:4px;border-radius:2px;background:#444"><span style="display:block;height:4px;border-radius:2px;width:{{ r.share }};background:{{ r.c }};opacity:{{ r.o }}"></span></span><span style="width:34px;text-align:right;color:#adb5bd">{{ r.share }}</span></span></div></sc-for>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+    <sc-if value="{{ b.showRight }}" hint-placeholder-val="{{ false }}">
+    <div style="width:320px;flex:none;background:#2b2b2b;border-left:1px solid #444;display:flex;flex-direction:column;min-height:0">
+      <div style="height:52px;flex:none;display:flex;align-items:center;padding:0 10px 0 22px"><b style="font-size:11px;letter-spacing:.06em;color:#adb5bd">{{ b.rTitle }}</b><span style="flex:1"></span><span onClick="{{ b.onHideRight }}" title="Hide" style="display:flex;cursor:pointer;color:#adb5bd"><i class="mdi mdi-minus" style="font-size:16px"></i></span></div>
+      <sc-if value="{{ b.rUsage }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:0 16px 16px">
+        <div style="display:flex;flex-direction:column;gap:2px"><b style="font-size:14px">{{ b.P.name }}</b><span style="font-size:11.5px;color:#6c757d">All time · started {{ b.P.started }}</span></div>
+        <div style="display:flex;flex-direction:column;gap:3px"><div style="display:flex;align-items:baseline;gap:6px"><span style="font-size:26px;font-weight:700">{{ b.P.cost }}</span><span style="font-size:11px;font-weight:700;color:#adb5bd;padding:0 6px;border:1px solid #444;border-radius:12px">est.</span></div><span style="font-size:12px;color:#adb5bd">{{ b.P.tokens }} tokens</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#444;border:1px solid #444;border-radius:4px;overflow:hidden"><sc-for list="{{ b.P.tok }}" as="t" hint-placeholder-count="4"><div style="background:#303030;padding:7px 10px;display:flex;flex-direction:column;gap:1px"><span style="font-size:11px;color:#adb5bd">{{ t.k }}</span><b style="font-size:13.5px">{{ t.v }}</b></div></sc-for></div>
+        <div style="display:flex;flex-direction:column;gap:6px"><div style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY MODEL</div><div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:#444"><sc-for list="{{ b.P.models }}" as="m" hint-placeholder-count="3"><div style="width:{{ m.w }};background:{{ m.c }}"></div></sc-for></div><div style="display:flex;gap:12px;font-size:12px;color:#adb5bd;flex-wrap:wrap"><sc-for list="{{ b.P.models }}" as="m" hint-placeholder-count="3"><span style="display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:2px;background:{{ m.c }}"></span>{{ m.name }} <b style="color:#fff">{{ m.v }}</b></span></sc-for></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px"><div style="display:flex;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd"><span>THIS WEEK'S LIMIT</span><span style="color:#fff">≈ {{ b.P.week }}</span></div><div style="height:6px;border-radius:3px;background:#444"><div style="height:6px;border-radius:3px;width:{{ b.P.week }};background:{{ b.P.weekC }}"></div></div><span style="font-size:11.5px;color:#6c757d">Its share of the 31% used this week.</span></div>
+        <div style="display:flex;flex-direction:column;border-top:1px solid #444"><sc-for list="{{ b.P.facts }}" as="f" hint-placeholder-count="4"><div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #444;font-size:12.5px"><span style="color:#adb5bd">{{ f.k }}</span><span>{{ f.v }}</span></div></sc-for></div>
+        <span style="font-size:11.5px;color:#6c757d;line-height:1.45">Priced at API rates from the session's transcript. Plans aren't charged per token.</span>
+      </div>
+      </sc-if>
+      <sc-if value="{{ b.rChanges }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;gap:1px;padding:0 8px;font-size:12.5px"><sc-for list="{{ b.files }}" as="f" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:8px;padding:5px 8px"><i class="mdi mdi-file-document-outline" style="color:#adb5bd"></i><span style="flex:1">{{ f.n }}</span><span style="color:#00bc8c">{{ f.a }}</span><span style="color:#e74c3c">{{ f.d }}</span></div></sc-for></div></sc-if>
+    </div>
+    </sc-if>
+    <div style="width:44px;flex:none;background:#2b2b2b;border-left:1px solid #444;display:flex;flex-direction:column"><sc-for list="{{ b.rrail }}" as="it" hint-placeholder-count="3"><div onClick="{{ it.onClick }}" title="{{ it.label }}" style="height:44px;display:flex;align-items:center;justify-content:center;color:{{ it.fg }};background:{{ it.bg }};cursor:{{ it.cur }}"><i class="mdi {{ it.icon }}" style="font-size:19px"></i></div></sc-for></div>
+  </div>
+  <div style="height:28px;flex:none;display:flex;align-items:center;gap:6px;padding:0 8px;background:#2b2b2b;border-top:1px solid #444;font-size:12px;color:#adb5bd">
+    <sc-for list="{{ b.counts }}" as="c" hint-placeholder-count="3"><span style="display:flex;align-items:center;gap:5px;padding:2px 6px"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.c }}"></span>{{ c.t }}</span></sc-for>
+    <span style="flex:1"></span>
+    <span onClick="{{ b.onPop }}" style="display:flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;background:{{ b.popBg }};cursor:pointer">Session <b style="color:#f39c12">62%</b><span style="color:#6c757d">·</span>Week <b style="color:#00bc8c">31%</b><i class="mdi mdi-chevron-up" style="font-size:12px;color:#6c757d"></i></span>
+  </div>
+  <sc-if value="{{ b.pop }}" hint-placeholder-val="{{ false }}"><div style="position:absolute;right:10px;bottom:36px;width:290px;z-index:20;background:#303030;border:1px solid #444;border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:14px;display:flex;flex-direction:column;gap:12px;font-size:12.5px">
+    <sc-for list="{{ b.meters }}" as="m" hint-placeholder-count="2"><div style="display:flex;flex-direction:column;gap:5px"><div style="display:flex;justify-content:space-between"><b>{{ m.t }}</b><b style="color:{{ m.c }}">{{ m.v }}</b></div><div style="height:6px;border-radius:3px;background:#444"><div style="height:6px;border-radius:3px;width:{{ m.v }};background:{{ m.c }}"></div></div><span style="font-size:11.5px;color:#6c757d">{{ m.sub }}</span></div></sc-for>
+    <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #444;color:#adb5bd"><span>Today, all projects</span><span style="color:#fff">{{ b.today }} est.</span></div>
+    <a href="#usage-window" style="align-self:flex-start;display:flex;align-items:center;gap:6px;font-weight:700"><i class="mdi mdi-chart-bar" style="font-size:14px"></i>Open Usage Window</a>
+  </div></sc-if>
+</div>
+</div>
+
+</div>
+
+<div id="usage-window" style="display:flex;flex-direction:column;gap:12px;width:1060px">
+<div style="display:flex;align-items:baseline;gap:8px;font-size:12.5px;color:#adb5bd"><span style="font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(255,255,255,.12);color:#fff;border-radius:5px">BOTH</span><span><b style="color:#fff">Usage window</b> (⇧⌘U, Window › Usage, or Open Usage Window in the status-bar popover). It covers every project and is the assistant's global home.</span></div>
+<div style="width:1060px;background:#222;border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.1);display:flex;flex-direction:column">
+  <div style="height:30px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;background:#2b2b2b;border-bottom:1px solid #444"><span style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></span><span style="width:12px;height:12px;border-radius:50%;background:#febc2e"></span><span style="width:12px;height:12px;border-radius:50%;background:#28c840"></span><span style="flex:1;text-align:center;font-size:12px;color:#adb5bd;margin-right:52px">Usage</span></div>
+  <div style="padding:18px 20px 20px;display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-size:20px;font-weight:700">All Projects</span><span style="font-size:12.5px;color:#6c757d;flex:1">{{ w.rangeLabel }}</span>
+      <div style="display:flex;gap:6px;width:280px"><div style="flex:1;display:flex;border:1px solid #444;border-radius:4px;overflow:hidden;font-size:12px"><sc-for list="{{ w.ranges }}" as="g" hint-placeholder-count="4"><span onClick="{{ g.onClick }}" style="flex:1;text-align:center;padding:3px 0;background:{{ g.bg }};color:{{ g.fg }};cursor:pointer">{{ g.t }}</span></sc-for></div><span onClick="{{ w.onCustom }}" title="Custom Dates…" style="display:flex;align-items:center;justify-content:center;width:28px;border:1px solid #444;border-radius:4px;background:{{ w.calBg }};color:{{ w.calFg }};cursor:pointer"><i class="mdi mdi-calendar-range" style="font-size:14px"></i></span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:12px;font-size:12.5px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">PLAN LIMITS</span><sc-for list="{{ w.meters }}" as="m" hint-placeholder-count="2"><div style="display:flex;flex-direction:column;gap:5px"><div style="display:flex;justify-content:space-between"><b>{{ m.t }}</b><b style="color:{{ m.c }}">{{ m.v }}</b></div><div style="height:6px;border-radius:3px;background:#444;position:relative"><div style="height:6px;border-radius:3px;width:{{ m.v }};background:{{ m.c }}"></div><div title="Background work pauses here" style="position:absolute;left:80%;top:-3px;width:2px;height:12px;background:#fff;opacity:.5"></div></div><span style="font-size:11.5px;color:#6c757d">{{ m.sub }}</span></div></sc-for><div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #444"><span style="color:#adb5bd">Usage credits</span><span>Off</span></div><span style="font-size:11.5px;color:#6c757d;line-height:1.45;margin-top:-6px">The white mark is where the assistant pauses background work (80%).</span></div>
+        <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:9px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY MODEL</span><sc-for list="{{ w.models }}" as="m" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:4px"><div style="display:flex;align-items:center;gap:7px;font-size:12.5px"><span style="width:8px;height:8px;border-radius:2px;background:{{ m.c }}"></span><span style="flex:1">{{ m.name }}</span><span style="color:#adb5bd">{{ m.w }}</span><b style="min-width:64px;text-align:right">{{ m.v }}</b></div><div style="height:4px;border-radius:2px;background:#444"><div style="height:4px;border-radius:2px;width:{{ m.w }};background:{{ m.c }}"></div></div></div></sc-for></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px"><sc-for list="{{ w.kpis }}" as="c" hint-placeholder-count="3"><div style="padding:11px 13px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:3px"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">{{ c.t }}</span><span style="font-size:22px;font-weight:700">{{ c.v }}</span><span style="font-size:11.5px;color:#6c757d">{{ c.sub }}</span></div></sc-for></div>
+        <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap"><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd;flex:1">COST OVER TIME · BY PROJECT</span><sc-for list="{{ w.legend }}" as="l" hint-placeholder-count="4"><span style="display:flex;align-items:center;gap:5px;font-size:12px;color:#adb5bd"><span style="width:8px;height:8px;border-radius:2px;background:{{ l.c }}"></span>{{ l.name }}</span></sc-for></div>
+          <div style="height:140px;display:flex;align-items:flex-end;gap:3px;border-bottom:1px solid #444"><sc-for list="{{ w.bars }}" as="x" hint-placeholder-count="10"><div title="{{ x.tip }}" style="flex:1;min-width:0;display:flex;flex-direction:column-reverse"><sc-for list="{{ x.segs }}" as="g" hint-placeholder-count="2"><div style="height:{{ g.h }}px;background:{{ g.c }};opacity:{{ g.o }}"></div></sc-for></div></sc-for></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6c757d"><span>{{ w.x0 }}</span><span>{{ w.xm }}</span><span>{{ w.x1 }}</span></div>
+        </div>
+        <div style="border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;font-size:12.5px">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 90px 90px 120px;gap:10px;padding:8px 14px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd"><span>PROJECT</span><span style="text-align:right">SESSIONS</span><span style="text-align:right">ASSISTANT</span><span style="text-align:right">TOTAL</span><span>SHARE</span></div>
+          <sc-for list="{{ w.projects }}" as="r" hint-placeholder-count="3"><div style="display:grid;grid-template-columns:minmax(0,1fr) 90px 90px 90px 120px;gap:10px;align-items:center;padding:8px 14px;border-top:1px solid #444"><span style="display:flex;align-items:center;gap:8px"><span style="width:8px;height:8px;border-radius:2px;background:{{ r.c }}"></span>{{ r.name }}</span><span style="text-align:right;color:#adb5bd">{{ r.s }}</span><span style="text-align:right;color:{{ r.ac }}">{{ r.a }}</span><b style="text-align:right">{{ r.t }}</b><span style="display:flex;align-items:center;gap:8px"><span style="flex:1;height:4px;border-radius:2px;background:#444"><span style="display:block;height:4px;border-radius:2px;width:{{ r.share }};background:{{ r.c }}"></span></span><span style="width:34px;text-align:right;color:#adb5bd">{{ r.share }}</span></span></div></sc-for>
+        </div>
+        <div style="padding:13px 14px;border-radius:4px;background:#303030;border:1px solid #444;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:8px"><i class="mdi mdi-creation" style="font-size:15px;color:#3498db"></i><span style="font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd;flex:1">ASSISTANT</span><span style="font-size:12.5px;color:#adb5bd;cursor:pointer" style-hover="color:#fff">Open Activity Log</span></div>
+          <div style="display:flex;gap:28px;flex-wrap:wrap"><sc-for list="{{ w.aKpis }}" as="c" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:20px;font-weight:700">{{ c.v }}</span><span style="font-size:11.5px;color:#adb5bd">{{ c.t }}</span></div></sc-for></div>
+          <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:18px">
+            <div style="display:flex;flex-direction:column;font-size:12.5px"><div style="display:grid;grid-template-columns:minmax(0,1fr) 60px 50px 70px;gap:8px;padding-bottom:6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd"><span>BY JOB</span><span>MODEL</span><span style="text-align:right">CALLS</span><span style="text-align:right">COST</span></div><sc-for list="{{ w.jobs }}" as="j" hint-placeholder-count="5"><div style="display:grid;grid-template-columns:minmax(0,1fr) 60px 50px 70px;gap:8px;align-items:center;padding:5px 0;border-top:1px solid #444"><span style="display:flex;flex-direction:column;gap:3px">{{ j.name }}<span style="height:3px;border-radius:2px;background:#444"><span style="display:block;height:3px;border-radius:2px;width:{{ j.w }};background:#3498db"></span></span></span><span style="color:#adb5bd">{{ j.model }}</span><span style="text-align:right;color:#adb5bd">{{ j.calls }}</span><b style="text-align:right">{{ j.v }}</b></div></sc-for></div>
+            <div style="display:flex;flex-direction:column;font-size:12.5px"><div style="padding-bottom:6px;font-size:11px;font-weight:800;letter-spacing:.06em;color:#adb5bd">BY PROJECT</div><sc-for list="{{ w.aProj }}" as="p" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #444"><span style="width:8px;height:8px;border-radius:2px;background:{{ p.c }}"></span><span style="flex:1;min-width:0">{{ p.name }}</span><span style="color:{{ p.fg }}">{{ p.v }}</span></div></sc-for><span style="font-size:11.5px;color:#6c757d;line-height:1.45;padding-top:8px">Things you start yourself are counted here too: Ask, Check Against Plan, Review This Session and Import Issues.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showRemoved&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+const TEAL='#00bc8c',BLUE='#3498db',WARN='#f39c12',SEL='rgba(52,152,219,.35)',SUB='#6c757d',MUT='#adb5bd';
+const PURP='oklch(0.72 0.11 300)';
+const FOLD={shell:{name:'In-built Shell',c:TEAL},bug:{name:'Bug Fixes',c:WARN},gh:{name:'Github Integration',c:PURP}};
+const MODELS=[['Opus','#fff'],['Sonnet',MUT],['Haiku',SUB]];
+const DOT={working:TEAL,awaiting:WARN,done:SUB};
+const SESS=[
+  {id:'st',seed:1,name:'Shell Terminal',folder:'shell',start:40,end:62,amp:6.2,mix:[.82,.14,.04],tpp:52000,status:'awaiting',age:'2m'},
+  {id:'prs',seed:2,name:'PR Review',folder:'shell',start:50,end:61,amp:2.1,mix:[0,.9,.1],tpp:190000,status:'done',age:'4m'},
+  {id:'sfu',seed:3,name:'Shell Follow Up',folder:'shell',start:58,end:62,amp:4.6,mix:[.7,.25,.05],tpp:60000,status:'working',age:'now'},
+  {id:'ce',seed:4,name:'Cmd + Enter',folder:'bug',start:55,end:62,amp:2.7,mix:[0,.92,.08],tpp:180000,status:'working',age:'now'},
+  {id:'upr',seed:5,name:'Update PR',folder:'gh',start:20,end:61,amp:1.5,mix:[.3,.65,.05],tpp:140000,status:'done',age:'10h'},
+  {id:'ghov',seed:6,name:'GitHub Overview',folder:'gh',start:2,end:30,amp:5.1,mix:[.78,.18,.04],tpp:54000,removed:true},
+  {id:'nl',seed:7,name:'Newline key',folder:'bug',start:12,end:26,amp:2.4,mix:[0,.9,.1],tpp:185000,removed:true},
+];
+const OTHER=[{id:'dtw',name:'dreamteam-web',c:WARN,amp:3.1,start:0,seed:11,tpp:90000,mix:[.4,.55,.05]},{id:'dse',name:'digiscript-electron',c:PURP,amp:1.3,start:28,seed:12,tpp:120000,mix:[.2,.75,.05]}];
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const dt=d=>{const x=new Date(2026,9,5-(62-d));return x.getDate()+' '+MON[x.getMonth()];};
+const rng=(a,b)=>Array.from({length:b-a+1},(_,i)=>a+i);
+const wk=d=>(((d-62)%7+7)%7)>=5?.35:1;
+const hash=(a,b)=>{const x=Math.sin(a*12.9898+b*78.233)*43758.5453;return x-Math.floor(x);};
+const dayCost=(s,d)=>d<s.start||d>s.end?0:s.amp*(.3+.7*hash(s.seed,d))*wk(d);
+const otherCost=(p,d)=>d<p.start?0:p.amp*(.3+.7*hash(p.seed,d))*wk(d);
+const asstRaw=(p,d)=>p==='cpm'?(d<50?0:.1+.36*hash(91,d)):p==='dtw'?(d<54?0:.04+.14*hash(92,d)):0;
+const totalDay=(d,ss)=>ss.reduce((t,s)=>t+dayCost(s,d),0);
+const asstFor=(s,d)=>{const all=totalDay(d,SESS);return all?asstRaw('cpm',d)*.7*dayCost(s,d)/all:0;};
+const PROF=[0,0,0,0,0,0,0,.2,.6,1,1.2,1,.7,.9,1.1,1.2,1,.8,.5,.4,.6,.5,.2,0],PS=PROF.reduce((a,b)=>a+b,0);
+const BUCKETS={
+  '24h':()=>PROF.map((w,h)=>({label:String(h).padStart(2,'0')+':00',parts:[[62,w/PS]]})),
+  '7d':()=>rng(56,62).map(d=>({label:dt(d),parts:[[d,1]]})),
+  '30d':()=>rng(33,62).map(d=>({label:dt(d),parts:[[d,1]]})),
+  'all':()=>rng(0,8).map(w=>({label:'w/c '+dt(7*w),parts:rng(7*w,7*w+6).map(d=>[d,1])})),
+  'custom':()=>rng(49,55).map(d=>({label:dt(d),parts:[[d,1]]})),
+};
+const RLABEL={'24h':'Last 24 hours','7d':'Last 7 days','30d':'Last 30 days','all':'All time, since '+dt(0),'custom':'22 Sep – 28 Sep 2026'};
+const sumB=(b,fn)=>b.parts.reduce((t,[d,w])=>t+fn(d)*w,0);
+const sumR=(B,fn)=>B.reduce((t,b)=>t+sumB(b,fn),0);
+const fmtT=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(Math.round(n));
+const pct=(a,b)=>(b?Math.round(a/b*100):0)+'%';
+const JOBS=[['Follow-ups','Sonnet',.52],['Skill proposals','Sonnet',.18],['Note checks','Haiku',.14],['Ask','Sonnet',.11],['Issue triage','Haiku',.05]];
+const TERM=[['claude · Shell Terminal',SUB],['',MUT],['⏺ Read(Sources/Claudio/ShellPanelViews.swift)','#fff'],['  ⎿  Read 214 lines',SUB],['⏺ The panel height is kept per window, not per project. I\'ll move it into ShellPanel.',MUT],['⏺ Update(Sources/ClaudioCore/ShellPanel.swift)','#fff'],['  ⎿  Updated with 12 additions and 3 removals',SUB],['',MUT],['> ','#fff']];
+
+class Component extends DCLogic {
+  state={a:{tool:'usage',rtool:'usage',sel:'st',range:'7d',scope:'project',pop:false,tab:'st',demo:'normal'},b:{tool:'usage',rtool:null,sel:'st',range:'30d',scope:'project',pop:false,tab:'usage'},wr:'30d'};
+  set(k,p){this.setState(st=>({[k]:{...st[k],...(typeof p==='function'?p(st[k]):p)}}));}
+  money(v){return '$'+(v>=1000?Math.round(v).toLocaleString('en-GB'):v.toFixed(2));}
+  pool(){const inc=this.props.showRemoved??true;return SESS.filter(s=>inc||!s.removed);}
+  gTotal(B){return sumR(B,d=>totalDay(d,SESS)+OTHER.reduce((t,p)=>t+otherCost(p,d),0)+asstRaw('cpm',d)+asstRaw('dtw',d));}
+  chart(bars,H){const max=Math.max(...bars.map(b=>b.t),.01);return bars.map(b=>({tip:b.label+' · '+this.money(b.t),segs:b.segs.filter(s=>s.v>0).map(s=>({h:(s.v/max*H).toFixed(1),c:s.c,o:s.o}))}));}
+  models(m){const t=m.reduce((a,b)=>a+b,0);return MODELS.map(([name,c],i)=>({name,c,v:this.money(m[i]),w:pct(m[i],t)}));}
+  sd(scope,range,H){
+    const B=BUCKETS[range](),pool=this.pool();let kids,asstFn,asstLabel;
+    if(scope==='project'){kids=Object.keys(FOLD).map(f=>({id:'f:'+f,name:FOLD[f].name,c:FOLD[f].c,o:1,ss:pool.filter(s=>s.folder===f)}));asstFn=d=>asstRaw('cpm',d);asstLabel='Assistant';}
+    else{const f=scope.slice(2),ss=pool.filter(s=>s.folder===f);kids=ss.map((s,i)=>({id:'s:'+s.id,sid:s.id,name:s.name,removed:!!s.removed,c:FOLD[f].c,o:[1,.62,.4,.25][i]||.25,ss:[s]}));asstFn=d=>ss.reduce((t,s)=>t+asstFor(s,d),0);asstLabel='Follow-ups';}
+    kids.forEach(k=>{k.v=sumR(B,d=>totalDay(d,k.ss));k.tok=sumR(B,d=>k.ss.reduce((u,s)=>u+dayCost(s,d)*s.tpp,0));});
+    const asst=sumR(B,asstFn),sess=kids.reduce((t,k)=>t+k.v,0),total=sess+asst;
+    const m=[0,0,0];kids.forEach(k=>k.ss.forEach(s=>{const c=sumR(B,d=>dayCost(s,d));s.mix.forEach((x,i)=>m[i]+=c*x);}));m[1]+=asst*.8;m[2]+=asst*.2;
+    const bars=B.map(b=>{const segs=kids.map(k=>({v:sumB(b,d=>totalDay(d,k.ss)),c:k.c,o:k.o})).concat([{v:sumB(b,asstFn),c:BLUE,o:1}]);return {label:b.label,segs,t:segs.reduce((a,x)=>a+x.v,0)};});
+    const tokens=kids.reduce((t,k)=>t+k.tok,0)+asst*260000;
+    return {kids,raw:{total,asst,sess},total:this.money(total),sess:this.money(sess),asst:this.money(asst),asstLabel,tokens:fmtT(tokens),share:pct(total,this.gTotal(B)),
+      sw:pct(sess,total),aw:pct(asst,total),models:this.models(m),bars:this.chart(bars,H),x0:B[0].label,xm:B[Math.floor(B.length/2)].label,x1:range==='24h'?'Now':B[B.length-1].label};
+  }
+  sp(sid){
+    const s=SESS.find(x=>x.id===sid),all=rng(0,62),cost=all.reduce((t,d)=>t+dayCost(s,d),0),tok=cost*s.tpp;
+    const week=rng(56,62).reduce((t,d)=>t+dayCost(s,d),0)/420*100,asst=all.reduce((t,d)=>t+asstFor(s,d),0);
+    return {name:s.name,folder:FOLD[s.folder].name,started:dt(s.start),cost:this.money(cost),tokens:fmtT(tok),
+      tok:[['Input',.03],['Output',.08],['Cache write',.17],['Cache read',.72]].map(([k,f])=>({k,v:fmtT(tok*f)})),
+      models:this.models(s.mix.map(x=>x*cost)),week:Math.max(1,Math.round(week))+'%',weekC:week>15?WARN:TEAL,
+      facts:[['Turns',String(Math.round(cost*6.5))],['Last active',s.end===62?(s.age==='now'?'Now':s.age+' ago'):dt(s.end)],['Main model',MODELS[s.mix.indexOf(Math.max(...s.mix))][0]],['Assistant follow-ups',asst?this.money(asst):'None']].map(([k,v])=>({k,v}))};
+  }
+  ranges(k,cur){return ['24h','7d','30d','all'].map(r=>({t:r==='all'?'All':r,bg:cur===r?'#444':'transparent',fg:cur===r?'#fff':MUT,onClick:()=>k==='w'?this.setState({wr:r}):this.set(k,{range:r})}));}
+  pick(k,id){this.set(k,{sel:id,tab:id,rtool:'usage'});}
+  V(k){
+    const s=this.state[k],A=k==='a',D=this.sd(s.scope,s.range,A?84:150),P=this.sp(s.sel);
+    const scoped=s.scope!=='project',scopeName=scoped?FOLD[s.scope.slice(2)].name:'claude-project-manager';
+    const rail=[['sessions','mdi-file-tree-outline','Sessions (⌘1)'],['prs','mdi-source-pull','Pull Requests (⌘2)'],['assistant','mdi-notebook-edit-outline','Assistant (⌘3)'],['usage','mdi-chart-bar','Usage (⌘4)']].map(([id,icon,label])=>{const on=s.tool===id,live=id==='sessions'||id==='usage';return {icon,label,fg:on?'#fff':live?MUT:SUB,bg:on?SEL:'transparent',cur:live?'pointer':'default',onClick:()=>{if(live)this.set(k,x=>({tool:x.tool===id?null:id}));}};});
+    const rrail=[['changes','mdi-plus-minus-variant','Changes (⌥⌘F)'],['pr','mdi-source-pull','Pull Request (⌥⌘P)'],['usage','mdi-chart-bar',"Session's Usage (⌥⌘U)"]].map(([id,icon,label])=>{const on=s.rtool===id,live=id!=='pr';return {icon,label,fg:on?'#fff':live?MUT:SUB,bg:on?SEL:'transparent',cur:live?'pointer':'default',onClick:()=>{if(live)this.set(k,x=>({rtool:x.rtool===id?null:id,tab:x.tab==='usage'?x.sel:x.tab}));}};});
+    const live=SESS.filter(x=>!x.removed);
+    const tree=Object.keys(FOLD).map(f=>({name:FOLD[f].name,sessions:live.filter(x=>x.folder===f).map(x=>({name:x.name,age:x.age,dot:DOT[x.status],bg:s.sel===x.id&&s.tab!=='usage'?SEL:'transparent',onClick:()=>this.pick(k,x.id)}))}));
+    const tids=['st','sfu','ce'];if(!tids.includes(s.sel))tids.push(s.sel);
+    const tabs=tids.map(id=>{const x=SESS.find(y=>y.id===id),on=s.tab===id;return {name:x.name,dot:DOT[x.status],fg:on?'#fff':MUT,bg:on?'#222':'transparent',line:on?TEAL:'transparent',onClick:()=>this.set(k,{sel:id,tab:id})};});
+    const maxKid=Math.max(...D.kids.map(x=>x.v),.01),rawT=D.raw.total||1;
+    const kids=D.kids.slice().sort((p,q)=>q.v-p.v).map(kd=>({name:kd.name,removed:!!kd.removed,c:kd.c,o:kd.o,v:this.money(kd.v),tok:fmtT(kd.tok),w:pct(kd.v,maxKid),share:pct(kd.v,rawT),fg:kd.removed?MUT:'#fff',chev:!kd.removed,bg:'transparent',cur:kd.removed?'default':'pointer',
+      onClick:()=>{if(kd.id.startsWith('f:'))this.set(k,{scope:kd.id,tab:A?s.tab:'usage',rtool:A?s.rtool:null});else if(!kd.removed)this.pick(k,kd.sid);}}));
+    const counts=[['2 Working',TEAL],['1 Awaiting Input',WARN],['2 Completed',SUB]].map(([t,c])=>({t,c}));
+    const meters=[{t:'5-hour',v:'62%',c:WARN,sub:'Resets in 2h 14m'},{t:'Weekly',v:'31%',c:TEAL,sub:'Resets Thu 09:00'}];
+    const today=this.money(totalDay(62,SESS)+OTHER.reduce((t,p)=>t+otherCost(p,62),0)+asstRaw('cpm',62)+asstRaw('dtw',62));
+    const out={rail,rrail,tree,tabs,D,P,kids,counts,meters,today,
+      showSessions:s.tool==='sessions',showUsage:s.tool==='usage',scoped,notScoped:!scoped,scopeName,scopeUpper:scopeName.toUpperCase(),rangeLabel:RLABEL[s.range],
+      kidsTitle:scoped?'SESSIONS':'FOLDERS',onBack:()=>this.set(k,{scope:'project'}),
+      ranges:this.ranges(k,s.range),isCustom:s.range==='custom',calBg:s.range==='custom'?'#444':'transparent',calFg:s.range==='custom'?'#fff':MUT,onCustom:()=>this.set(k,{range:'custom'}),
+      showRight:!!s.rtool,rUsage:s.rtool==='usage',rChanges:s.rtool==='changes',rTitle:s.rtool==='changes'?'CHANGES':'USAGE',onHideRight:()=>this.set(k,{rtool:null}),
+      files:[['ShellPanel.swift','+12','−3'],['ShellPanelViews.swift','+4','−1'],['ShellPanelTests.swift','+28','']].map(([n,a,d])=>({n,a,d})),
+      term:TERM.map(([t,c],i)=>({t:i===0?'claude · '+P.name:t,c})),
+      demos:[['normal','Normal'],['reading','Reading transcripts'],['unreadable','Unreadable transcript'],['empty','No usage in range']].map(([id,t])=>({t,bg:s.demo===id?SEL:'transparent',bd:s.demo===id?BLUE:'#444',fg:s.demo===id?'#fff':MUT,onClick:()=>this.set(k,{demo:id})})),
+      reading:s.demo==='reading',unreadable:s.demo==='unreadable',noData:s.demo==='empty',hasData:s.demo!=='empty',
+      pop:s.pop,popBg:s.pop?'#444':'transparent',onPop:()=>this.set(k,x=>({pop:!x.pop}))};
+    if(!A){
+      const PD=this.sd('project',s.range,10),B=BUCKETS[s.range](),pool=this.pool();
+      const row=(o)=>({h:'28px',pad:'10px',fs:'13px',fw:400,fg:'#fff',ls:'0',mt:'0',cur:'pointer',isFolder:false,isSession:false,isAsst:false,removed:false,dot:SUB,bg:'transparent',onClick:()=>{},...o});
+      const rows=[row({label:'CLAUDE-PROJECT-MANAGER',fs:'11.5px',fw:800,fg:MUT,ls:'.06em',v:PD.total,bg:s.tab==='usage'&&s.scope==='project'?SEL:'transparent',onClick:()=>this.set(k,{scope:'project',tab:'usage',rtool:null})})];
+      Object.keys(FOLD).forEach(f=>{const fk=PD.kids.find(x=>x.id==='f:'+f);
+        rows.push(row({label:FOLD[f].name,isFolder:true,fw:700,mt:'4px',v:this.money(fk.v),bg:s.tab==='usage'&&s.scope==='f:'+f?SEL:'transparent',onClick:()=>this.set(k,{scope:'f:'+f,tab:'usage',rtool:null})}));
+        pool.filter(x=>x.folder===f).forEach(x=>rows.push(row({label:x.name,isSession:true,pad:'34px',dot:x.removed?'#444':DOT[x.status],removed:!!x.removed,fg:x.removed?MUT:'#fff',cur:x.removed?'default':'pointer',v:this.money(sumR(B,d=>dayCost(x,d))),bg:s.tab===x.id?SEL:'transparent',onClick:()=>{if(!x.removed)this.pick(k,x.id);}})));});
+      rows.push(row({label:'Assistant',isAsst:true,mt:'6px',v:PD.asst,cur:'default'}));
+      out.rows=rows;
+      out.uTab={name:'Usage · '+scopeName,fg:s.tab==='usage'?'#fff':MUT,bg:s.tab==='usage'?'#222':'transparent',line:s.tab==='usage'?BLUE:'transparent',onClick:()=>this.set(k,{tab:'usage',rtool:null})};
+      out.showTerm=s.tab!=='usage';out.showPage=s.tab==='usage';
+      out.byLabel=scoped?'BY SESSION':'BY FOLDER';
+      out.legend=D.kids.map(x=>({name:x.name,c:x.c,o:x.o})).concat([{name:D.asstLabel,c:BLUE,o:1}]);
+      out.kpis=[{t:'COST',v:D.total,sub:'est. at API prices'},{t:'TOKENS',v:D.tokens,sub:'input, output and cache'},{t:'SHARE OF ALL USAGE',v:D.share,sub:'across every project'},{t:scoped?'ASSISTANT FOLLOW-UPS':'ASSISTANT',v:D.asst,sub:D.aw+' of this cost'}];
+    }
+    return out;
+  }
+  W(){
+    const r=this.state.wr,B=BUCKETS[r](),pool=this.pool();
+    const cpmS=d=>totalDay(d,pool),asA=d=>asstRaw('cpm',d)+asstRaw('dtw',d);
+    const projs=[{name:'claude-project-manager',c:TEAL,fn:cpmS,afn:d=>asstRaw('cpm',d),tok:d=>pool.reduce((t,s)=>t+dayCost(s,d)*s.tpp,0),mix:d=>pool.map(s=>s.mix.map(x=>x*dayCost(s,d)))},
+      ...OTHER.map(p=>({name:p.name,c:p.c,fn:d=>otherCost(p,d),afn:d=>asstRaw(p.id,d),tok:d=>otherCost(p,d)*p.tpp,mix:d=>[p.mix.map(x=>x*otherCost(p,d))]}))];
+    const bars=B.map(b=>{const segs=projs.map(p=>({v:sumB(b,p.fn),c:p.c,o:1})).concat([{v:sumB(b,asA),c:BLUE,o:1}]);return {label:b.label,segs,t:segs.reduce((a,x)=>a+x.v,0)};});
+    const ps=projs.map(p=>({...p,s:sumR(B,p.fn),a:sumR(B,p.afn)}));
+    const asst=sumR(B,asA),sess=ps.reduce((t,p)=>t+p.s,0),total=sess+asst;
+    const tokens=sumR(B,d=>projs.reduce((t,p)=>t+p.tok(d),0))+asst*260000;
+    const m=[0,0,0];B.forEach(b=>b.parts.forEach(([d,w])=>projs.forEach(p=>p.mix(d).forEach(arr=>arr.forEach((x,i)=>m[i]+=x*w)))));m[1]+=asst*.8;m[2]+=asst*.2;
+    const calls=Math.round(asst/0.021);
+    const jt=JOBS.reduce((t,j)=>t+j[2],0);
+    return {rangeLabel:RLABEL[r],ranges:this.ranges('w',r),calBg:r==='custom'?'#444':'transparent',calFg:r==='custom'?'#fff':MUT,onCustom:()=>this.setState({wr:'custom'}),
+      meters:[{t:'5-hour',v:'62%',c:WARN,sub:'Resets in 2h 14m'},{t:'Weekly',v:'31%',c:TEAL,sub:'Resets Thu 09:00'}],
+      models:this.models(m),
+      kpis:[{t:'COST',v:this.money(total),sub:'est. at API prices'},{t:'TOKENS',v:fmtT(tokens),sub:'input, output and cache'},{t:'ASSISTANT',v:this.money(asst),sub:pct(asst,total)+' of all usage'}],
+      legend:projs.map(p=>({name:p.name,c:p.c})).concat([{name:'Assistant',c:BLUE}]),
+      bars:this.chart(bars,140),x0:B[0].label,xm:B[Math.floor(B.length/2)].label,x1:r==='24h'?'Now':B[B.length-1].label,
+      projects:ps.map(p=>({name:p.name,c:p.c,s:this.money(p.s),a:p.a?this.money(p.a):'Off',ac:p.a?MUT:SUB,t:this.money(p.s+p.a),share:pct(p.s+p.a,total)})),
+      aKpis:[{t:'Cost, est.',v:this.money(asst)},{t:'Claude calls',v:String(calls)},{t:'Of all usage',v:pct(asst,total)}],
+      jobs:JOBS.map(([name,model,f])=>({name,model,calls:String(Math.round(calls*f*(model==='Haiku'?2.2:.8)/1.04)),v:this.money(asst*f/jt),w:pct(f,JOBS[0][2])})),
+      aProj:ps.map(p=>({name:p.name,c:p.c,v:p.a?this.money(p.a):'Off',fg:p.a?'#fff':SUB}))};
+  }
+  renderVals(){return {a:this.V('a'),b:this.V('b'),w:this.W()};}
+}
+</script>
+</body>
+</html>

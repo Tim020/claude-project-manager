@@ -32,11 +32,15 @@ public struct DiscoveredSession: Equatable, Sendable {
         self.customTitle = customTitle
     }
 
-    public var role: SessionRole { SessionRole.infer(fromName: title) }
+    /// The tag inferred from the title, limited to the three built-in names:
+    /// a freshly discovered session has no catalog to consult.
+    public var inferredTagID: Tag.ID? {
+        Tag.infer(fromName: title, in: Tag.defaults)
+    }
 
     public func makeSession(projectID: UUID) -> Session {
         var session = Session(projectID: projectID, claudeSessionID: claudeSessionID, hasConversation: true, name: title,
-                              role: role, workingDirectory: workingDirectory, status: status, summary: summary, model: model,
+                              tags: inferredTagID.map { [$0] } ?? [], workingDirectory: workingDirectory, status: status, summary: summary, model: model,
                               pullRequests: pullRequests, createdAt: lastActivity, lastActivity: lastActivity)
         session.needsAction = status == .awaitingInput ? summary : nil
         return session
@@ -163,12 +167,16 @@ public struct SessionDiscovery: Sendable {
     /// A conversation's files: `<id>.jsonl` and the `<id>/` folder beside it
     /// (subagent transcripts, tool results), in the project's own history
     /// directory, its worktrees' directories, or the session's working directory's.
-    public func historyItems(projectPath: String, workingDirectory: String, claudeSessionID: String) -> [URL] {
+    /// `projectDirectories`: the names in `~/.claude/projects`, when the
+    /// caller has listed them already (for many conversations at once).
+    public func historyItems(projectPath: String, workingDirectory: String, claudeSessionID: String,
+                             projectDirectories: [String]? = nil) -> [URL] {
         let fileManager = FileManager.default
         let root = claudeHome.appendingPathComponent("projects")
         let worktreePrefix = SessionDiscovery.directoryName(forProjectPath: projectPath + Worktree.marker)
+        let listed = projectDirectories ?? ((try? fileManager.contentsOfDirectory(atPath: root.path)) ?? [])
         let names = Set([projectPath, workingDirectory].map(SessionDiscovery.directoryName(forProjectPath:)))
-            .union(((try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []).filter { $0.hasPrefix(worktreePrefix) })
+            .union(listed.filter { $0.hasPrefix(worktreePrefix) })
         return names.sorted().flatMap { name -> [URL] in
             let directory = root.appendingPathComponent(name)
             return [directory.appendingPathComponent("\(claudeSessionID).jsonl"), directory.appendingPathComponent(claudeSessionID)]

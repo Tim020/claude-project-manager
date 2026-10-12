@@ -10,7 +10,7 @@ public struct PlanSessionDraft: Equatable, Sendable {
     public var name: String
     /// The session's folder (nil: Unfiled, the default).
     public var folderID: UUID?
-    public var role: SessionRole
+    public var tagIDs: [Tag.ID]
     /// The opening prompt without its skills line.
     public var promptBody: String
     /// The skills picked for it, best first (the chips).
@@ -132,8 +132,10 @@ extension AppModel {
         let loaded = sessionIDs.flatMap { sessionChanges[$0]?.session?.absolutePaths.values.map { $0 } ?? [] }
             .compactMap { SkillChips.relativePath($0, projectPath: project.path) }
         let files = Set(loaded).union(itemTouchedFiles[item.id] ?? [])
-        let folder = folderID.flatMap { workspace.folder($0)?.name }
-        return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderName: folder,
+        // The folder's own name and every ancestor's, so a skill meant for a
+        // parent folder still applies to sessions nested under it.
+        let folderNames = folderID.map { workspace.folderAndAncestorNames(of: $0) } ?? []
+        return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderNames: folderNames,
                                usage: skillUsage(inProject: projectID, folderID: folderID)).map(\.name)
     }
 
@@ -154,8 +156,9 @@ extension AppModel {
     /// (you pick the folder there), a role from the name, and the prompt
     /// with its skills.
     public func planSessionDraft(forItem item: PlanItem, inProject projectID: UUID) -> PlanSessionDraft {
-        PlanSessionDraft(name: item.title, folderID: nil,
-                         role: SessionRole.infer(fromName: item.title, roles: settings.roles),
+        let inferred = Tag.infer(fromName: item.title, in: settings.tags)
+        return PlanSessionDraft(name: item.title, folderID: nil,
+                         tagIDs: inferred.map { [$0] } ?? [],
                          promptBody: openingPromptBody(forItem: item, inProject: projectID),
                          skills: suggestedSkills(forItem: item, inProject: projectID))
     }
@@ -172,7 +175,7 @@ extension AppModel {
     /// the session, once the session has been made; if its agent then fails
     /// to start, the item goes back to how it was.
     @discardableResult
-    public func startSession(fromItem itemID: UUID, projectID: UUID, name: String, folderID: UUID?, role: SessionRole,
+    public func startSession(fromItem itemID: UUID, projectID: UUID, name: String, folderID: UUID?, tagIDs: [Tag.ID],
                              skills: [String], useWorktree: Bool) -> UUID? {
         guard let item = item(itemID, inProject: projectID) else {
             report("That plan item no longer exists, so no session was started.")
@@ -194,11 +197,12 @@ extension AppModel {
         let prompt = OpeningPrompt.text(title: item.title,
                                         notes: notes(forItem: itemID, inProject: projectID).reversed().map(\.text),
                                         issue: item.issue, skills: skills)
-        var request = NewSessionRequest(projectID: projectID, folderID: folderID, name: name, role: role, prompt: prompt,
+        var request = NewSessionRequest(projectID: projectID, folderID: folderID, name: name, prompt: prompt,
                                         model: settings.defaultModel,
                                         permissionMode: settings.defaultPermissionMode(background: runsInBackground(prompt: prompt)))
         request.useWorktree = useWorktree
         request.namedSkills = skills
+        request.tagIDs = tagIDs
         guard let sessionID = createSession(request) else { return nil }
         var after = item
         after.status = .inSession

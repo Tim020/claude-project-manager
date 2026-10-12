@@ -39,7 +39,7 @@ final class SessionDiscoveryTests: XCTestCase {
         let review = try XCTUnwrap(sessions.first { $0.claudeSessionID.hasPrefix("bbbb") })
         XCTAssertEqual(review.title, "pr review inline 1427")
         XCTAssertEqual(review.status, .awaitingInput)
-        XCTAssertEqual(review.role, .review)
+        XCTAssertEqual(review.inferredTagID, Tag.reviewID)
     }
 
     func testMissingProjectDirectoryYieldsNoSessions() throws {

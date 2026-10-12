@@ -204,6 +204,10 @@ struct ContentView: View {
             // Plan usage via `claude -p /usage` (no model call).
             await Polling.every(AppModel.usageRefreshInterval, startNow: true) { await model.refreshUsage() }
         }
+        .task {
+            // Usage: what's new in each session's transcripts, priced.
+            await Polling.every(AppModel.usageScanInterval, startNow: true) { await model.refreshUsageLedger() }
+        }
         .preferredColorScheme(.dark)
         .frame(minWidth: 980, minHeight: 600)
     }

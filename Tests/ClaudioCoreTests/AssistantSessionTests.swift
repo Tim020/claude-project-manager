@@ -90,12 +90,19 @@ final class AssistantSessionTests: XCTestCase {
             ApprovedSkill(name: "used-a-lot"),
         ]
         let picked = SkillChips.pick(from: skills, touchedFiles: ["Sources/Claudio/ShellPanelViews.swift", "Sources/x.swift"],
-                                     folderName: "in-built shell", usage: ["used-a-lot": 1])
+                                     folderNames: ["in-built shell"], usage: ["used-a-lot": 1])
         XCTAssertEqual(picked.map(\.name), ["shell-map", "worktree-setup", "used-a-lot"],
                        "files first, then the folder, then use; skills that score nothing aren't picked")
-        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderName: nil), [])
+        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderNames: []), [])
         let many = (1...5).map { ApprovedSkill(name: "s\($0)", folders: ["F"]) }
-        XCTAssertEqual(SkillChips.pick(from: many, touchedFiles: [], folderName: "F").count, SkillChips.limit)
+        XCTAssertEqual(SkillChips.pick(from: many, touchedFiles: [], folderNames: ["F"]).count, SkillChips.limit)
+    }
+
+    func testChipsMatchAnAncestorFoldersName() {
+        let skills = [ApprovedSkill(name: "backend-conventions", folders: ["Backend"])]
+        // Picked folder is "Auth", nested under "Backend": the ancestor's name still matches.
+        let picked = SkillChips.pick(from: skills, touchedFiles: [], folderNames: ["Auth", "Backend"])
+        XCTAssertEqual(picked.map(\.name), ["backend-conventions"])
     }
 
     func testRelativePathsIncludeWorktrees() {
@@ -460,7 +467,7 @@ final class AssistantSessionTests: XCTestCase {
         }
         let sessionID = try await MainActor.run { () -> UUID in
             try XCTUnwrap(model.startSession(fromItem: itemID, projectID: project, name: "Panel height", folderID: folder,
-                                             role: .code, skills: ["shell-map"], useWorktree: true))
+                                             tagIDs: [], skills: ["shell-map"], useWorktree: true))
         }
         await model.lastTask?.value
         try await MainActor.run {
@@ -496,7 +503,7 @@ final class AssistantSessionTests: XCTestCase {
         let runner = FakeRunner()
         let (model, sessionID) = try await MainActor.run { () -> (AppModel, UUID) in
             let (model, project, _, _) = try makeFixture(runner: runner)
-            let request = NewSessionRequest(projectID: project, folderID: nil, name: "x", role: .code, prompt: "Fix it",
+            let request = NewSessionRequest(projectID: project, folderID: nil, name: "x", prompt: "Fix it",
                                             model: nil, permissionMode: .standard)
             return (model, try XCTUnwrap(model.createSession(request)))
         }
@@ -614,23 +621,23 @@ final class AssistantSessionFailureTests: XCTestCase {
         let runner = FakeRunner()
         let (model, project, item) = try await MainActor.run { try itemFixture(runner: runner) }
         let first = try await MainActor.run { () -> UUID in
-            try XCTUnwrap(model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, role: .code,
+            try XCTUnwrap(model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, tagIDs: [],
                                              skills: ["real-skill", "made-up"], useWorktree: true))
         }
         await model.lastTask?.value
         try await MainActor.run {
             XCTAssertEqual(model.workspace.session(first)?.namedSkills, ["real-skill"], "only approved skills are named")
             XCTAssertFalse(runner.commands.first { $0.contains("--bg") }?.last?.contains("made-up") ?? true)
-            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "b", folderID: nil, role: .code,
+            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "b", folderID: nil, tagIDs: [],
                                             skills: [], useWorktree: true), "a live session keeps its item")
             XCTAssertEqual(model.errorMessage, "“Panel height” is already in a session, so no session was started.")
             XCTAssertEqual(model.item(item.id, inProject: project)?.sessionID, first)
 
             model.setStatus(.done, ofItem: item.id, projectID: project)
-            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "c", folderID: nil, role: .code,
+            XCTAssertNil(model.startSession(fromItem: item.id, projectID: project, name: "c", folderID: nil, tagIDs: [],
                                             skills: [], useWorktree: true), "a done item isn't reopened")
             XCTAssertEqual(model.errorMessage, "“Panel height” is done, so no session was started.")
-            XCTAssertNil(model.startSession(fromItem: UUID(), projectID: project, name: "d", folderID: nil, role: .code,
+            XCTAssertNil(model.startSession(fromItem: UUID(), projectID: project, name: "d", folderID: nil, tagIDs: [],
                                             skills: [], useWorktree: true))
             XCTAssertEqual(model.errorMessage, "That plan item no longer exists, so no session was started.")
             XCTAssertEqual(model.workspace.sessions.count, 1)
@@ -642,7 +649,7 @@ final class AssistantSessionFailureTests: XCTestCase {
         runner.dispatchExit = 1
         let (model, project, item) = try await MainActor.run { try itemFixture(runner: runner) }
         await MainActor.run {
-            _ = model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, role: .code,
+            _ = model.startSession(fromItem: item.id, projectID: project, name: "a", folderID: nil, tagIDs: [],
                                    skills: [], useWorktree: true)
             XCTAssertEqual(model.item(item.id, inProject: project)?.status, .inSession, "moved while it starts")
         }
@@ -662,7 +669,7 @@ final class AssistantSessionFailureTests: XCTestCase {
             let support = try makeTemporaryDirectory()
             let (store, project) = stateStore()
             let model = try makeModel(store: store, assistant: AssistantFileStore(root: support.appendingPathComponent("assistant")))
-            let request = NewSessionRequest(projectID: project, folderID: nil, name: "direct", role: .code, prompt: "",
+            let request = NewSessionRequest(projectID: project, folderID: nil, name: "direct", prompt: "",
                                             model: nil, permissionMode: .standard)
             let id = try XCTUnwrap(model.createSession(request), "no prompt: a direct terminal")
             let launch = try XCTUnwrap(model.takePendingLaunch(id))

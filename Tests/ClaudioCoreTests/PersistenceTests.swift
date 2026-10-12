@@ -55,7 +55,7 @@ final class PersistenceTests: XCTestCase {
         let json = #"{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","projectID":"6F9619FF-8B86-D011-B42D-00CF4FC964FE","name":"x","workingDirectory":"/","createdAt":"2026-09-25T10:00:00Z","lastActivity":"2026-09-25T10:00:00Z"}"#
         let session = try JSONFileStore.decoder.decode(Session.self, from: Data(json.utf8))
         XCTAssertEqual(session.status, .completed)
-        XCTAssertEqual(session.role, .code)
+        XCTAssertEqual(session.tags, [])
         XCTAssertEqual(session.permissionMode, .standard)
         XCTAssertFalse(session.isArchived)
         XCTAssertEqual(session.pullRequests, [])
