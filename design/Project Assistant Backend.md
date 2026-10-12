@@ -490,7 +490,13 @@ Follow-up jobs get the notes that session already wrote, and don't repeat them.
      - **Nothing is lost quietly:** a draft you asked for that comes back unusable says so; lessons citing nothing resolvable are counted in the log, and so are lessons lost while `skills.json` can't be saved. Toasts name the app's Activity Log (⌥⌘L).
      - **The PATH read is tried again** 5 minutes after a failure, and opening a draft reads it, so Edit and Approve after a relaunch check commands too.
      - **Approval order:** `SKILL.md` first, then history, so history never lists a version that wasn't approved. A record that can't be saved, or an edit that can't be saved, says so.
-   - **For 5b (decided above, nothing left for later):** drift and Edited Outside Claudio, retirement and Unused Skill, Save to Repository and Restore, REPOSITORY skills in the Skills list, and the skill set per session.
+   - **For 5b (decided above, nothing left for later):** drift and Edited Outside Claudio, retirement and Unused Skill, Save to Repository and Restore, REPOSITORY skills in the Skills list, the skill set per session, and skills picked by tags (below).
+   - **Skills picked by tags (Tim, 2026-10-12, for 5b):** design §5 scored chips partly on labels. Since #41, sessions have tags, so a skill can say which tags it's meant for, and the session's tags help pick it.
+     - A skill names them in `metadata.claudio-tags` (tag names, matched without regard to case, like `claudio-folders`), read by `SkillFiles`.
+     - `SkillChips.pick` scores a skill whose tags include one of the session's, alongside files, folders and use. New Session from Plan picks again when its tags change (unless you've removed chips), as it does for the folder.
+     - The usage term can count sessions with the chosen tags as well as those in the folder, so a skill used by "Frontend" sessions anywhere is suggested for a new "Frontend" one.
+     - The draft job sees the tags of the sessions a lesson came from, and may set `tags` in its reply (only names in the tag catalog are kept, by code); Edit can change them. The skill view shows them.
+     - Tags renamed or deleted in the catalog (#41) leave a skill's old names unmatched rather than wrong; the Skills list notes a tag that no longer exists.
 6. **GitHub.** Polling, triage, export, and status suggestions.
 7. **Ask.**
 
