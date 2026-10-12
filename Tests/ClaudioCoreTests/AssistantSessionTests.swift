@@ -86,12 +86,19 @@ final class AssistantSessionTests: XCTestCase {
             ApprovedSkill(name: "used-a-lot"),
         ]
         let picked = SkillChips.pick(from: skills, touchedFiles: ["Sources/Claudio/ShellPanelViews.swift", "Sources/x.swift"],
-                                     folderName: "in-built shell", usage: ["used-a-lot": 1])
+                                     folderNames: ["in-built shell"], usage: ["used-a-lot": 1])
         XCTAssertEqual(picked.map(\.name), ["shell-map", "worktree-setup", "used-a-lot"],
                        "files first, then the folder, then use; skills that score nothing aren't picked")
-        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderName: nil), [])
+        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderNames: []), [])
         let many = (1...5).map { ApprovedSkill(name: "s\($0)", folders: ["F"]) }
-        XCTAssertEqual(SkillChips.pick(from: many, touchedFiles: [], folderName: "F").count, SkillChips.limit)
+        XCTAssertEqual(SkillChips.pick(from: many, touchedFiles: [], folderNames: ["F"]).count, SkillChips.limit)
+    }
+
+    func testChipsMatchAnAncestorFoldersName() {
+        let skills = [ApprovedSkill(name: "backend-conventions", folders: ["Backend"])]
+        // Picked folder is "Auth", nested under "Backend": the ancestor's name still matches.
+        let picked = SkillChips.pick(from: skills, touchedFiles: [], folderNames: ["Auth", "Backend"])
+        XCTAssertEqual(picked.map(\.name), ["backend-conventions"])
     }
 
     func testRelativePathsIncludeWorktrees() {

@@ -127,8 +127,10 @@ extension AppModel {
         if let sessionID = item.sessionID { sessionIDs.insert(sessionID) }
         let files = sessionIDs.flatMap { sessionChanges[$0]?.session?.absolutePaths.values.map { $0 } ?? [] }
             .compactMap { SkillChips.relativePath($0, projectPath: project.path) }
-        let folder = folderID.flatMap { workspace.folder($0)?.name }
-        return SkillChips.pick(from: skills, touchedFiles: Array(Set(files)).sorted(), folderName: folder).map(\.name)
+        // The folder's own name and every ancestor's, so a skill meant for a
+        // parent folder still applies to sessions nested under it.
+        let folderNames = folderID.map { workspace.folderAndAncestorNames(of: $0) } ?? []
+        return SkillChips.pick(from: skills, touchedFiles: Array(Set(files)).sorted(), folderNames: folderNames).map(\.name)
     }
 
     // MARK: - Start Session from a plan item

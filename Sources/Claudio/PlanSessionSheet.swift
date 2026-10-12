@@ -41,8 +41,9 @@ struct PlanSessionSheet: View {
                     label("Folder")
                     Picker("", selection: $folderID) {
                         Text(Workspace.unfiledName).tag(UUID?.none)
-                        ForEach(folders) { folder in
-                            Text(folder.name).tag(Optional(folder.id))
+                        ForEach(folders, id: \.folder.id) { entry in
+                            // A flat picker, so the full path disambiguates same-named folders at different levels.
+                            Text(model.workspace.path(of: .folder(entry.folder.id))).tag(Optional(entry.folder.id))
                         }
                     }
                     .labelsHidden()
@@ -128,8 +129,8 @@ struct PlanSessionSheet: View {
         .onAppear(perform: applyDraft)
     }
 
-    private var folders: [Folder] {
-        model.workspace.project(projectID)?.folders ?? []
+    private var folders: [(folder: Folder, depth: Int)] {
+        model.workspace.foldersInDisplayOrder(projectID: projectID)
     }
 
     private var isGitProject: Bool {

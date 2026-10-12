@@ -305,7 +305,8 @@ struct OverviewHeader: View {
     private func folderHeader(_ group: SessionGroup) -> some View {
         let projectID = model.workspace.projectID(of: group)
         let isUnfiled: Bool = { if case .unfiled = group { return true } else { return false } }()
-        let sessions = model.workspace.sessions(in: group).count
+        // Its whole subtree, matching the pull requests below (which roll up too).
+        let sessions = model.workspace.sessionsInSubtree(group).count
         let pullRequests = model.pullRequests(in: group).count
         return HStack(spacing: 10) {
             if let projectID, let project = model.workspace.project(projectID) {
@@ -321,7 +322,7 @@ struct OverviewHeader: View {
             Image(systemName: isUnfiled ? "tray" : "folder")
                 .font(.system(size: 14))
                 .foregroundStyle(isUnfiled ? DS.dim : DS.blue)
-            Text(model.workspace.name(of: group))
+            Text(model.workspace.path(of: group))
                 .font(DS.font(14, .bold, italic: isUnfiled))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)

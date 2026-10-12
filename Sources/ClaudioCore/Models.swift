@@ -244,7 +244,11 @@ extension Session {
     }
 }
 
-/// A user-named group of sessions within a project (e.g. a change and its PR review).
+/// A user-named group of sessions within a project (e.g. a change and its PR
+/// review). Folders nest without limit: `parentID` points at the folder it
+/// sits inside, nil for one at the project's top level. Storage stays flat
+/// (`Project.folders`); sibling order is relative order within that array,
+/// at every depth, same as before nesting existed.
 public struct Folder: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -253,13 +257,17 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
     public var isCollapsed: Bool
     /// Applied once to a session's own tags when it's created in this folder.
     public var defaultTags: [Tag.ID]
+    /// The folder it's nested inside; nil for a top-level folder.
+    public var parentID: UUID?
 
-    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false, defaultTags: [Tag.ID] = []) {
+    public init(id: UUID = UUID(), name: String, sessionIDs: [UUID] = [], isCollapsed: Bool = false,
+                defaultTags: [Tag.ID] = [], parentID: UUID? = nil) {
         self.id = id
         self.name = name
         self.sessionIDs = sessionIDs
         self.isCollapsed = isCollapsed
         self.defaultTags = defaultTags
+        self.parentID = parentID
     }
 
     public init(from decoder: Decoder) throws {
@@ -268,7 +276,8 @@ public struct Folder: Identifiable, Codable, Equatable, Sendable {
                   name: try c.decode(String.self, forKey: .name),
                   sessionIDs: try c.decodeIfPresent([UUID].self, forKey: .sessionIDs) ?? [],
                   isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
-                  defaultTags: try c.decodeIfPresent([UUID].self, forKey: .defaultTags) ?? [])
+                  defaultTags: try c.decodeIfPresent([UUID].self, forKey: .defaultTags) ?? [],
+                  parentID: try c.decodeIfPresent(UUID.self, forKey: .parentID))
     }
 }
 
@@ -300,10 +309,45 @@ public struct Project: Identifiable, Codable, Equatable, Sendable {
         self.init(id: try c.decode(UUID.self, forKey: .id),
                   name: try c.decode(String.self, forKey: .name),
                   path: try c.decode(String.self, forKey: .path),
-                  folders: try c.decodeIfPresent([Folder].self, forKey: .folders) ?? [],
+                  folders: Project.sanitizedFolders(try c.decodeIfPresent([Folder].self, forKey: .folders) ?? []),
                   isCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false,
                   isUnfiledCollapsed: try c.decodeIfPresent(Bool.self, forKey: .isUnfiledCollapsed) ?? false)
         comparisonBranch = try c.decodeIfPresent(String.self, forKey: .comparisonBranch)
+    }
+
+    /// Clears a folder's `parentID` when it points outside this project or
+    /// forms a cycle, so a corrupted file can't hang a tree walk. A cycle
+    /// (each folder has at most one parent, so a cycle is a single loop)
+    /// only loses the one edge that closes the loop; everything else about
+    /// every folder, cyclic or not, is kept as saved.
+    static func sanitizedFolders(_ folders: [Folder]) -> [Folder] {
+        var result = folders
+        let ids = Set(folders.map(\.id))
+        for i in result.indices where result[i].parentID.map({ !ids.contains($0) }) ?? false {
+            result[i].parentID = nil
+        }
+
+        var resolved: Set<UUID> = []
+        for start in result.indices {
+            guard !resolved.contains(result[start].id) else { continue }
+            var onPath: Set<UUID> = []
+            var path: [UUID] = []
+            var index = start
+            while true {
+                let id = result[index].id
+                if resolved.contains(id) { break }
+                if onPath.contains(id) {
+                    result[index].parentID = nil
+                    break
+                }
+                onPath.insert(id)
+                path.append(id)
+                guard let parentID = result[index].parentID, let next = result.firstIndex(where: { $0.id == parentID }) else { break }
+                index = next
+            }
+            resolved.formUnion(path)
+        }
+        return result
     }
 }
 
@@ -358,4 +402,6 @@ public enum WorkspaceError: Error, Equatable {
     case sessionNotFound
     case folderNotInProject
     case emptyName
+    /// A folder was asked to move into itself or into one of its own subfolders.
+    case cyclicFolderMove
 }

@@ -410,6 +410,7 @@ private struct TabItem: View {
             CompactTagBadge(session: session)
             if model.tabsSpanFolders, let group = model.workspace.group(of: session.id) {
                 // Tabs come from several folders: say where this one lives.
+                // Space in a tab is tight, so the leaf name, not the full path.
                 Text(model.workspace.name(of: group))
                     .font(DS.font(11, italic: true))
                     .foregroundStyle(DS.dim)
