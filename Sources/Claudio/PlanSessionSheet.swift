@@ -37,6 +37,9 @@ struct PlanSessionSheet: View {
                     label("Name")
                     TextField("Session name", text: $name)
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: name) { _, value in
+                            if !tagsEdited { tagIDs = Set(model.suggestedTags(name: value, folderID: folderID)) }
+                        }
                 }
                 GridRow {
                     label("Folder")

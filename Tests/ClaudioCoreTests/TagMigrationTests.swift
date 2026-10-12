@@ -99,6 +99,21 @@ final class TagMigrationTests: XCTestCase {
         XCTAssertEqual(session.tags, [Tag.reviewID])
     }
 
+    /// The even-older lowercase "other" meant no role, and a whitespace-only
+    /// role is effectively none too.
+    func testMigrationHandlesLegacyOtherAndWhitespaceOnlyRoles() throws {
+        for raw in ["other", "   "] {
+            let json = """
+            {"workspace":{"projects":[{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FA","name":"p","path":"/p","folders":[]}],
+             "sessions":[{"id":"6F9619FF-8B86-D011-B42D-00CF4FC964FF","projectID":"6F9619FF-8B86-D011-B42D-00CF4FC964FA","name":"x",
+             "role":"\(raw)","workingDirectory":"/p","createdAt":"2026-09-25T10:00:00Z","lastActivity":"2026-09-25T10:00:00Z"}]},
+             "settings":{}}
+            """
+            let state = try JSONFileStore.decoder.decode(PersistedState.self, from: Data(json.utf8))
+            XCTAssertEqual(state.workspace.sessions.first?.tags, [], "role \"\(raw)\"")
+        }
+    }
+
     /// No `role` key at all (an even-older session): no tags, no crash.
     func testMigrationLeavesASessionWithNoRoleUntagged() throws {
         let json = #"""

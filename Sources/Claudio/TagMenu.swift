@@ -207,7 +207,7 @@ struct FolderTagMenuItems: View {
                 if ownTags.contains(tag.id) {
                     Toggle(tag.name, isOn: Binding(get: { true }, set: { _ in model.toggleDefaultTag(tag.id, onFolder: folderID) }))
                 } else if let ancestorID = ancestorIDs.first(where: { model.workspace.folder($0)?.defaultTags.contains(tag.id) ?? false }) {
-                    Text("\(tag.name) — from \(model.workspace.folder(ancestorID)?.name ?? "a parent folder")")
+                    Text("\(tag.name) — from \(model.workspace.path(of: .folder(ancestorID)))")
                 } else {
                     Toggle(tag.name, isOn: Binding(get: { false }, set: { _ in model.toggleDefaultTag(tag.id, onFolder: folderID) }))
                 }

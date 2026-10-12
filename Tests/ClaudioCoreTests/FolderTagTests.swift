@@ -65,6 +65,48 @@ final class FolderTagTests: XCTestCase {
         }
     }
 
+    /// `suggestedTags` must be a pure recompute, not a partial update: a
+    /// name that stops matching anything clears the inferred tag rather
+    /// than leaving the previous call's value selected (the bug `9818725`
+    /// briefly had, fixed by `0eb057d` making this a pure function).
+    func testSuggestedTagsIsPureAndClearsWhenNothingMatchesAnymore() throws {
+        try MainActor.assumeIsolated {
+            let (model, p) = try model()
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            XCTAssertTrue(model.suggestedTags(name: "pr review", folderID: f).contains(Tag.reviewID))
+            let cleared = model.suggestedTags(name: "nothing matches here", folderID: f)
+            XCTAssertFalse(cleared.contains(Tag.reviewID), "a pure recompute, not a carried-over stale value")
+        }
+    }
+
+    /// `setTags` drops a dangling id rather than storing it.
+    func testSetTagsDropsADanglingID() throws {
+        try MainActor.assumeIsolated {
+            let (model, _) = try model()
+            let session = Session(projectID: try XCTUnwrap(model.workspace.projects.first?.id), name: "s", workingDirectory: "/code")
+            model.applyTestSession(session)
+            model.setTags([Tag.codeID, UUID()], for: session.id)
+            XCTAssertEqual(model.workspace.session(session.id)?.tags, [Tag.codeID])
+        }
+    }
+
+    /// The no-retag guarantee holds over time, not just at move-time: a
+    /// folder's default tags changing after a session already exists in
+    /// it must never touch that session.
+    func testChangingAFoldersDefaultTagsNeverRetagsExistingSessions() throws {
+        try MainActor.assumeIsolated {
+            let (model, p) = try model()
+            let f = try XCTUnwrap(model.createFolder(in: p))
+            let session = Session(projectID: p, name: "s", workingDirectory: "/code")
+            model.applyTestSession(session)
+            model.moveSession(session.id, to: .folder(f))
+            model.setDefaultTags([Tag.codeID], forFolder: f)
+            XCTAssertEqual(model.workspace.session(session.id)?.tags, [], "set after the session already existed")
+            model.toggleDefaultTag(Tag.reviewID, onFolder: f)
+            XCTAssertEqual(model.workspace.session(session.id)?.tags, [])
+        }
+    }
+
     func testSetDefaultTagsAndToggleDefaultTag() throws {
         try MainActor.assumeIsolated {
             let (model, p) = try model()
