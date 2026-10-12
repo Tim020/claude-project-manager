@@ -260,7 +260,7 @@ final class NavigationModelTests: XCTestCase {
             var settings = model.settings
             settings.useBackgroundAgents = false
             model.updateSettings(settings)
-            let request = NewSessionRequest(projectID: p, folderID: withSession, name: "x", role: .code, prompt: "", model: nil, permissionMode: .standard)
+            let request = NewSessionRequest(projectID: p, folderID: withSession, name: "x", prompt: "", model: nil, permissionMode: .standard)
             _ = try XCTUnwrap(model.createSession(request))
             XCTAssertTrue(model.folderHasContents(withSession))
         }
