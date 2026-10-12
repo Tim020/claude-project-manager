@@ -59,13 +59,16 @@ struct NewSessionSheet: View {
                         }
                     }
                     .labelsHidden()
+                    .onChange(of: folderID) { _, newFolderID in
+                        if !tagsEdited { tagIDs = Set(model.suggestedTags(name: name, folderID: newFolderID)) }
+                    }
                 }
                 GridRow {
                     label("Name")
                     TextField("e.g. pr review inline 1427 (defaults to the prompt)", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: name) { _, value in
-                            if !tagsEdited, let inferred = Tag.infer(fromName: value, in: model.settings.tags) { tagIDs = [inferred] }
+                            if !tagsEdited { tagIDs = Set(model.suggestedTags(name: value, folderID: folderID)) }
                         }
                 }
                 GridRow {
@@ -173,7 +176,6 @@ struct NewSessionSheet: View {
     }
 
     private func applyDefaults() {
-        tagIDs = Set(Tag.infer(fromName: name, in: model.settings.tags).map { [$0] } ?? [])
         modelID = model.settings.defaultModel
         permissionMode = model.settings.defaultPermissionMode(background: backgroundMode)
         switch initialGroup {
@@ -185,6 +187,7 @@ struct NewSessionSheet: View {
         case nil:
             projectID = model.selectedSession?.projectID ?? model.workspace.projects.first?.id
         }
+        tagIDs = Set(model.suggestedTags(name: name, folderID: folderID))
     }
 
     private func create() {

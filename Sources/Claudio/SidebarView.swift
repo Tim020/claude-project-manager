@@ -366,6 +366,7 @@ private struct FolderSection: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
+            if let folderID { FolderTagBadge(folderID: folderID) }
             FolderPullRequestChip(group: folder.group)
             StatusCountPills(counts: folder.statusCounts)
         }
@@ -514,6 +515,7 @@ struct FolderMenu: View {
             Button("New Session in Folder…") { presentNewSession(group) }
             Button("New Subfolder") { model.createFolder(in: projectID, parentID: folderID) }
             Button("Show Pull Requests") { model.showOverview(.folder(group)) }
+            Menu("Default Tags") { FolderTagMenuItems(folderID: folderID) }
             let currentParentID = model.workspace.folder(folderID)?.parentID
             let candidates = model.workspace.moveToFolderCandidates(for: folderID)
             Menu("Move to Folder") {

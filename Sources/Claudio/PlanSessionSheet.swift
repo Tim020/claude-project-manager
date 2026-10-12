@@ -18,6 +18,7 @@ struct PlanSessionSheet: View {
     /// Chips you removed, kept out when the folder changes the picks.
     @State private var removedSkills = Set<String>()
     @State private var tagIDs: Set<Tag.ID> = []
+    @State private var tagsEdited = false
     @State private var useWorktree = true
     @State private var promptBody = ""
     @State private var skills: [String] = []
@@ -51,6 +52,7 @@ struct PlanSessionSheet: View {
                     .onChange(of: folderID) { _, folder in
                         skills = model.suggestedSkills(forItem: item, inProject: projectID, folderID: folder)
                             .filter { !removedSkills.contains($0) }
+                        if !tagsEdited { tagIDs = Set(model.suggestedTags(name: name, folderID: folder)) }
                     }
                 }
                 GridRow {
@@ -59,6 +61,7 @@ struct PlanSessionSheet: View {
                         ForEach(model.settings.tags) { tag in
                             TagToggleChip(tag: tag, isOn: tagIDs.contains(tag.id)) {
                                 if tagIDs.contains(tag.id) { tagIDs.remove(tag.id) } else { tagIDs.insert(tag.id) }
+                                tagsEdited = true
                             }
                         }
                     }

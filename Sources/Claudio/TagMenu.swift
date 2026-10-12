@@ -187,4 +187,55 @@ struct CompactTagBadge: View {
         }
     }
 }
+
+/// A folder's "Default Tags" submenu: a `Toggle` per catalog tag that's
+/// the folder's own, plus every tag inherited from an ancestor shown as
+/// a plain, unchecked-looking row naming where it comes from — it
+/// already applies to new sessions here, and a folder can't opt out of
+/// an ancestor's default short of moving out from under it.
+struct FolderTagMenuItems: View {
+    @Environment(AppModel.self) private var model
+    let folderID: UUID
+
+    var body: some View {
+        if model.settings.tags.isEmpty {
+            Text("No tags yet")
+        } else {
+            let ancestorIDs = model.workspace.folderAndAncestorIDs(of: folderID).dropFirst()
+            let ownTags = Set(model.workspace.folder(folderID)?.defaultTags ?? [])
+            ForEach(model.settings.tags) { tag in
+                if ownTags.contains(tag.id) {
+                    Toggle(tag.name, isOn: Binding(get: { true }, set: { _ in model.toggleDefaultTag(tag.id, onFolder: folderID) }))
+                } else if let ancestorID = ancestorIDs.first(where: { model.workspace.folder($0)?.defaultTags.contains(tag.id) ?? false }) {
+                    Text("\(tag.name) — from \(model.workspace.folder(ancestorID)?.name ?? "a parent folder")")
+                } else {
+                    Toggle(tag.name, isOn: Binding(get: { false }, set: { _ in model.toggleDefaultTag(tag.id, onFolder: folderID) }))
+                }
+            }
+        }
+    }
+}
+
+/// A folder's own default tags, compacted the same way `CompactTagBadge`
+/// compacts a session's: first tag as a chip, plus "+N". Shows nothing
+/// for an inherited-only tag — this badge is about what the folder itself
+/// contributes, not the union a new session would end up with.
+struct FolderTagBadge: View {
+    @Environment(AppModel.self) private var model
+    let folderID: UUID
+
+    var body: some View {
+        let tags = model.settings.tags.filter { model.workspace.folder(folderID)?.defaultTags.contains($0.id) ?? false }
+        if let first = tags.first {
+            HStack(spacing: 4) {
+                TagChip(tag: first, font: DS.font(10, .extraBold))
+                if tags.count > 1 {
+                    Text("+\(tags.count - 1)")
+                        .font(DS.font(10, .extraBold))
+                        .foregroundStyle(DS.dim)
+                }
+            }
+        }
+    }
+}
 #endif

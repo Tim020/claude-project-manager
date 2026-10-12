@@ -1181,9 +1181,13 @@ public final class AppModel {
     }
 
     /// Sets a session's tags outright (the multi-select picker's "apply").
+    /// Only ids actually in the catalog are kept.
     public func setTags(_ tagIDs: [Tag.ID], for id: UUID) {
-        guard let session = state.workspace.session(id), session.tags != tagIDs else { return }
-        state.workspace.updateSession(id) { $0.tags = tagIDs }
+        guard let session = state.workspace.session(id) else { return }
+        let catalogIDs = Set(state.settings.tags.map(\.id))
+        let filtered = tagIDs.filter(catalogIDs.contains)
+        guard session.tags != filtered else { return }
+        state.workspace.updateSession(id) { $0.tags = filtered }
         save()
     }
 
@@ -1200,6 +1204,58 @@ public final class AppModel {
             tags.append(tagID)
         }
         state.workspace.updateSession(sessionID) { $0.tags = tags }
+        save()
+    }
+
+    // MARK: - Folder default tags
+
+    /// The tags a new session in this folder would start with: the union
+    /// of the folder's own `defaultTags` and every ancestor's, deduplicated
+    /// and limited to the catalog, in catalog order. A snapshot taken once
+    /// at creation — nothing here keeps a session in sync with its
+    /// folder's defaults afterwards, and moving a session or folder never
+    /// retags anything.
+    public func inheritedDefaultTags(forFolder folderID: UUID) -> [Tag] {
+        let ids = Set(state.workspace.folderAndAncestorIDs(of: folderID).flatMap { state.workspace.folder($0)?.defaultTags ?? [] })
+        return state.settings.tags.filter { ids.contains($0.id) }
+    }
+
+    /// What a new session should start with: the name-based guess (if
+    /// any) alongside the folder's inherited defaults, for the "new
+    /// session" sheets to seed their tag picker with before the user has
+    /// touched it.
+    public func suggestedTags(name: String, folderID: UUID?) -> [Tag.ID] {
+        var ids = folderID.map { inheritedDefaultTags(forFolder: $0).map(\.id) } ?? []
+        if let inferred = Tag.infer(fromName: name, in: state.settings.tags), !ids.contains(inferred) {
+            ids.append(inferred)
+        }
+        return ids
+    }
+
+    /// Sets a folder's own default tags outright. Only ids in the catalog
+    /// are kept.
+    public func setDefaultTags(_ tagIDs: [Tag.ID], forFolder folderID: UUID) {
+        guard let folder = state.workspace.folder(folderID) else { return }
+        let catalogIDs = Set(state.settings.tags.map(\.id))
+        let filtered = tagIDs.filter(catalogIDs.contains)
+        guard folder.defaultTags != filtered else { return }
+        state.workspace.updateFolder(folderID) { $0.defaultTags = filtered }
+        save()
+    }
+
+    /// Adds or removes one of a folder's own default tags (not its
+    /// inherited ones — a folder can't un-inherit an ancestor's default;
+    /// it would have to stop being nested inside it).
+    public func toggleDefaultTag(_ tagID: Tag.ID, onFolder folderID: UUID) {
+        guard let folder = state.workspace.folder(folderID) else { return }
+        var tags = folder.defaultTags
+        if let index = tags.firstIndex(of: tagID) {
+            tags.remove(at: index)
+        } else {
+            guard state.settings.tags.contains(where: { $0.id == tagID }) else { return }
+            tags.append(tagID)
+        }
+        state.workspace.updateFolder(folderID) { $0.defaultTags = tags }
         save()
     }
 
