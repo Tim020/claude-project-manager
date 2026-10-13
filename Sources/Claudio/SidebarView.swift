@@ -676,47 +676,50 @@ extension EnvironmentValues {
 
 /// Calls `action` on every mouse-up anywhere in the window, however a drag
 /// ended. Feeds `dragEndTick`; see its doc comment for why this exists.
-private struct DragEndMonitor: NSViewRepresentable {
+private struct DragEndMonitor: View {
     let action: () -> Void
 
-    func makeNSView(context: Context) -> MonitorView { MonitorView() }
-
-    func updateNSView(_ view: MonitorView, context: Context) {
-        view.action = action
-    }
-
-    final class MonitorView: NSView {
-        var action: (() -> Void)?
-        private var monitor: Any?
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
-                if let self, event.window === self.window { self.action?() }
-                return event
-            }
-        }
+    var body: some View {
+        WindowEventMonitor(matching: [.leftMouseUp], action: action) { _, _ in true }
     }
 }
 
 /// Calls `action` when the mouse goes down anywhere in the window outside
 /// this view's bounds. The view itself is transparent to clicks.
-private struct ClickOutsideMonitor: NSViewRepresentable {
+private struct ClickOutsideMonitor: View {
     let action: () -> Void
 
-    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+    var body: some View {
+        WindowEventMonitor(matching: [.leftMouseDown, .rightMouseDown], action: action) { view, event in
+            !view.bounds.contains(view.convert(event.locationInWindow, from: nil))
+        }
+    }
+}
+
+/// A transparent, zero-size view that calls `action` for every window event
+/// matching `matching` where `shouldFire` says yes — the shared mechanics
+/// behind `ClickOutsideMonitor` and `DragEndMonitor`, which differ only in
+/// which events they watch and how they filter them.
+private struct WindowEventMonitor: NSViewRepresentable {
+    let matching: NSEvent.EventTypeMask
+    let action: () -> Void
+    let shouldFire: (NSView, NSEvent) -> Bool
+
+    func makeNSView(context: Context) -> MonitorView {
+        let view = MonitorView()
+        view.matching = matching
+        return view
+    }
 
     func updateNSView(_ view: MonitorView, context: Context) {
         view.action = action
+        view.shouldFire = shouldFire
     }
 
     final class MonitorView: NSView {
+        var matching: NSEvent.EventTypeMask = []
         var action: (() -> Void)?
+        var shouldFire: ((NSView, NSEvent) -> Bool)?
         private var monitor: Any?
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -726,8 +729,8 @@ private struct ClickOutsideMonitor: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                if let self, event.window === self.window, !self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: matching) { [weak self] event in
+                if let self, event.window === self.window, self.shouldFire?(self, event) ?? true {
                     self.action?()
                 }
                 return event
