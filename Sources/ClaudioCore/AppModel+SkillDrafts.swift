@@ -15,18 +15,21 @@ extension AppModel {
     // MARK: - Lessons from a follow-up
 
     /// A follow-up's lessons join the project's candidates, then any that
-    /// now qualify are drafted or offered.
-    func addLessons(_ findings: [LessonFinding], sessionID: UUID, projectID: UUID) {
-        guard !findings.isEmpty else { return }
+    /// now qualify are drafted or offered. False when there were none, or
+    /// they couldn't be kept.
+    @discardableResult
+    func addLessons(_ findings: [LessonFinding], sessionID: UUID, projectID: UUID) -> Bool {
+        guard !findings.isEmpty else { return false }
         let name = workspace.session(sessionID)?.name ?? "A session"
         let date = now()
         guard updateSkillsData(projectID, { $0.add(findings, sessionID: sessionID, sessionName: name, at: date) }) else {
             log.append(.error, "Assistant: \(findings.count) lesson\(findings.count == 1 ? "" : "s") from \(name) weren't kept",
                        detail: "The skills file can't be read or saved. See the earlier entry about it.")
-            return
+            return false
         }
         log.append(.info, "Assistant: \(findings.count) lesson\(findings.count == 1 ? "" : "s") from \(name)")
         considerSkillCandidates(projectID: projectID)
+        return true
     }
 
     public func skillCandidate(_ id: UUID, inProject projectID: UUID) -> LessonCandidate? {

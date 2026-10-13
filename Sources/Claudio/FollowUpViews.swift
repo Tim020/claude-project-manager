@@ -167,8 +167,10 @@ private struct NeedsYouFollowUpRow: View {
         if followUp.hasNothingToKeep { return "Nothing new to keep." }
         let notes = followUp.notes.filter(\.isKept).count
         let changes = followUp.planChanges.count
+        let lessons = followUp.lessons.count
         return [notes == 0 ? nil : notes == 1 ? "1 note saved" : "\(notes) notes saved",
-                changes == 0 ? nil : changes == 1 ? "1 plan change" : "\(changes) plan changes"]
+                changes == 0 ? nil : changes == 1 ? "1 plan change" : "\(changes) plan changes",
+                lessons == 0 ? nil : lessons == 1 ? "1 lesson for skills" : "\(lessons) lessons for skills"]
             .compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -333,6 +335,18 @@ struct FollowUpBody: View {
                     model.togglePlanChange(change.id, in: followUp.id, projectID: projectID)
                 }
             }
+        }
+        if !followUp.lessons.isEmpty {
+            Text("LESSONS · FOR SKILLS").font(DS.font(10.5, .extraBold)).kerning(0.6).foregroundStyle(DS.muted).padding(.top, 2)
+            ForEach(Array(followUp.lessons.enumerated()), id: \.offset) { _, lesson in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "graduationcap").font(.system(size: 12)).foregroundStyle(DS.blue).padding(.top, 1)
+                    Text(lesson).font(DS.font(12.5)).foregroundStyle(DS.text).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+            }
+            Text("A skill is drafted once a lesson comes up in two sessions, or straight away if you asked Claude to remember it.")
+                .font(DS.font(11.5)).foregroundStyle(DS.dim).fixedSize(horizontal: false, vertical: true)
         }
     }
 

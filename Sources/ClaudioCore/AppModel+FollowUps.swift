@@ -352,15 +352,17 @@ extension AppModel {
                 log.append(.info, "Assistant: dropped \(lessons.dropped) lesson\(lessons.dropped == 1 ? "" : "s") from a follow-up",
                            detail: "They cited nothing in the session's digest that a lesson can be grouped by.")
             }
-            addLessons(lessons.lessons, sessionID: sessionID, projectID: projectID)
+            let keptLessons = addLessons(lessons.lessons, sessionID: sessionID, projectID: projectID) ? lessons.lessons.map(\.summary) : []
             updateFollowUp(id, projectID: projectID) { followUp in
                 followUp.state = .ready
                 followUp.notes = kept
                 followUp.planChanges = changes
+                followUp.lessons = keptLessons
             }
             let name = workspace.session(sessionID)?.name ?? "a session"
             log.append(.info, "Assistant: followed up \(name): \(kept.count) note\(kept.count == 1 ? "" : "s"), "
-                       + "\(changes.count) plan change\(changes.count == 1 ? "" : "s")")
+                       + "\(changes.count) plan change\(changes.count == 1 ? "" : "s"), "
+                       + "\(keptLessons.count) lesson\(keptLessons.count == 1 ? "" : "s")")
         }
     }
 

@@ -110,6 +110,9 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     /// (its `noteID` becomes nil), and ticking it again saves it again.
     public var notes: [FollowUpNote] = []
     public var planChanges: [ProposedPlanChange] = []
+    /// Lessons it kept for skills (their summaries), so the card says so
+    /// (step 5; Tim's test showed "Nothing new to keep" for one that did).
+    public var lessons: [String] = []
     public var createdAt: Date
     /// It ran because you asked: Follow Up on an offer, or Review This
     /// Session. False only for an offer.
@@ -127,10 +130,10 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
         self.askedFor = askedFor
     }
 
-    public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty }
+    public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty && lessons.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model
+        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model, lessons
     }
 
     /// Tolerant: fields a later build adds, or leaves out, take defaults. A
@@ -147,6 +150,7 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
         askedFor = try c.decodeIfPresent(Bool.self, forKey: .askedFor) ?? true
         isDeferred = try c.decodeIfPresent(Bool.self, forKey: .isDeferred) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
+        lessons = (try? c.decodeIfPresent([String].self, forKey: .lessons)) ?? []
     }
 }
 

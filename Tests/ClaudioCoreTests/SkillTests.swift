@@ -991,4 +991,20 @@ final class SkillTests: XCTestCase {
             XCTAssertEqual(f.model.skillProposal(proposal.id, inProject: f.project)?.warnings, [])
         }
     }
+
+    // MARK: - Tim's test (2026-10-13): "Nothing new to keep" for a follow-up that kept a lesson
+
+    func testAFollowUpThatKeptALessonSaysSo() async throws {
+        let f = try await makeFixture()
+        answerFollowUpsAndDrafts(f)
+        await followUp(f, session: f.session)
+        try await MainActor.run {
+            let card = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
+            XCTAssertEqual(card.lessons, ["Run the Linux script, not swift test."])
+            XCTAssertFalse(card.hasNothingToKeep, "it kept a lesson")
+            XCTAssertTrue(f.model.log.entries.contains { $0.title == "Assistant: followed up Shell Height: 0 notes, 0 plan changes, 1 lesson" })
+            let saved = try JSONFileStore.decoder.decode(FollowUp.self, from: JSONFileStore.encoder.encode(card))
+            XCTAssertEqual(saved.lessons, card.lessons, "kept with the card")
+        }
+    }
 }

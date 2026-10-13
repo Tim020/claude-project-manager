@@ -140,6 +140,7 @@ What happens in other modes:
   - **Working:** a spinner, "Reviewing <session>…", "This can take up to about 30 seconds. You can keep working." (plus the usage note while usage is high, when you started it yourself).
   - **Ready:** checkbox rows. NOTE rows are already saved; unticking one removes it. PLAN rows are applied with **Add n to Plan**.
     - If there's nothing to keep: "Nothing new to keep from this session." and Close.
+    - *(5a: lessons it kept for skills are listed under LESSONS · FOR SKILLS, with a line on when a skill is drafted, and its Needs You card says "1 lesson for skills". Tim's testing showed "Nothing new to keep" for a follow-up that had kept a lesson.)*
     - *(4a: with notes but no plan changes, the button is Done, which closes it. Opened from Needs You, it shows the same rows under a "Follow-up" title, with Close in place of Later.)*
   - Later (or ✕) keeps it in Needs You as "<session> finished".
   - In **Automatic** mode it appears when a session finishes. If paused by usage, it waits and appears once usage drops (the Activity Log shows Waiting until then).
