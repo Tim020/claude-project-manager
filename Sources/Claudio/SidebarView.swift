@@ -14,6 +14,8 @@ struct SidebarView: View {
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
     @Environment(\.openSettings) private var openSettings
+    /// Bumped on every mouse-up anywhere in the window — see `dragEndTick`.
+    @State private var dragEndTick = 0
 
     var body: some View {
         @Bindable var model = model
@@ -44,6 +46,8 @@ struct SidebarView: View {
             }
         }
         .frame(width: width)
+        .environment(\.dragEndTick, dragEndTick)
+        .background(DragEndMonitor { dragEndTick += 1 })
     }
 
     private var header: some View {
@@ -189,6 +193,7 @@ private struct ProjectSection: View {
     let project: SidebarProject
     let now: Date
     @State private var isDropTarget = false
+    @Environment(\.dragEndTick) private var dragEndTick
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -198,6 +203,9 @@ private struct ProjectSection: View {
             }
         }
         .padding(.top, 10)
+        .onChange(of: dragEndTick) {
+            if isDropTarget { isDropTarget = false }
+        }
     }
 
     private var header: some View {
@@ -325,6 +333,7 @@ private struct FolderSection: View {
     @State private var draggedKind: DraggedKind?
     @State private var rowHeight: CGFloat = 28
     @State private var confirmDelete = false
+    @Environment(\.dragEndTick) private var dragEndTick
 
     private var folderID: UUID? {
         if case .folder(let id) = folder.group { return id }
@@ -348,6 +357,10 @@ private struct FolderSection: View {
             }
         }
         .padding(.top, 2)
+        .onChange(of: dragEndTick) {
+            if liveEdge != nil { liveEdge = nil }
+            if draggedKind != nil { draggedKind = nil }
+        }
     }
 
     private var row: some View {
@@ -642,6 +655,55 @@ private struct FolderRenameField: View {
     }
 }
 
+/// How many times the mouse has gone up anywhere in the window. A row with
+/// a live drag highlight (`isDropTarget`, `liveEdge`) watches this and
+/// clears it on every tick: SwiftUI's `dropExited`/`isTargeted` only fire
+/// when a drag ends by landing back on the same row, so a drag released
+/// outside any drop target, dragged out of the window, or cancelled leaves
+/// the highlight stuck on with nothing left to turn it off. This is a
+/// one-monitor safety net for all three row kinds, rather than `dropExited`
+/// reinstalling itself three times over (see `DragEndMonitor`).
+private struct DragEndTickKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    fileprivate var dragEndTick: Int {
+        get { self[DragEndTickKey.self] }
+        set { self[DragEndTickKey.self] = newValue }
+    }
+}
+
+/// Calls `action` on every mouse-up anywhere in the window, however a drag
+/// ended. Feeds `dragEndTick`; see its doc comment for why this exists.
+private struct DragEndMonitor: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.action = action
+    }
+
+    final class MonitorView: NSView {
+        var action: (() -> Void)?
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+                if let self, event.window === self.window { self.action?() }
+                return event
+            }
+        }
+    }
+}
+
 /// Calls `action` when the mouse goes down anywhere in the window outside
 /// this view's bounds. The view itself is transparent to clicks.
 private struct ClickOutsideMonitor: NSViewRepresentable {
@@ -684,6 +746,7 @@ private struct SessionRow: View {
     @State private var newName = ""
     @State private var confirmDelete = false
     @State private var isDropTarget = false
+    @Environment(\.dragEndTick) private var dragEndTick
 
     private var isSelected: Bool { model.selectedSessionID == session.id }
 
@@ -736,6 +799,9 @@ private struct SessionRow: View {
             if isDropTarget {
                 Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session(depth: depth) - 8).offset(y: -1)
             }
+        }
+        .onChange(of: dragEndTick) {
+            if isDropTarget { isDropTarget = false }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
         .alert("Rename Session", isPresented: $renaming) {
