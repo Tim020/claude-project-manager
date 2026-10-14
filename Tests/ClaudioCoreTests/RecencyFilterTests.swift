@@ -36,13 +36,15 @@ final class RecencyFilterTests: XCTestCase {
                        ["fresh", "stale", "ancient", "old but waiting", "old unfiled"])
     }
 
-    func testOldSessionsAreHiddenButLiveOnesStay() throws {
+    func testOldSessionsAreHiddenButFoldersStay() throws {
         let (ws, _) = try workspace()
         let tree = Sidebar.build(ws, filter: "", activeSince: daysAgo(14), home: "/")
         XCTAssertEqual(Set(names(tree)), ["fresh", "old but waiting"], "sessions needing input always show")
         let folders = tree.first?.folders.map(\.name) ?? []
         XCTAssertTrue(folders.contains("Recent"))
-        XCTAssertFalse(folders.contains("Old"), "a folder whose sessions are all old is hidden")
+        XCTAssertTrue(folders.contains("Old"), "a folder whose sessions all merely aged out still shows")
+        XCTAssertEqual(tree.first?.folders.first { $0.name == "Old" }?.sessionCount, 0,
+                       "but its pill reflects that nothing in it is currently visible")
         XCTAssertTrue(folders.contains("Empty"), "a folder that's simply empty stays")
         XCTAssertEqual(tree.first?.folders.first { $0.name == "Recent" }?.sessionCount, 1)
     }
