@@ -308,6 +308,10 @@ struct NoteCard: View {
         let item: PlanItem? = if case .item(let item) = attached { item } else { nil }
         let suggestion = model.noteSuggestions[note.id]
         VStack(alignment: .leading, spacing: 6) {
+            // No fixedSize(vertical:) here: the scroll view already gives the
+            // text its full height, and in a lazy stack ideal-size modifiers
+            // can make estimated and measured heights disagree, which fed the
+            // scroll-offset loop that hung the notes list.
             Text(note.text)
                 .font(DS.font(13))
                 .foregroundStyle(DS.text)
