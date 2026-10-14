@@ -245,10 +245,7 @@ private struct NotesList: View {
         } else {
             legend
             ScrollView {
-                // Not lazy: a lazy stack of cards of different heights kept
-                // re-estimating its size and re-adjusting the scroll offset,
-                // which hung the main thread while scrolling. Notes are few.
-                VStack(spacing: 6) {
+                LazyVStack(spacing: 6) {
                     ForEach(notes) { note in
                         TimedNoteCard(note: note, projectID: projectID)
                     }
