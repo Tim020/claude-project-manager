@@ -14,8 +14,6 @@ struct SidebarView: View {
     @Environment(\.presentNewSession) private var presentNewSession
     @Environment(\.addProject) private var addProject
     @Environment(\.openSettings) private var openSettings
-    /// Bumped on every mouse-up anywhere in the window — see `dragEndTick`.
-    @State private var dragEndTick = 0
 
     var body: some View {
         @Bindable var model = model
@@ -46,8 +44,6 @@ struct SidebarView: View {
             }
         }
         .frame(width: width)
-        .environment(\.dragEndTick, dragEndTick)
-        .background(DragEndMonitor { dragEndTick += 1 })
     }
 
     private var header: some View {
@@ -193,7 +189,6 @@ private struct ProjectSection: View {
     let project: SidebarProject
     let now: Date
     @State private var isDropTarget = false
-    @Environment(\.dragEndTick) private var dragEndTick
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -203,8 +198,14 @@ private struct ProjectSection: View {
             }
         }
         .padding(.top, 10)
-        .onChange(of: dragEndTick) {
-            if isDropTarget { isDropTarget = false }
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: isDropTarget) {
+            guard isDropTarget else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 { isDropTarget = false }
+            }
         }
     }
 
@@ -333,7 +334,6 @@ private struct FolderSection: View {
     @State private var draggedKind: DraggedKind?
     @State private var rowHeight: CGFloat = 28
     @State private var confirmDelete = false
-    @Environment(\.dragEndTick) private var dragEndTick
 
     private var folderID: UUID? {
         if case .folder(let id) = folder.group { return id }
@@ -357,9 +357,17 @@ private struct FolderSection: View {
             }
         }
         .padding(.top, 2)
-        .onChange(of: dragEndTick) {
-            if liveEdge != nil { liveEdge = nil }
-            if draggedKind != nil { draggedKind = nil }
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: liveEdge != nil) {
+            guard liveEdge != nil else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    liveEdge = nil
+                    draggedKind = nil
+                }
+            }
         }
     }
 
@@ -655,71 +663,19 @@ private struct FolderRenameField: View {
     }
 }
 
-/// How many times the mouse has gone up anywhere in the window. A row with
-/// a live drag highlight (`isDropTarget`, `liveEdge`) watches this and
-/// clears it on every tick: SwiftUI's `dropExited`/`isTargeted` only fire
-/// when a drag ends by landing back on the same row, so a drag released
-/// outside any drop target, dragged out of the window, or cancelled leaves
-/// the highlight stuck on with nothing left to turn it off. This is a
-/// one-monitor safety net for all three row kinds, rather than `dropExited`
-/// reinstalling itself three times over (see `DragEndMonitor`).
-private struct DragEndTickKey: EnvironmentKey {
-    static let defaultValue = 0
-}
-
-extension EnvironmentValues {
-    fileprivate var dragEndTick: Int {
-        get { self[DragEndTickKey.self] }
-        set { self[DragEndTickKey.self] = newValue }
-    }
-}
-
-/// Calls `action` on every mouse-up anywhere in the window, however a drag
-/// ended. Feeds `dragEndTick`; see its doc comment for why this exists.
-private struct DragEndMonitor: View {
-    let action: () -> Void
-
-    var body: some View {
-        WindowEventMonitor(matching: [.leftMouseUp], action: action) { _, _ in true }
-    }
-}
-
 /// Calls `action` when the mouse goes down anywhere in the window outside
 /// this view's bounds. The view itself is transparent to clicks.
-private struct ClickOutsideMonitor: View {
+private struct ClickOutsideMonitor: NSViewRepresentable {
     let action: () -> Void
 
-    var body: some View {
-        WindowEventMonitor(matching: [.leftMouseDown, .rightMouseDown], action: action) { view, event in
-            !view.bounds.contains(view.convert(event.locationInWindow, from: nil))
-        }
-    }
-}
-
-/// A transparent, zero-size view that calls `action` for every window event
-/// matching `matching` where `shouldFire` says yes — the shared mechanics
-/// behind `ClickOutsideMonitor` and `DragEndMonitor`, which differ only in
-/// which events they watch and how they filter them.
-private struct WindowEventMonitor: NSViewRepresentable {
-    let matching: NSEvent.EventTypeMask
-    let action: () -> Void
-    let shouldFire: (NSView, NSEvent) -> Bool
-
-    func makeNSView(context: Context) -> MonitorView {
-        let view = MonitorView()
-        view.matching = matching
-        return view
-    }
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
 
     func updateNSView(_ view: MonitorView, context: Context) {
         view.action = action
-        view.shouldFire = shouldFire
     }
 
     final class MonitorView: NSView {
-        var matching: NSEvent.EventTypeMask = []
         var action: (() -> Void)?
-        var shouldFire: ((NSView, NSEvent) -> Bool)?
         private var monitor: Any?
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -729,8 +685,8 @@ private struct WindowEventMonitor: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: matching) { [weak self] event in
-                if let self, event.window === self.window, self.shouldFire?(self, event) ?? true {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                if let self, event.window === self.window, !self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
                     self.action?()
                 }
                 return event
@@ -749,7 +705,6 @@ private struct SessionRow: View {
     @State private var newName = ""
     @State private var confirmDelete = false
     @State private var isDropTarget = false
-    @Environment(\.dragEndTick) private var dragEndTick
 
     private var isSelected: Bool { model.selectedSessionID == session.id }
 
@@ -803,8 +758,14 @@ private struct SessionRow: View {
                 Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session(depth: depth) - 8).offset(y: -1)
             }
         }
-        .onChange(of: dragEndTick) {
-            if isDropTarget { isDropTarget = false }
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: isDropTarget) {
+            guard isDropTarget else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 { isDropTarget = false }
+            }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
         .alert("Rename Session", isPresented: $renaming) {
