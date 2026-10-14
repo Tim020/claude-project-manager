@@ -173,15 +173,15 @@ public enum Sidebar {
             var folders = builtTop.flatMap(\.rows)
 
             let unfiledGroup = SessionGroup.unfiled(projectID: project.id)
-            var unfiledSessions = workspace.sessions(in: unfiledGroup)
-            if activeSince != nil && !unfiledSessions.isEmpty {
-                unfiledSessions = unfiledSessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
-            }
-            if let status { unfiledSessions = unfiledSessions.filter { $0.status == status } }
-            if textFiltering && !projectMatches && !matches(Workspace.unfiledName) {
-                unfiledSessions = unfiledSessions.filter { matches($0.name) || matches($0.summary) }
-            }
-            if !unfiledSessions.isEmpty {
+            let rawUnfiled = workspace.sessions(in: unfiledGroup)
+            let unfiledNameMatches = projectMatches || (textFiltering && matches(Workspace.unfiledName))
+            let (unfiledSessions, unfiledHiddenByFilter) = filteredDirect(rawUnfiled, nameMatches: unfiledNameMatches)
+            // Unlike a named folder, Unfiled never shows when it never had
+            // anything (it's a virtual bucket, not something the user made
+            // and might want to find again) — but, like a named folder, it
+            // stays, just with nothing listed, when recency alone is why
+            // it's down to none; only an active status/text search hides it.
+            if !rawUnfiled.isEmpty && !unfiledHiddenByFilter {
                 let collapsed = workspace.isCollapsed(unfiledGroup)
                 folders.append(SidebarFolder(id: "unfiled-\(project.id.uuidString)", group: unfiledGroup, name: Workspace.unfiledName,
                                              isUnfiled: true, isCollapsed: collapsed, depth: 0,

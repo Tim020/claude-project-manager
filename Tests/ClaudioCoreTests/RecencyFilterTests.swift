@@ -59,7 +59,53 @@ final class RecencyFilterTests: XCTestCase {
         let (ws, _) = try workspace()
         XCTAssertEqual(names(Sidebar.build(ws, filter: "stale", activeSince: daysAgo(14), home: "/")), [])
         XCTAssertEqual(names(Sidebar.build(ws, filter: "stale", activeSince: daysAgo(30), home: "/")), ["stale"])
-        XCTAssertEqual(names(Sidebar.build(ws, filter: "", status: .completed, activeSince: daysAgo(14), home: "/")), ["fresh"])
+
+        let statusFiltered = Sidebar.build(ws, filter: "", status: .completed, activeSince: daysAgo(14), home: "/")
+        XCTAssertEqual(names(statusFiltered), ["fresh"])
+        XCTAssertEqual(statusFiltered.first?.folders.map(\.name), ["Recent"],
+                       "unlike recency alone, a status filter still hides a folder whose only session aged out")
+
+        let textFiltered = Sidebar.build(ws, filter: "fresh", activeSince: daysAgo(14), home: "/")
+        XCTAssertEqual(names(textFiltered), ["fresh"])
+        XCTAssertEqual(textFiltered.first?.folders.map(\.name), ["Recent"],
+                       "unlike recency alone, a text search still hides a folder whose only match aged out")
+    }
+
+    func testNestedFoldersBothStayWhenAgedOutTogether() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code")
+        let parent = try ws.createFolder(in: p, named: "Parent")
+        let child = try ws.createFolder(in: p, named: "Child", parentID: parent)
+        try ws.addSession(Session(projectID: p, name: "old in parent", workingDirectory: "/code",
+                                  createdAt: daysAgo(30), lastActivity: daysAgo(30)), toFolder: parent)
+        try ws.addSession(Session(projectID: p, name: "old in child", workingDirectory: "/code",
+                                  createdAt: daysAgo(30), lastActivity: daysAgo(30)), toFolder: child)
+
+        let aged = Sidebar.build(ws, filter: "", activeSince: daysAgo(14), home: "/")
+        let folders = try XCTUnwrap(aged.first).folders
+        XCTAssertEqual(folders.map { [$0.name, "\($0.depth)", "\($0.sessionCount)"] },
+                       [["Parent", "0", "0"], ["Child", "1", "0"]],
+                       "an aged-out parent and child both stay, each showing none of its own sessions")
+
+        let statusFiltered = Sidebar.build(ws, filter: "", status: .awaitingInput, activeSince: daysAgo(14), home: "/")
+        XCTAssertNil(statusFiltered.first, "a status search matching nothing in the subtree still drops it, aged-out children included")
+    }
+
+    func testUnfiledStaysWhenItsOnlySessionAgesOutButNotForAnActiveSearch() throws {
+        var ws = Workspace()
+        let p = ws.addProject(path: "/code")
+        let folder = try ws.createFolder(in: p, named: "Kept")
+        try ws.addSession(Session(projectID: p, name: "kept session", workingDirectory: "/code", status: .awaitingInput), toFolder: folder)
+        try ws.addSession(Session(projectID: p, name: "old unfiled only", workingDirectory: "/code",
+                                  createdAt: daysAgo(30), lastActivity: daysAgo(30)))
+
+        let aged = Sidebar.build(ws, filter: "", activeSince: daysAgo(14), home: "/")
+        let unfiled = try XCTUnwrap(aged.first?.folders.first { $0.isUnfiled })
+        XCTAssertEqual(unfiled.sessionCount, 0, "Unfiled stays, like a named folder, once recency alone empties it")
+
+        let statusFiltered = Sidebar.build(ws, filter: "", status: .awaitingInput, activeSince: daysAgo(14), home: "/")
+        XCTAssertEqual(statusFiltered.first?.folders.map(\.name), ["Kept"],
+                       "but, unlike recency, an active status search still hides Unfiled")
     }
 
     func testCountsHiddenSessions() throws {
