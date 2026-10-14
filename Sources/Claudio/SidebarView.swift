@@ -198,6 +198,15 @@ private struct ProjectSection: View {
             }
         }
         .padding(.top, 10)
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: isDropTarget) {
+            guard isDropTarget else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 { isDropTarget = false }
+            }
+        }
     }
 
     private var header: some View {
@@ -348,6 +357,18 @@ private struct FolderSection: View {
             }
         }
         .padding(.top, 2)
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: liveEdge != nil) {
+            guard liveEdge != nil else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    liveEdge = nil
+                    draggedKind = nil
+                }
+            }
+        }
     }
 
     private var row: some View {
@@ -735,6 +756,15 @@ private struct SessionRow: View {
         .overlay(alignment: .top) {
             if isDropTarget {
                 Rectangle().fill(DS.blue).frame(height: 2).padding(.leading, SidebarIndent.session(depth: depth) - 8).offset(y: -1)
+            }
+        }
+        // SwiftUI doesn't always say a drag has ended (cancelled over empty
+        // space, or let go somewhere that takes no drops), so while this row
+        // is highlighted, check the mouse: once the button is up, it's over.
+        .task(id: isDropTarget) {
+            guard isDropTarget else { return }
+            await Polling.every(0.1) {
+                if NSEvent.pressedMouseButtons & 1 == 0 { isDropTarget = false }
             }
         }
         .contextMenu { SessionMenu(session: session, renaming: $renaming, newName: $newName, confirmDelete: $confirmDelete) }
