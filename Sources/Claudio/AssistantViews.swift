@@ -277,14 +277,16 @@ private struct NotesList: View {
 /// A note card whose age and highlight refresh as time passes. The timeline
 /// is per card, inside the lazy stack: wrapped around the whole list it
 /// rebuilt every card on each tick, and the notes list hung while scrolling.
-private struct TimedNoteCard: View {
+struct TimedNoteCard: View {
     let note: ProjectNote
     let projectID: UUID
+    var showsItemChip = true
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             NoteCard(note: note, projectID: projectID,
-                     isFresh: context.date.timeIntervalSince(note.createdAt) < NoteCard.freshInterval)
+                     isFresh: context.date.timeIntervalSince(note.createdAt) < NoteCard.freshInterval,
+                     showsItemChip: showsItemChip)
         }
     }
 }

@@ -182,13 +182,9 @@ struct PlanItemView: View {
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
                 } else {
-                    TimelineView(.periodic(from: .now, by: 15)) { context in
-                        VStack(spacing: 6) {
-                            ForEach(notes) { note in
-                                NoteCard(note: note, projectID: projectID,
-                                         isFresh: context.date.timeIntervalSince(note.createdAt) < NoteCard.freshInterval,
-                                         showsItemChip: false)
-                            }
+                    VStack(spacing: 6) {
+                        ForEach(notes) { note in
+                            TimedNoteCard(note: note, projectID: projectID, showsItemChip: false)
                         }
                     }
                 }
