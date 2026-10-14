@@ -275,8 +275,8 @@ private struct NotesList: View {
 }
 
 /// A note card whose age and highlight refresh as time passes. The timeline
-/// is per card, inside the lazy stack: wrapped around the whole list it
-/// rebuilt every card on each tick, and the notes list hung while scrolling.
+/// is per card: wrapped around a whole list it rebuilt every card on each
+/// tick (the lazy notes list hung while scrolling).
 struct TimedNoteCard: View {
     let note: ProjectNote
     let projectID: UUID
