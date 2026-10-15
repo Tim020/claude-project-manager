@@ -835,6 +835,12 @@ struct SessionMenu: View {
                 .help("Stop waiting on them: the session counts as finished, though they may still run.")
         }
         let isLive = model.isRunning(session.id) || model.isAgentAlive(session.id)
+        if model.outdatedVersion(of: session.id) != nil {
+            // Menu items don't show tooltips, so the reason goes in the title.
+            let blocker = model.restartBlocker(session.id)
+            Button(blocker.map { "Restart to Update (\($0))" } ?? "Restart to Update") { model.restartToUpdate(session.id) }
+                .disabled(blocker != nil)
+        }
         if isLive {
             Button("Stop Session") { model.stop(session.id) }
         } else {
