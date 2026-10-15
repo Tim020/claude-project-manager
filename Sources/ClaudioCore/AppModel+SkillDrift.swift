@@ -6,8 +6,10 @@ import Foundation
 // skill's file is checked: by size and date first, and read and hashed only
 // when those changed. One whose text no longer matches what Claudio
 // approved (or wrote), or that's gone, becomes a Needs You card. Claudio's
-// own writes (Approve, Revert, Keep Change, Save to Repository) update the
-// stored hash in the same step, so they never look like an outside edit.
+// own writes (Approve, Keep Change, Save to Repository) set the stored hash,
+// and every write or move it makes (those, and Revert, Retire, Restore)
+// forgets the file's remembered size and date in the same step, so none of
+// them ever looks like an outside edit.
 
 extension AppModel {
     // MARK: - Finding them
@@ -37,17 +39,36 @@ extension AppModel {
     }
 
     private func checkDrift(of record: SkillRecord, at url: URL, projectID: UUID) {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let key = AppModel.skillFileStampKey(record.name, location: record.location, projectID: projectID)
+        // Gone only when it really doesn't exist and its skills folder can be
+        // reached: a lost folder permission or a drive that isn't mounted
+        // can't be told apart from a deletion, so it's left for later.
+        let attributes: [FileAttributeKey: Any]?
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch {
+            let skillsFolder = url.deletingLastPathComponent().deletingLastPathComponent()
+            let missing = ((error as? CocoaError)?.code == .fileReadNoSuchFile || (error as NSError).code == NSFileReadNoSuchFileError)
+                && FileManager.default.fileExists(atPath: skillsFolder.path)
+            guard missing else {
+                if skillFilesUnreachable.insert(key).inserted {
+                    log.append(.error, "Couldn't check \(record.name) for edits made outside Claudio", detail: AppModel.describe(error))
+                }
+                return
+            }
+            attributes = nil
+        }
+        skillFilesUnreachable.remove(key)
         let stamp = attributes.map { "\(($0[.size] as? NSNumber)?.int64Value ?? -1)@\(($0[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)" }
             ?? "gone"
-        let key = AppModel.skillFileStampKey(record.name, location: record.location, projectID: projectID)
         guard skillFileStamps[key] != stamp else { return }
-        // A file that can't be read just now isn't taken to be gone.
+        // Read as bytes and decoded leniently: a file that isn't UTF-8 any
+        // more is a change too, not something to fail on every tick.
         let text: String?
         if attributes == nil {
             text = nil
-        } else if let read = try? String(contentsOf: url, encoding: .utf8) {
-            text = read
+        } else if let data = try? Data(contentsOf: url) {
+            text = String(decoding: data, as: UTF8.self)
         } else {
             return
         }
@@ -116,17 +137,19 @@ extension AppModel {
         skillsData(inProject: projectID).outsideEdits.first { $0.id == id }
     }
 
-    /// The approved text: the newest history version whose hash is the
-    /// record's (nil when history doesn't have it, so Revert can't be offered).
-    public func approvedText(of name: String, inProject projectID: UUID) -> String? {
-        guard let record = skillsData(inProject: projectID).records.first(where: { $0.name == name && $0.location != .retired })
+    /// The approved text of a skill where it is: the newest history version
+    /// whose hash is that record's (nil when history doesn't have it, or the
+    /// skill has moved, so Revert can't be offered).
+    public func approvedText(of name: String, at location: SkillLocation, inProject projectID: UUID) -> String? {
+        guard let record = skillsData(inProject: projectID).records.first(where: { $0.name == name && $0.location == location })
         else { return nil }
         return skillHistory(name, projectID: projectID).first { SkillText.hash($0.text) == record.contentHash }?.text
     }
 
     /// The file as it is now (nil when it's gone).
     public func currentText(of edit: OutsideEdit, inProject projectID: UUID) -> String? {
-        skillFileURL(edit.name, location: edit.location, projectID: projectID).flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        skillFileURL(edit.name, location: edit.location, projectID: projectID)
+            .flatMap { try? Data(contentsOf: $0) }.map { String(decoding: $0, as: UTF8.self) }
     }
 
     /// "The Update PR session changed .claude/skills/readme-style/SKILL.md 10h ago".
@@ -147,14 +170,24 @@ extension AppModel {
         return skillProblemsNow(text, projectID: projectID, patching: edit.name)
     }
 
-    /// Keep Change: what's in the file now becomes the approved skill's
-    /// next version. Checked like a draft first. The file's
-    /// `claudio-version` is brought up to match, as one of Claudio's own
-    /// writes, and the result is kept in its history.
+    /// Keep Change: the text the card showed becomes the approved skill's
+    /// next version. Refused if the file has changed again since (the next
+    /// check raises a fresh card), or fails the checks a draft must pass. The
+    /// version is kept in history first, then the file's `claudio-version`
+    /// is brought up to match, as one of Claudio's own writes.
     @discardableResult
     public func keepOutsideEdit(_ id: UUID, projectID: UUID) -> Bool {
         guard let edit = outsideEdit(id, inProject: projectID), !edit.deleted,
               let current = currentText(of: edit, inProject: projectID) else { return false }
+        guard !unreadableSkillsData.contains(projectID) else {
+            report("This project's skills file couldn't be read, so the change can't be kept. See the Activity Log.")
+            return false
+        }
+        guard SkillText.hash(current) == edit.foundHash else {
+            forgetSkillFileStamps(edit.name, projectID: projectID)
+            showToast("\(edit.name) changed again since this card. Review the new change.")
+            return false
+        }
         let problems = skillProblemsNow(current, projectID: projectID, patching: edit.name)
         guard problems.isEmpty else {
             log.append(.error, "Assistant: the change to \(edit.name) wasn't kept: it fails Claudio's checks",
@@ -165,6 +198,14 @@ extension AppModel {
         let record = skillsData(inProject: projectID).records.first { $0.name == edit.name && $0.location == edit.location }
         let version = (record?.version ?? 0) + 1
         let text = SkillText.settingMetadata(current, [("claudio-version", String(version))])
+        // History first: Revert needs the approved text there, so a version
+        // that can't be kept isn't approved.
+        do {
+            try assistantStore.writeSkillHistory(name: edit.name, version: version, text: text, projectID: projectID)
+        } catch {
+            report("Couldn't keep version \(version) of \(edit.name) in its history, so the change wasn't kept: \(AppModel.describe(error))")
+            return false
+        }
         do {
             switch edit.location {
             case .claudio: try assistantStore.writeApprovedSkill(name: edit.name, text: text, projectID: projectID)
@@ -178,14 +219,9 @@ extension AppModel {
             return false
         }
         let hash = SkillText.hash(text)
-        do {
-            try assistantStore.writeSkillHistory(name: edit.name, version: version, text: text, projectID: projectID)
-        } catch {
-            log.append(.error, "Couldn't keep version \(version) of \(edit.name) in its history", detail: AppModel.describe(error))
-        }
         let date = now()
         forgetSkillFileStamps(edit.name, projectID: projectID)
-        updateSkillsData(projectID) { data in
+        let recorded = updateSkillsData(projectID) { data in
             data.outsideEdits.removeAll { $0.id == id }
             if let index = data.records.firstIndex(where: { $0.name == edit.name && $0.location == edit.location }) {
                 data.records[index].contentHash = hash
@@ -195,6 +231,10 @@ extension AppModel {
         }
         refreshApprovedSkills(projectID: projectID)
         log.append(.info, "Kept the change to \(edit.name) (version \(version))")
+        guard recorded else {
+            report("Kept the change to \(edit.name), but Claudio couldn't save its record of it. The Activity Log (⌥⌘L) says why.")
+            return true
+        }
         showToast("Kept the change to \(edit.name)")
         return true
     }
@@ -204,7 +244,14 @@ extension AppModel {
     @discardableResult
     public func revertOutsideEdit(_ id: UUID, projectID: UUID) -> Bool {
         guard let edit = outsideEdit(id, inProject: projectID) else { return false }
-        guard let text = approvedText(of: edit.name, inProject: projectID) else {
+        // The skill must still be where the card found it (not since saved
+        // to the repository, say), or putting it back would load it twice.
+        guard skillsData(inProject: projectID).records.contains(where: { $0.name == edit.name && $0.location == edit.location }) else {
+            updateSkillsData(projectID) { $0.outsideEdits.removeAll { $0.id == id } }
+            showToast("\(edit.name) has moved since this card, so there's nothing to put back")
+            return false
+        }
+        guard let text = approvedText(of: edit.name, at: edit.location, inProject: projectID) else {
             showToast("Claudio doesn't have the approved text of \(edit.name), so it can't be put back")
             return false
         }
@@ -239,6 +286,7 @@ extension AppModel {
         updateSkillsData(projectID) { data in
             data.outsideEdits.removeAll { $0.id == id }
             data.records.removeAll { $0.name == edit.name && $0.location == edit.location }
+            if edit.location == .claudio { data.unusedSkills.removeAll { $0.name == edit.name } }
         }
         if edit.location == .claudio { skillLeftClaudiosRoot(edit.name, projectID: projectID) }
         refreshApprovedSkills(projectID: projectID)

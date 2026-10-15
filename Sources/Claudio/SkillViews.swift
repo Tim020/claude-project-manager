@@ -7,7 +7,8 @@ import SwiftUI
 // Changed Skill). Skills (⋯) lists the approved skills; each opens with its
 // text and its approved versions.
 
-/// Needs You's skill cards: drafts being written, offers, and proposals.
+/// Needs You's skill cards: drafts being written, offers, proposals, and
+/// skills nobody has used for 30 days.
 struct SkillNeedsYouCards: View {
     @Environment(AppModel.self) private var model
     let projectID: UUID
@@ -722,7 +723,7 @@ struct OutsideEditView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: edit.id) {
-            approved = model.approvedText(of: edit.name, inProject: projectID)
+            approved = model.approvedText(of: edit.name, at: edit.location, inProject: projectID)
             current = model.currentText(of: edit, inProject: projectID)
             problems = model.outsideEditProblems(edit, inProject: projectID)
         }

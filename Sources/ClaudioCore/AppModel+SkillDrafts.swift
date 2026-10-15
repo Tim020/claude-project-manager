@@ -407,7 +407,8 @@ extension AppModel {
         do {
             try assistantStore.writeSkillHistory(name: proposal.name, version: version, text: text, projectID: projectID)
         } catch {
-            log.append(.error, "Couldn't keep version \(version) of \(proposal.name) in its history", detail: AppModel.describe(error))
+            // Shown, not only logged: without it, Revert can't be offered later.
+            report("Approved \(proposal.name), but couldn't keep version \(version) in its history, so an outside edit to it can't be reverted: \(AppModel.describe(error))")
         }
         let date = now()
         let recorded = updateSkillsData(projectID) { data in
@@ -472,7 +473,8 @@ public struct SkillListRow: Identifiable, Equatable, Sendable {
 }
 
 extension AppModel {
-    /// Claudio's skills, then the repository's (CLAUDIO and REPOSITORY in the list).
+    /// Claudio's skills, then the repository's, then retired ones (CLAUDIO,
+    /// REPOSITORY and RETIRED in the list).
     public func skillRows(inProject projectID: UUID) -> [SkillListRow] {
         let data = skillsData(inProject: projectID)
         let catalog = Set(settings.tags.map { $0.name.lowercased() })
@@ -491,7 +493,7 @@ extension AppModel {
             + (retiredSkills[projectID] ?? []).map { row($0, .retired) }
     }
 
-    /// A skill by name: Claudio's, else the repository's.
+    /// A skill by name: Claudio's, else the repository's, else a retired one.
     public func skill(named name: String, inProject projectID: UUID) -> (skill: ApprovedSkill, location: SkillLocation)? {
         if let skill = (approvedSkills[projectID] ?? []).first(where: { $0.name == name }) { return (skill, .claudio) }
         if let skill = (repositorySkills[projectID] ?? []).first(where: { $0.name == name }) { return (skill, .repository) }
@@ -513,6 +515,12 @@ extension AppModel {
               let skill = (approvedSkills[projectID] ?? []).first(where: { $0.name == name }) else { return false }
         guard !unreadableSkillsData.contains(projectID) else {
             report("This project's skills file couldn't be read, so skills can't be moved. See the Activity Log.")
+            return false
+        }
+        // Changed outside Claudio and not yet reviewed: that text hasn't
+        // passed the checks, so it isn't copied anywhere.
+        guard !skillsData(inProject: projectID).outsideEdits.contains(where: { $0.name == name && $0.location == .claudio }) else {
+            showToast("\(name) was changed outside Claudio. Keep or revert that change first.")
             return false
         }
         let folder = URL(fileURLWithPath: project.path).appendingPathComponent(".claude/skills").appendingPathComponent(name)
@@ -539,24 +547,33 @@ extension AppModel {
         }
         let hash = SkillText.hash(skill.text)
         forgetSkillFileStamps(name, projectID: projectID)
-        updateSkillsData(projectID) { data in
-            if let index = data.records.firstIndex(where: { $0.name == name }) {
+        let date = now()
+        let recorded = updateSkillsData(projectID) { data in
+            if let index = data.records.firstIndex(where: { $0.name == name && $0.location == .claudio }) {
                 data.records[index].location = .repository
                 data.records[index].contentHash = hash
             } else {
                 data.records.append(SkillRecord(id: skill.claudioID ?? UUID(), name: name, version: skill.version ?? 1,
-                                                approvedAt: now(), contentHash: hash, location: .repository))
+                                                approvedAt: date, contentHash: hash, location: .repository))
             }
+            // Its Claudio-side cards no longer apply; repository skills get no Unused card.
+            data.outsideEdits.removeAll { $0.name == name && $0.location == .claudio }
+            data.unusedSkills.removeAll { $0.name == name }
         }
         skillLeftClaudiosRoot(name, projectID: projectID)
         refreshApprovedSkills(projectID: projectID)
         log.append(.info, "Saved the skill \(name) to \(project.name)'s repository", detail: AppModel.repositorySkillPath(name))
+        guard recorded else {
+            report("Saved \(name) to the repository, but Claudio couldn't save its record of it. The Activity Log (⌥⌘L) says why.")
+            return true
+        }
         showToast("Saved \(name) to the repository. Commit \(AppModel.repositorySkillPath(name)) to share it.")
         return true
     }
 
-    /// A skill left Claudio's root (saved to the repository, or retired):
-    /// sessions with their own skill set lose their link to it.
+    /// A skill left Claudio's root (saved to the repository, retired, or
+    /// deleted outside Claudio and let go): sessions with their own skill
+    /// set lose their link to it.
     func skillLeftClaudiosRoot(_ name: String, projectID: UUID) {
         for session in workspace.sessions where session.projectID == projectID && (session.skillSet ?? []).contains(name) {
             setSkillSet((session.skillSet ?? []).filter { $0 != name }, forSession: session.id)

@@ -81,8 +81,12 @@ extension AppModel {
         guard let name = SkillUseDetector.skill(in: event), let session = workspace.session(sessionID),
               isProjectSkill(name, projectID: session.projectID) else { return }
         let date = now()
-        // Saved only for a new session, or a new day (see `recordUse`).
-        updateSkillsData(session.projectID) { _ = $0.recordUse(of: name, by: sessionID, at: date) }
+        // Saved only for a new session, or a new day (see `recordUse`). A
+        // use also withdraws an Unused card for it.
+        updateSkillsData(session.projectID) { data in
+            _ = data.recordUse(of: name, by: sessionID, at: date)
+            data.unusedSkills.removeAll { $0.name == name }
+        }
     }
 
     func isProjectSkill(_ name: String, projectID: UUID) -> Bool {

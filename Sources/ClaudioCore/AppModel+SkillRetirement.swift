@@ -74,15 +74,20 @@ extension AppModel {
     /// skill set. Restore, from Skills, brings it back.
     @discardableResult
     public func retireSkill(_ name: String, projectID: UUID) -> Bool {
-        guard (approvedSkills[projectID] ?? []).contains(where: { $0.name == name }) else { return false }
+        guard let skill = (approvedSkills[projectID] ?? []).first(where: { $0.name == name }) else { return false }
+        guard !unreadableSkillsData.contains(projectID) else {
+            report("This project's skills file couldn't be read, so skills can't be retired. See the Activity Log.")
+            return false
+        }
         do {
-            try assistantStore.retireSkill(name: name, projectID: projectID)
+            // Its folder, which for a skill put there by hand may not be its name.
+            try assistantStore.retireSkill(name: skill.folder.isEmpty ? name : skill.folder, projectID: projectID)
         } catch {
             report("Couldn't retire \(name): \(AppModel.describe(error))")
             return false
         }
         forgetSkillFileStamps(name, projectID: projectID)
-        updateSkillsData(projectID) { data in
+        let recorded = updateSkillsData(projectID) { data in
             data.unusedSkills.removeAll { $0.name == name }
             data.outsideEdits.removeAll { $0.name == name && $0.location == .claudio }
             if let index = data.records.firstIndex(where: { $0.name == name && $0.location == .claudio }) {
@@ -92,23 +97,37 @@ extension AppModel {
         skillLeftClaudiosRoot(name, projectID: projectID)
         refreshApprovedSkills(projectID: projectID)
         log.append(.info, "Retired the skill \(name)")
+        guard recorded else {
+            report("Retired \(name), but Claudio couldn't save its record of it. The Activity Log (⌥⌘L) says why.")
+            return true
+        }
         showToast("Retired \(name). Restore it from Skills.")
         return true
     }
 
-    /// Retire on an Unused Skill card.
+    /// Retire on an Unused Skill card. Refused (and the card dropped) when
+    /// the skill has been used since the card was made.
     @discardableResult
     public func retireUnusedSkill(_ id: UUID, projectID: UUID) -> Bool {
         guard let unused = unusedSkill(id, inProject: projectID) else { return false }
+        if let last = skillsData(inProject: projectID).usage[unused.name]?.lastUsed, last > unused.lastUsed {
+            updateSkillsData(projectID) { $0.unusedSkills.removeAll { $0.id == id } }
+            showToast("\(unused.name) has been used since, so it wasn't retired")
+            return false
+        }
         return retireSkill(unused.name, projectID: projectID)
     }
 
     /// Restore: back into Claudio's root, where every shared-skills session
-    /// loads it again. Counts as a use. Refused when a skill of that name
-    /// has been approved since.
+    /// loads it again. Counts as a use. Refused when an approved or
+    /// repository skill has taken the name since.
     @discardableResult
     public func restoreSkill(_ name: String, projectID: UUID) -> Bool {
-        guard (retiredSkills[projectID] ?? []).contains(where: { $0.name == name }) else { return false }
+        guard let skill = (retiredSkills[projectID] ?? []).first(where: { $0.name == name }) else { return false }
+        guard !unreadableSkillsData.contains(projectID) else {
+            report("This project's skills file couldn't be read, so skills can't be restored. See the Activity Log.")
+            return false
+        }
         // Taken since by an approved or repository skill (retired names
         // are reserved for exactly this, so they don't count).
         let taken = Set((approvedSkills[projectID] ?? []).flatMap { [$0.name, $0.folder] })
@@ -118,14 +137,14 @@ extension AppModel {
             return false
         }
         do {
-            try assistantStore.restoreSkill(name: name, projectID: projectID)
+            try assistantStore.restoreSkill(name: skill.folder.isEmpty ? name : skill.folder, projectID: projectID)
         } catch {
             report("Couldn't restore \(name): \(AppModel.describe(error))")
             return false
         }
         forgetSkillFileStamps(name, projectID: projectID)
         let date = now()
-        updateSkillsData(projectID) { data in
+        let recorded = updateSkillsData(projectID) { data in
             if let index = data.records.firstIndex(where: { $0.name == name && $0.location == .retired }) {
                 data.records[index].location = .claudio
             }
@@ -133,6 +152,10 @@ extension AppModel {
         }
         refreshApprovedSkills(projectID: projectID)
         log.append(.info, "Restored the skill \(name)")
+        guard recorded else {
+            report("Restored \(name), but Claudio couldn't save its record of it. The Activity Log (⌥⌘L) says why.")
+            return true
+        }
         showToast("Restored \(name)")
         return true
     }

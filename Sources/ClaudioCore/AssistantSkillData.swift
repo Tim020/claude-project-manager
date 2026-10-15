@@ -84,7 +84,8 @@ public struct SkillProposal: Codable, Equatable, Identifiable, Sendable {
 
 /// Where an approved skill lives.
 public enum SkillLocation: String, Codable, Sendable {
-    /// Claudio's `--add-dir` root: every Claudio session in the project loads it.
+    /// Claudio's `--add-dir` root: every Claudio session in the project that
+    /// uses the shared skills loads it (a session with its own set, only if chosen).
     case claudio
     /// `<repo>/.claude/skills`, after Save to Repository: yours to commit.
     case repository

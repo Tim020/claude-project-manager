@@ -377,6 +377,8 @@ public final class AppModel {
     /// Each watched skill file's size and date as last read, so the drift
     /// check reads a file only when it has changed (see AppModel+SkillDrift).
     @ObservationIgnored var skillFileStamps: [String: String] = [:]
+    /// Skill files whose check couldn't stat them (logged once each).
+    @ObservationIgnored var skillFilesUnreachable = Set<String>()
     /// The session whose Edit or Write last touched each skill file (by
     /// resolved path), from the hooks, to name it on the card (not saved).
     @ObservationIgnored var skillFileEditors: [String: UUID] = [:]

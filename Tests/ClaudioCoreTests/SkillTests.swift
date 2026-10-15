@@ -1186,8 +1186,8 @@ final class SkillTests: XCTestCase {
             XCTAssertEqual(f.model.workspace.session(f.session)?.skillSet, ["a-skill", "b-skill"])
             XCTAssertEqual(f.assistant.sessionSkills[f.session], ["a-skill", "b-skill"], "links updated at once")
             f.model.setSkillSet([], forSession: f.session)
-            XCTAssertEqual(f.model.workspace.session(f.session)?.skillSet, [], "emptied while running: no Claudio skills")
-            XCTAssertEqual(f.assistant.sessionSkills[f.session], [])
+            XCTAssertEqual(f.assistant.sessionSkills[f.session], [], "its links go at once: none while it runs on its own root")
+            XCTAssertNil(f.model.workspace.session(f.session)?.skillSet, "an empty set means the shared skills, from its next launch")
         }
     }
 
@@ -1326,7 +1326,7 @@ final class SkillTests: XCTestCase {
             let edit = try XCTUnwrap(d.model.outsideEdits(inProject: d.project).first)
             XCTAssertFalse(edit.deleted)
             XCTAssertEqual(d.model.outsideEditLine(edit), "linux-tests/SKILL.md in Claudio's skills was changed just now")
-            XCTAssertEqual(SkillText.body(of: d.model.approvedText(of: "linux-tests", inProject: d.project) ?? ""), "Run it in Docker.")
+            XCTAssertEqual(SkillText.body(of: d.model.approvedText(of: "linux-tests", at: .claudio, inProject: d.project) ?? ""), "Run it in Docker.")
             XCTAssertEqual(d.model.needsYouCount(inProject: d.project), 1)
             d.model.checkSkillDrift()
             XCTAssertEqual(d.model.outsideEdits(inProject: d.project).count, 1, "not asked twice")
@@ -1409,7 +1409,7 @@ final class SkillTests: XCTestCase {
             let edit = try XCTUnwrap(d.model.outsideEdits(inProject: d.project).first)
             d.model.keepOutsideDeletion(edit.id, projectID: d.project)
             XCTAssertTrue(d.model.skillsData(inProject: d.project).records.isEmpty, "Claudio forgets it")
-            XCTAssertEqual(d.model.workspace.session(d.session)?.skillSet, [], "and sets lose it")
+            XCTAssertNil(d.model.workspace.session(d.session)?.skillSet, "its only skill gone: the shared skills from now on")
             d.model.checkSkillDrift()
             XCTAssertTrue(d.model.outsideEdits(inProject: d.project).isEmpty)
         }
@@ -1519,7 +1519,7 @@ final class SkillTests: XCTestCase {
 
     func testRetireMovesTheSkillOutAndRestoreBringsItBack() async throws {
         let d = try await makeDiskFixture()
-        try await MainActor.run {
+        await MainActor.run {
             let file = approveOnDisk(d)
             d.model.setSessionSkillSet(d.session, ["linux-tests"])
             XCTAssertTrue(d.model.retireSkill("linux-tests", projectID: d.project))
@@ -1527,7 +1527,7 @@ final class SkillTests: XCTestCase {
             let retired = d.store.directory(projectID: d.project).appendingPathComponent("retired/linux-tests/SKILL.md")
             XCTAssertTrue(FileManager.default.fileExists(atPath: retired.path))
             XCTAssertEqual(d.model.skillsData(inProject: d.project).records.first?.location, .retired)
-            XCTAssertEqual(d.model.workspace.session(d.session)?.skillSet, [], "out of every set")
+            XCTAssertNil(d.model.workspace.session(d.session)?.skillSet, "out of every set; its only skill gone, so the shared skills")
             XCTAssertEqual(d.model.skillRows(inProject: d.project).map(\.location), [.retired], "greyed out in Skills")
             d.model.checkSkillDrift()
             XCTAssertTrue(d.model.outsideEdits(inProject: d.project).isEmpty, "retiring isn't an outside deletion")
@@ -1654,7 +1654,7 @@ final class SkillTests: XCTestCase {
         await MainActor.run { f.model.commandExistsOverride = { _ in true } }
         answerFollowUpsAndDrafts(f)
         await followUp(f, session: f.session)
-        let lesson = try await MainActor.run { () -> LessonCandidate in
+        let lesson = await MainActor.run { () -> LessonCandidate in
             let waiting = f.model.waitingLessons(inProject: f.project)
             XCTAssertEqual(waiting.count, 1, "found by the follow-up, and visible while it waits")
             XCTAssertEqual(f.model.sessionsToDraft(waiting[0]), 2)
@@ -1677,8 +1677,8 @@ final class SkillTests: XCTestCase {
     func testLessonsSavedByAnEarlierBuildAreRegroupedAtLaunch() async throws {
         let assistant = MemoryAssistantStore()
         let probe = try await makeFixture(assistant: assistant)
-        var data = SkillsData()
-        data.candidates = [
+        var built = SkillsData()
+        built.candidates = [
             LessonCandidate(signature: "bash for id | this session is isolated in the worktree <path> but this command runs gh with th",
                             summary: "a", evidence: [LessonEvidence(sessionID: UUID(), sessionName: "One", kind: .failure, text: "a", at: SkillTests.now)],
                             remember: false, at: SkillTests.now),
@@ -1686,6 +1686,7 @@ final class SkillTests: XCTestCase {
                             summary: "b", evidence: [LessonEvidence(sessionID: UUID(), sessionName: "Two", kind: .failure, text: "b", at: SkillTests.now)],
                             remember: false, at: SkillTests.now),
         ]
+        let data = built
         await MainActor.run {
             assistant.skillsData[probe.project] = data
             probe.model.setAssistantMode(.manual, projectID: probe.project)
@@ -1694,5 +1695,251 @@ final class SkillTests: XCTestCase {
             XCTAssertEqual(saved?.candidates.count, 1, "merged and saved")
             XCTAssertEqual(probe.model.skillOffers(inProject: probe.project).count, 1, "two sessions now: offered (Manual)")
         }
+    }
+
+    // MARK: - Review round 1 (PR #42)
+
+    func testSaveToRepositoryWaitsForAnOutsideEditToBeResolved() async throws {
+        let d = try await makeDiskFixture()
+        let file = await MainActor.run { () -> URL in
+            let file = approveOnDisk(d)
+            d.model.checkSkillDrift()
+            return file
+        }
+        try (try String(contentsOf: file, encoding: .utf8) + "\nUnreviewed.\n").write(to: file, atomically: true, encoding: .utf8)
+        try await MainActor.run {
+            d.model.checkSkillDrift()
+            XCTAssertFalse(d.model.saveSkillToRepository("linux-tests", projectID: d.project))
+            XCTAssertEqual(d.model.toast?.text, "linux-tests was changed outside Claudio. Keep or revert that change first.")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: d.repo.appendingPathComponent(".claude/skills/linux-tests").path))
+            let edit = try XCTUnwrap(d.model.outsideEdits(inProject: d.project).first)
+            XCTAssertTrue(d.model.revertOutsideEdit(edit.id, projectID: d.project))
+            XCTAssertTrue(d.model.saveSkillToRepository("linux-tests", projectID: d.project), "once it's resolved")
+        }
+    }
+
+    func testAStaleCardCantPutASavedSkillBackIntoClaudio() async throws {
+        let d = try await makeDiskFixture()
+        await MainActor.run {
+            _ = approveOnDisk(d)
+            // A card left over from before the skill was saved to the repository.
+            let stale = OutsideEdit(name: "linux-tests", location: .claudio, deleted: false, foundHash: "x", foundAt: SkillTests.now)
+            XCTAssertTrue(d.model.saveSkillToRepository("linux-tests", projectID: d.project))
+            d.model.updateSkillsData(d.project) { $0.outsideEdits.append(stale) }
+            XCTAssertFalse(d.model.revertOutsideEdit(stale.id, projectID: d.project))
+            XCTAssertNil(d.store.approvedSkillFile(name: "linux-tests", projectID: d.project).flatMap {
+                FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }, "not loaded twice")
+            XCTAssertTrue(d.model.outsideEdits(inProject: d.project).isEmpty, "the stale card goes")
+        }
+    }
+
+    func testAFileThatCantBeReachedIsntTakenForDeleted() async throws {
+        let d = try await makeDiskFixture()
+        let (file, skills) = await MainActor.run { () -> (URL, URL) in
+            let file = approveOnDisk(d)
+            d.model.checkSkillDrift()
+            return (file, file.deletingLastPathComponent().deletingLastPathComponent())
+        }
+        // The whole skills folder unreachable (a drive that isn't mounted, say).
+        let aside = skills.deletingLastPathComponent().appendingPathComponent("skills-aside")
+        try FileManager.default.moveItem(at: skills, to: aside)
+        await MainActor.run {
+            d.model.checkSkillDrift()
+            XCTAssertTrue(d.model.outsideEdits(inProject: d.project).isEmpty, "can't tell: no deletion card")
+            XCTAssertTrue(d.model.log.entries.contains { $0.title == "Couldn't check linux-tests for edits made outside Claudio" })
+        }
+        try FileManager.default.moveItem(at: aside, to: skills)
+        try FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        await MainActor.run {
+            d.model.checkSkillDrift()
+            XCTAssertEqual(d.model.outsideEdits(inProject: d.project).first?.deleted, true, "really gone, with its folder reachable")
+        }
+    }
+
+    func testAFileThatIsntUTF8IsAChangeNotAFailure() async throws {
+        let d = try await makeDiskFixture()
+        let file = await MainActor.run { () -> URL in
+            let file = approveOnDisk(d)
+            d.model.checkSkillDrift()
+            return file
+        }
+        var bytes = try Data(contentsOf: file)
+        bytes.append(contentsOf: [0xFF, 0xFE, 0x0A])
+        try bytes.write(to: file)
+        await MainActor.run {
+            d.model.checkSkillDrift()
+            XCTAssertEqual(d.model.outsideEdits(inProject: d.project).count, 1)
+        }
+    }
+
+    func testKeepChangeOnlyKeepsWhatTheCardShowed() async throws {
+        let d = try await makeDiskFixture()
+        let file = await MainActor.run { () -> URL in
+            let file = approveOnDisk(d)
+            d.model.checkSkillDrift()
+            return file
+        }
+        let approved = try String(contentsOf: file, encoding: .utf8)
+        try (approved + "\nOne line.\n").write(to: file, atomically: true, encoding: .utf8)
+        await MainActor.run { d.model.checkSkillDrift() }
+        try (approved + "\nA whole rewrite, after the card.\n").write(to: file, atomically: true, encoding: .utf8)
+        try await MainActor.run {
+            let edit = try XCTUnwrap(d.model.outsideEdits(inProject: d.project).first)
+            XCTAssertFalse(d.model.keepOutsideEdit(edit.id, projectID: d.project))
+            XCTAssertEqual(d.model.toast?.text, "linux-tests changed again since this card. Review the new change.")
+            XCTAssertEqual(d.model.skillsData(inProject: d.project).records.first?.version, 1, "nothing kept")
+            d.model.checkSkillDrift()
+            let fresh = try XCTUnwrap(d.model.outsideEdits(inProject: d.project).first)
+            XCTAssertNotEqual(fresh.foundHash, edit.foundHash, "a fresh card for the new change")
+            XCTAssertTrue(d.model.keepOutsideEdit(fresh.id, projectID: d.project))
+        }
+    }
+
+    func testRetireAndRestoreWaitForAReadableSkillsFile() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            f.model.unreadableSkillsData.insert(f.project)
+            XCTAssertFalse(f.model.retireSkill("linux-tests", projectID: f.project))
+            XCTAssertEqual(f.assistant.skills[f.project]?.map(\.name), ["linux-tests"], "not moved")
+            f.model.unreadableSkillsData.remove(f.project)
+            XCTAssertTrue(f.model.retireSkill("linux-tests", projectID: f.project))
+            f.model.unreadableSkillsData.insert(f.project)
+            XCTAssertFalse(f.model.restoreSkill("linux-tests", projectID: f.project))
+            XCTAssertEqual(f.assistant.retired[f.project]?.map(\.name), ["linux-tests"], "still retired")
+        }
+    }
+
+    func testAUseWithdrawsAnUnusedCard() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            f.model.updateSkillsData(f.project) { $0.usage["linux-tests"]?.lastUsed = SkillTests.now.addingTimeInterval(-31 * 86_400) }
+            f.model.findUnusedSkills(projectID: f.project)
+            let card = try XCTUnwrap(f.model.unusedSkills(inProject: f.project).first)
+            // Used since, by a hook the card didn't see.
+            f.model.updateSkillsData(f.project) { $0.usage["linux-tests"]?.lastUsed = SkillTests.now }
+            XCTAssertFalse(f.model.retireUnusedSkill(card.id, projectID: f.project))
+            XCTAssertTrue(f.model.unusedSkills(inProject: f.project).isEmpty, "the card goes")
+            XCTAssertEqual(f.assistant.skills[f.project]?.map(\.name), ["linux-tests"], "still loaded")
+        }
+        try writeHooks([["hook_event_name": "UserPromptSubmit", "session_id": SkillTests.conversation, "prompt": "/linux-tests"]], f)
+        await MainActor.run {
+            f.model.updateSkillsData(f.project) { $0.unusedSkills.append(UnusedSkill(name: "linux-tests", lastUsed: SkillTests.now, foundAt: SkillTests.now)) }
+            f.model.pollHookEvents()
+            XCTAssertTrue(f.model.unusedSkills(inProject: f.project).isEmpty, "a use withdraws it")
+        }
+    }
+
+    func testRemovingLinksNeverTouchesTheApprovedSkills() throws {
+        let store = AssistantFileStore(root: try makeTemporaryDirectory())
+        let project = UUID(), session = UUID()
+        for name in ["a-skill", "b-skill"] {
+            try store.writeApprovedSkill(name: name, text: "---\nname: \(name)\n---\n", projectID: project)
+        }
+        _ = try store.sessionSkillsRoot(projectID: project, sessionID: session, skills: ["a-skill", "b-skill"])
+        _ = try store.sessionSkillsRoot(projectID: project, sessionID: session, skills: ["b-skill"])
+        XCTAssertEqual(store.approvedSkills(projectID: project).map(\.name), ["a-skill", "b-skill"], "a removed link leaves its skill")
+        try store.removeSessionSkillsRoot(projectID: project, sessionID: session)
+        XCTAssertEqual(store.approvedSkills(projectID: project).map(\.name), ["a-skill", "b-skill"], "so does removing the root")
+        XCTAssertEqual(store.sessionSkillsRootIDs(projectID: project), [])
+    }
+
+    func testRetireTakesASessionsLinkAndRestoreKeepsItOut() async throws {
+        let d = try await makeDiskFixture()
+        await MainActor.run {
+            _ = approveOnDisk(d)
+            let other = SkillProposal(candidateID: nil, name: "other-skill",
+                                      text: SkillText.compose(name: "other-skill", description: "d", whenToUse: "", paths: [], body: "b", metadata: []),
+                                      previousText: nil, why: "w", createdAt: SkillTests.now, model: "Sonnet")
+            d.model.updateSkillsData(d.project) { $0.proposals.append(other) }
+            XCTAssertTrue(d.model.approveSkillProposal(other.id, projectID: d.project))
+            d.model.setSessionSkillSet(d.session, ["linux-tests", "other-skill"])
+            let root = d.model.skillSetRoot(of: d.model.workspace.session(d.session)!)!
+            XCTAssertEqual(SkillFiles.approved(inRoot: root).map(\.name), ["linux-tests", "other-skill"])
+            XCTAssertTrue(d.model.retireSkill("linux-tests", projectID: d.project))
+            XCTAssertEqual(SkillFiles.approved(inRoot: root).map(\.name), ["other-skill"], "the retired skill's link is gone")
+            XCTAssertTrue(d.model.restoreSkill("linux-tests", projectID: d.project))
+            XCTAssertEqual(SkillFiles.approved(inRoot: root).map(\.name), ["other-skill"], "restoring doesn't add it back to a set")
+        }
+    }
+
+    func testABackgroundResumeUsesItsOwnSetAndContinuingOneTakesNoFlags() async throws {
+        let f = try await makeFixture()
+        try await MainActor.run {
+            approve(f, ["a-skill"])
+            f.model.setSessionSkillSet(f.session, ["a-skill"])
+            let session = try XCTUnwrap(f.model.workspace.session(f.session))
+            let launch = try XCTUnwrap(f.model.assistantLaunch(for: session))
+            let own = "/memory/\(f.project.uuidString.lowercased())/sessions/\(f.session.uuidString.lowercased())"
+            XCTAssertEqual(launch.skillsRoot, own, "every launch path reads the session")
+        }
+    }
+
+    func testASetThatCantBeBuiltFallsBackAndSaysSo() async throws {
+        let assistant = MemoryAssistantStore()
+        let f = try await makeFixture(assistant: assistant)
+        await MainActor.run {
+            approve(f, ["a-skill"])
+            f.model.setSessionSkillSet(f.session, ["a-skill"])
+            assistant.sessionSkillsError = CocoaError(.fileWriteNoPermission)
+            XCTAssertNil(f.model.skillSetRoot(of: f.model.workspace.session(f.session)!))
+            XCTAssertEqual(f.model.toast?.text, "Couldn't set up Shell Height's own skills, so it loads every approved skill. See the Activity Log.")
+        }
+    }
+
+    func testADeletedSessionsLeftoverSetIsTidiedAtLaunch() async throws {
+        let assistant = MemoryAssistantStore()
+        let f = try await makeFixture(assistant: assistant)
+        await MainActor.run {
+            let gone = UUID()
+            assistant.sessionRootProjects[gone] = f.project
+            assistant.sessionRootProjects[f.session] = f.project
+            f.model.syncSkillSets()
+            XCTAssertNil(assistant.sessionRootProjects[gone], "no session owns it")
+            XCTAssertNotNil(assistant.sessionRootProjects[f.session], "a session that exists keeps its own")
+        }
+    }
+
+    func testTheUnusedCheckRunsOnceADay() async throws {
+        let clock = Clock()
+        let f = try await makeFixture(clock: { clock.date })
+        try await MainActor.run {
+            let proposal = propose(f, text: SkillTests.skillText("Run it."))
+            XCTAssertTrue(f.model.approveSkillProposal(proposal.id, projectID: f.project))
+            clock.date = SkillTests.now.addingTimeInterval(31 * 86_400)
+            f.model.checkUnusedSkills()
+            let card = try XCTUnwrap(f.model.unusedSkills(inProject: f.project).first)
+            f.model.keepUnusedSkill(card.id, projectID: f.project)
+            // Stale again, the same day: the check has run today.
+            f.model.updateSkillsData(f.project) { $0.usage["linux-tests"]?.lastUsed = SkillTests.now }
+            f.model.checkUnusedSkills()
+            XCTAssertTrue(f.model.unusedSkills(inProject: f.project).isEmpty, "once a day")
+            clock.date = clock.date.addingTimeInterval(86_400)
+            f.model.checkUnusedSkills()
+            XCTAssertEqual(f.model.unusedSkills(inProject: f.project).count, 1, "the next day")
+        }
+    }
+
+    func testAVersion1FileRoundTripsThroughTheFileStore() throws {
+        let store = AssistantFileStore(root: try makeTemporaryDirectory())
+        let project = UUID()
+        let folder = store.directory(projectID: project)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let v1 = #"{"version":1,"usage":{"a":{"sessions":["6F9619FF-8B86-D011-B42D-00C04FC964FF"],"lastUsed":"2026-10-01T10:00:00Z"}},"candidates":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FE","signature":"bash make | boom","summary":"s","evidence":[],"remember":false,"state":"collecting","heldUntilSessions":3,"createdAt":"2026-10-01T10:00:00Z","updatedAt":"2026-10-01T10:00:00Z"},{"broken":true}],"proposals":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FD","name":"a","text":"t","why":"w","createdAt":"2026-10-01T10:00:00Z","model":"Sonnet"}],"records":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FC","name":"a","version":2,"approvedAt":"2026-10-01T10:00:00Z","contentHash":"h"}]}"#
+        try v1.write(to: folder.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+        let data = try store.loadSkillsData(projectID: project)
+        XCTAssertEqual(data.usage["a"]?.sessions.count, 1)
+        XCTAssertEqual(data.candidates.first?.heldUntilSessions, 3)
+        XCTAssertEqual(data.proposals.first?.name, "a")
+        XCTAssertEqual(data.records.first?.location, .claudio)
+        XCTAssertEqual(data.unreadableCount, 1)
+        try store.saveSkillsData(data, projectID: project)
+        let again = try store.loadSkillsData(projectID: project)
+        XCTAssertEqual(again, data, "nothing lost, the unreadable entry included")
+        let saved = try String(contentsOf: folder.appendingPathComponent("skills.json"), encoding: .utf8)
+        XCTAssertTrue(saved.contains("\"broken\""))
     }
 }

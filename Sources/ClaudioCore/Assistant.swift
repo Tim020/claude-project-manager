@@ -379,6 +379,8 @@ public protocol AssistantStoring: AnyObject {
     /// are left out). Made if missing; links not in `skills` are removed.
     func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL?
     func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws
+    /// The sessions with a skills root on disk (for tidying up deleted ones).
+    func sessionSkillsRootIDs(projectID: UUID) -> [UUID]
     /// An approved skill's `SKILL.md` in Claudio's root (nil: none on disk,
     /// as in memory), for the check for edits made outside Claudio.
     func approvedSkillFile(name: String, projectID: UUID) -> URL?
@@ -431,6 +433,7 @@ extension AssistantStoring {
     public func removeApprovedSkill(name: String, projectID: UUID) throws {}
     public func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL? { nil }
     public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {}
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] { [] }
     public func approvedSkillFile(name: String, projectID: UUID) -> URL? { nil }
     public func retireSkill(name: String, projectID: UUID) throws {}
     public func restoreSkill(name: String, projectID: UUID) throws {}
@@ -541,11 +544,21 @@ public final class MemoryAssistantStore: AssistantStoring {
     public var sessionSkillsError: Error?
     public func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL? {
         if let sessionSkillsError { throw sessionSkillsError }
-        let approved = Set((self.skills[projectID] ?? []).map(\.name))
+        // By folder, as the file store links them (a folder is usually the name).
+        let approved = Set((self.skills[projectID] ?? []).flatMap { [$0.name, $0.folder] })
         sessionSkills[sessionID] = skills.filter(approved.contains)
+        sessionRootProjects[sessionID] = projectID
         return URL(fileURLWithPath: "/memory/\(projectID.uuidString.lowercased())/sessions/\(sessionID.uuidString.lowercased())")
     }
-    public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws { sessionSkills[sessionID] = nil }
+    public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {
+        sessionSkills[sessionID] = nil
+        sessionRootProjects[sessionID] = nil
+    }
+    /// Which project each session's root is in.
+    public var sessionRootProjects: [UUID: UUID] = [:]
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] {
+        sessionRootProjects.filter { $0.value == projectID }.map(\.key)
+    }
     public var retired: [UUID: [ApprovedSkill]] = [:]
     public func retireSkill(name: String, projectID: UUID) throws {
         if let skillWriteError { throw skillWriteError }
@@ -681,7 +694,8 @@ public final class AssistantFileStore: AssistantStoring {
         let manager = FileManager.default
         try manager.createDirectory(at: links, withIntermediateDirectories: true)
         let wanted = Set(skills.filter { SkillName.isValid($0) && manager.fileExists(atPath: approved.appendingPathComponent($0).path) })
-        for name in (try? manager.contentsOfDirectory(atPath: links.path)) ?? [] where !wanted.contains(name) {
+        // A listing that fails is an error, not "no links": stale ones would stay.
+        for name in try manager.contentsOfDirectory(atPath: links.path) where !wanted.contains(name) {
             try manager.removeItem(at: links.appendingPathComponent(name))
         }
         for name in wanted {
@@ -721,6 +735,11 @@ public final class AssistantFileStore: AssistantStoring {
     public func approvedSkillFile(name: String, projectID: UUID) -> URL? {
         guard SkillName.isValid(name) else { return nil }
         return directory(projectID: projectID).appendingPathComponent("skills/.claude/skills/\(name)/SKILL.md")
+    }
+
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] {
+        let sessions = directory(projectID: projectID).appendingPathComponent("sessions")
+        return ((try? FileManager.default.contentsOfDirectory(atPath: sessions.path)) ?? []).compactMap { UUID(uuidString: $0) }
     }
 
     public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {
