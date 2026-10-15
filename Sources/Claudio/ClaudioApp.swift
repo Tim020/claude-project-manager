@@ -174,6 +174,13 @@ struct ClaudioApp: App {
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
                 .disabled(!model.menuFlags.canStopSelected)
+                // Claude Code updated itself; these sessions still run the old version.
+                Button("Restart Session to Update") {
+                    if let id = model.selectedSessionID { model.restartToUpdate(id) }
+                }
+                .disabled(!model.menuFlags.canRestartSelected)
+                Button("Restart All Idle Sessions to Update") { model.restartAllToUpdate() }
+                    .disabled(model.menuFlags.restartableCount == 0)
             }
         }
 

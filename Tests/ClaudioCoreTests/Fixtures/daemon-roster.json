@@ -1,0 +1,52 @@
+{
+  "proto": 1,
+  "supervisorPid": 19518,
+  "updatedAt": 1792017429690,
+  "workers": {
+    "fb72709a": {
+      "pid": 10761,
+      "procStart": "Thu Sep 24 18:43:52 2026",
+      "sessionId": "fb72709a-291a-41a1-ab00-ed7fe2d9115b",
+      "cliVersion": "2.1.281",
+      "startedAt": 1790275728786,
+      "attempt": 1,
+      "cwd": "/Users/tim/Documents/Code/DigiScript",
+      "dispatch": {
+        "proto": 1,
+        "short": "fb72709a",
+        "sessionId": "fb72709a-291a-41a1-ab00-ed7fe2d9115b",
+        "source": "fleet"
+      }
+    },
+    "7d1da24e": {
+      "pid": 65699,
+      "procStart": "Mon Sep 28 19:47:35 2026",
+      "sessionId": "7d1da24e-122c-4b28-9495-195c4593ed3e",
+      "cliVersion": "2.1.284",
+      "startedAt": 1790625889995,
+      "attempt": 1,
+      "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+      "dispatch": {
+        "proto": 1,
+        "short": "7d1da24e",
+        "sessionId": "7d1da24e-122c-4b28-9495-195c4593ed3e",
+        "source": "shell"
+      }
+    },
+    "52f972c5": {
+      "pid": 19601,
+      "procStart": "Wed Oct 14 21:53:08 2026",
+      "sessionId": "52f972c5-519b-4715-b89f-bbd71487095d",
+      "cliVersion": "2.1.300",
+      "startedAt": 1792015934113,
+      "attempt": 1,
+      "cwd": "/Users/tim/Documents/Code/claude-project-manager",
+      "dispatch": {
+        "proto": 1,
+        "short": "52f972c5",
+        "sessionId": "52f972c5-519b-4715-b89f-bbd71487095d",
+        "source": "shell"
+      }
+    }
+  }
+}

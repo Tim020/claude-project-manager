@@ -120,6 +120,9 @@ private struct DetailHeader: View {
             if let context = model.context(for: session.id) {
                 ContextMeter(context: context, compact: false)
             }
+            if let version = model.outdatedVersion(of: session.id) {
+                RestartToUpdateChip(sessionID: session.id, version: version)
+            }
             StatusPill(status: session.status)
                 .help(SessionIndicators.statusHelp(session))
             Menu {
@@ -151,6 +154,46 @@ private struct DetailHeader: View {
         Image(systemName: "chevron.right")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(DS.dim)
+    }
+}
+
+/// The session's agent runs an older Claude Code than the installed one:
+/// restarts it on the new version, keeping its conversation.
+private struct RestartToUpdateChip: View {
+    @Environment(AppModel.self) private var model
+    let sessionID: UUID
+    let version: ClaudeVersion
+
+    var body: some View {
+        let restarting = model.restartingSessions.contains(sessionID)
+        let blocker = model.restartBlocker(sessionID)
+        Button { model.restartToUpdate(sessionID) } label: {
+            HStack(spacing: 5) {
+                if restarting {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(restarting ? "Restarting…" : "Restart to Update")
+                    .font(DS.font(11.5, .semibold))
+            }
+            .foregroundStyle(DS.teal)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(DS.teal.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .disabled(blocker != nil)
+        .opacity(blocker != nil && !restarting ? 0.55 : 1)
+        .fixedSize()
+        .help(help(blocker: restarting ? nil : blocker))
+    }
+
+    private func help(blocker: String?) -> String {
+        let installed = model.environment.version.map { ", and \($0) is installed" } ?? ""
+        let base = "This session runs Claude Code \(version)\(installed). Restarting keeps its conversation."
+        return blocker.map { "\(base) \($0)." } ?? base
     }
 }
 

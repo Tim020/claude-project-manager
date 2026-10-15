@@ -109,17 +109,20 @@ public enum Sidebar {
         func matches(_ text: String) -> Bool { text.lowercased().contains(query) }
 
         /// Applies the recency/status/text filters to a folder's direct
-        /// sessions, same rules as before nesting existed: recency only
-        /// hides a folder that had sessions and lost them all; status and
-        /// text filtering hide a folder with none left, even if it started
-        /// with none. `nameMatches` already folds in every ancestor's name
-        /// (and the project's), so a match anywhere above skips text
-        /// filtering here too.
+        /// sessions. Status and text filtering are an active search: a
+        /// folder with no match left, even one that started with none, is
+        /// hidden outright. Recency is a passive default the user didn't go
+        /// looking for, so aging a folder's sessions out of the window never
+        /// hides the folder itself — only status or text filtering can.
+        /// `nameMatches` already folds in every ancestor's name (and the
+        /// project's), so a match anywhere above skips text filtering here
+        /// too.
         func filteredDirect(_ raw: [Session], nameMatches: Bool) -> (sessions: [Session], hiddenByFilter: Bool) {
             var sessions = raw
-            if activeSince != nil && !sessions.isEmpty {
+            // Recency filters the list but, unlike status and text below,
+            // never flags it as hidden.
+            if activeSince != nil {
                 sessions = sessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
-                if sessions.isEmpty { return (sessions, true) }
             }
             if let status {
                 sessions = sessions.filter { $0.status == status }
@@ -145,13 +148,12 @@ public enum Sidebar {
             let childSubtreeSessions = builtChildren.flatMap(\.subtreeSessions)
 
             let (direct, hiddenByFilter) = filteredDirect(workspace.sessions(in: .folder(folder.id)), nameMatches: nameMatches)
-            // An ancestor whose own sessions were filtered away (recency,
-            // status or text alike) still shows, with none of its own rows,
-            // when a descendant anywhere underneath it survived: otherwise
-            // there'd be no path down to that descendant at all. This holds
-            // for every filter, recency included — a folder whose sessions
-            // merely aged out is no different here from one that was always
-            // empty (`testFilterKeepsAncestorsOfASurvivingDeepDescendant`).
+            // An ancestor with no status/text match of its own still shows,
+            // with none of its own rows, when a descendant anywhere
+            // underneath it survived: otherwise there'd be no path down to
+            // that descendant at all (`testFilterKeepsAncestorsOfASurvivingDeepDescendant`).
+            // Recency never sets `hiddenByFilter`, so a folder that merely
+            // aged out shows regardless, with or without surviving children.
             guard !hiddenByFilter || !childRows.isEmpty else { return Built(rows: [], subtreeSessions: []) }
 
             let subtreeSessions = direct + childSubtreeSessions
@@ -171,15 +173,15 @@ public enum Sidebar {
             var folders = builtTop.flatMap(\.rows)
 
             let unfiledGroup = SessionGroup.unfiled(projectID: project.id)
-            var unfiledSessions = workspace.sessions(in: unfiledGroup)
-            if activeSince != nil && !unfiledSessions.isEmpty {
-                unfiledSessions = unfiledSessions.filter { isRecent($0, since: activeSince, alwaysShow: alwaysShow) }
-            }
-            if let status { unfiledSessions = unfiledSessions.filter { $0.status == status } }
-            if textFiltering && !projectMatches && !matches(Workspace.unfiledName) {
-                unfiledSessions = unfiledSessions.filter { matches($0.name) || matches($0.summary) }
-            }
-            if !unfiledSessions.isEmpty {
+            let rawUnfiled = workspace.sessions(in: unfiledGroup)
+            let unfiledNameMatches = projectMatches || (textFiltering && matches(Workspace.unfiledName))
+            let (unfiledSessions, unfiledHiddenByFilter) = filteredDirect(rawUnfiled, nameMatches: unfiledNameMatches)
+            // Unlike a named folder, Unfiled never shows when it never had
+            // anything (it's a virtual bucket, not something the user made
+            // and might want to find again) — but, like a named folder, it
+            // stays, just with nothing listed, when recency alone is why
+            // it's down to none; only an active status/text search hides it.
+            if !rawUnfiled.isEmpty && !unfiledHiddenByFilter {
                 let collapsed = workspace.isCollapsed(unfiledGroup)
                 folders.append(SidebarFolder(id: "unfiled-\(project.id.uuidString)", group: unfiledGroup, name: Workspace.unfiledName,
                                              isUnfiled: true, isCollapsed: collapsed, depth: 0,

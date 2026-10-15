@@ -37,6 +37,10 @@ public struct MenuFlags: Equatable, Sendable {
     public var hasSelection = false
     public var canResumeSelected = false
     public var canStopSelected = false
+    /// The selected session runs an older Claude Code and can restart now.
+    public var canRestartSelected = false
+    /// Outdated sessions that can restart now (Restart All to Update).
+    public var restartableCount = 0
     /// The selected tab's pane has another tab, so it can move to a pane of its own.
     public var canSplitSelected = false
     /// Claude Code can run (installed, signed in), or hasn't been checked yet.
@@ -152,6 +156,25 @@ public final class AppModel {
     @ObservationIgnored private var pendingTitlePushes = Set<UUID>()
     /// Latest `claude agents` listing, by agent id.
     private(set) var agents: [String: BackgroundAgent] = [:]
+    /// The Claude Code version each agent's process runs, by agent id, from
+    /// the daemon's roster (`DaemonRoster`).
+    public private(set) var agentVersions: [String: ClaudeVersion] = [:]
+    /// Sessions whose agent `claude respawn` is restarting.
+    public private(set) var restartingSessions: Set<UUID> = []
+    /// Restarted sessions whose old terminal hadn't exited when the restart
+    /// finished: its exit attaches the tab again.
+    /// Cleared when the tab is closed or the session stopped (`detach`), so
+    /// it's what says the tab still wants its terminal back.
+    @ObservationIgnored private var reattachOnExit: Set<UUID> = []
+    /// Restarted sessions whose next notification check only takes a new
+    /// baseline: the restart isn't news.
+    @ObservationIgnored private var quietAfterRestart: Set<UUID> = []
+    /// The roster file's modification date and size when it was last read.
+    @ObservationIgnored private var rosterStamp: String?
+    /// The last roster read failed; a second failure in a row clears the versions.
+    @ObservationIgnored private var rosterReadFailed = false
+    /// The newest agent version that made Claudio check the CLI again.
+    @ObservationIgnored private var recheckedForVersion: ClaudeVersion?
     /// Interactive `claude` processes running in terminals, by session id.
     private var terminalSessions: [String: InteractiveSession] = [:]
     /// A session the user asked to resume while it's open in a terminal;
@@ -1547,8 +1570,186 @@ public final class AppModel {
     /// it's being stopped. Stopping closes the terminal before the agent has
     /// gone, and attaching then would bring it back.
     public func attachIfLive(_ sessionID: UUID) {
-        guard isAgentAlive(sessionID), !isStopping(sessionID) else { return }
+        // A restart attaches the tab itself once the agent is back.
+        guard isAgentAlive(sessionID), !isStopping(sessionID), !restartingSessions.contains(sessionID) else { return }
         resume(sessionID)
+    }
+
+    // MARK: - Restart to Update
+
+    /// The Claude Code version a live session's agent runs, when it's older
+    /// than the one installed: Claude Code updated itself since the agent
+    /// started, and the daemon won't restart an attached or busy one.
+    public func outdatedVersion(of sessionID: UUID) -> ClaudeVersion? {
+        guard let current = environment.version, let agentID = state.workspace.session(sessionID)?.agentID,
+              isAgentAlive(sessionID), let version = agentVersions[agentID], version < current else { return nil }
+        return version
+    }
+
+    /// Why an outdated session can't be restarted now, or nil when it can.
+    /// `claude respawn` doesn't wait for a turn to end, so only an idle
+    /// agent with no background tasks is restarted.
+    public func restartBlocker(_ sessionID: UUID) -> String? {
+        guard let session = state.workspace.session(sessionID), let agentID = session.agentID else { return "Not a background agent" }
+        if restartingSessions.contains(sessionID) { return "Restarting…" }
+        if isStopping(sessionID) { return "Stopping" }
+        if !session.backgroundTasks.isEmpty { return "Background tasks are still running" }
+        if agents[agentID]?.status == "waiting" { return "It's waiting for your answer" }
+        if session.status == .working || agents[agentID]?.status != "idle" { return "Wait until it's idle" }
+        return nil
+    }
+
+    public func canRestartToUpdate(_ sessionID: UUID) -> Bool {
+        outdatedVersion(of: sessionID) != nil && restartBlocker(sessionID) == nil
+    }
+
+    /// Outdated sessions, live agents only.
+    public var outdatedSessionIDs: [UUID] {
+        // Read every half second for the menu bar: usually nothing is behind.
+        guard let current = environment.version, agentVersions.values.contains(where: { $0 < current }) else { return [] }
+        return state.workspace.sessions.map(\.id).filter { outdatedVersion(of: $0) != nil }
+    }
+
+    /// Restarts the session's agent on the installed Claude Code
+    /// (`claude respawn`), keeping its conversation, then attaches its tab
+    /// again if it had one: the restart ends the attached terminal.
+    public func restartToUpdate(_ sessionID: UUID) {
+        guard canRestartToUpdate(sessionID), let session = state.workspace.session(sessionID),
+              let agentID = session.agentID, let commands = agentCommands(reportErrors: true) else { return }
+        let wasAttached = running.contains(sessionID)
+        // While the agent is down it's listed without a process, which
+        // ends Awaiting Input; a question it ended on still stands after.
+        let waitingFor = session.status == .awaitingInput ? Optional(session.needsAction) : nil
+        let from = agentVersions[agentID]
+        restartingSessions.insert(sessionID)
+        if wasAttached { reattachOnExit.insert(sessionID) }
+        updateMenuFlags()
+        enqueue {
+            let result = await self.run(commands.respawn(agentID: agentID))
+            var outcome = RespawnResult.parse(exitCode: result.exitCode, output: result.output, errorOutput: result.errorOutput)
+            // A respawn that hung may still have restarted the agent: the
+            // agent list on the new version decides.
+            var waited = false
+            if result.timedOut {
+                await self.waitForRestartedAgent(sessionID)
+                waited = true
+                // Not back yet may only mean slow: say it couldn't be
+                // confirmed, rather than reporting a stop.
+                outcome = self.runsInstalledVersion(sessionID)
+                    ? .respawned(agentID: agentID) : .stillRunning
+            }
+            if case .respawned(let newID) = outcome {
+                if newID != agentID {
+                    self.state.workspace.updateSession(sessionID) { $0.agentID = newID }
+                    self.save()
+                }
+                let versions = [from.map { "from \($0)" }, self.environment.version.map { "to \($0)" }].compactMap { $0 }
+                self.log.append(.info, "Restarted “\(session.name)” on the installed Claude Code", detail: versions.joined(separator: " "))
+                if !waited { await self.waitForRestartedAgent(sessionID) }
+                if let waitingFor, self.state.workspace.session(sessionID)?.status == .completed {
+                    self.state.workspace.updateSession(sessionID) { $0.status = .awaitingInput; $0.needsAction = waitingFor }
+                    self.save()
+                }
+            } else {
+                // Its terminal still running: the restart didn't end it, so
+                // closing it later mustn't attach it again. One that has
+                // exited is attached again below if the agent is alive.
+                if self.running.contains(sessionID) { self.reattachOnExit.remove(sessionID) }
+                if case .failed(let message) = outcome {
+                    self.report("Couldn't restart “\(session.name)”: \(message)")
+                } else {
+                    self.report("Couldn't confirm “\(session.name)” restarted. Try again in a moment.")
+                }
+                await self.refreshAgents()
+            }
+            self.restartingSessions.remove(sessionID)
+            // Only a restart that happened, or may have (unconfirmed), explains
+            // the gap. After a failed one, the next check compares with the
+            // baseline from before it (kept while it ran), so an agent that
+            // really went is reported.
+            if case .failed = outcome {} else { self.quietAfterRestart.insert(sessionID) }
+            // If the old terminal is still going, its exit attaches the tab.
+            if self.reattachOnExit.contains(sessionID), !self.running.contains(sessionID) {
+                self.reattachOnExit.remove(sessionID)
+                self.reattachAfterRestart(sessionID)
+            }
+            self.updateMenuFlags()
+        }
+    }
+
+    /// Attaches a restarted session's tab again, unless it was stopped
+    /// meanwhile: a stop closes the tab before its agent has gone.
+    private func reattachAfterRestart(_ sessionID: UUID) {
+        guard isAgentAlive(sessionID), !isStopping(sessionID) else { return }
+        attach(sessionID)
+    }
+
+    /// Every outdated session that can be restarted now, one after another.
+    public func restartAllToUpdate() {
+        outdatedSessionIDs.filter(canRestartToUpdate).forEach(restartToUpdate)
+    }
+
+    /// The session's agent is listed alive, and the roster gives it the
+    /// installed version. A positive reading: an empty roster (unreadable,
+    /// say) makes nothing outdated, but doesn't confirm a restart either.
+    private func runsInstalledVersion(_ sessionID: UUID) -> Bool {
+        guard isAgentAlive(sessionID), let current = environment.version,
+              let agentID = state.workspace.session(sessionID)?.agentID, let version = agentVersions[agentID] else { return false }
+        return !(version < current)
+    }
+
+    /// Attaching while the daemon is still bringing the agent back fails
+    /// ("Job is respawning after an upgrade"), so wait until it's listed
+    /// alive on the new version, for a few seconds at most.
+    private func waitForRestartedAgent(_ sessionID: UUID) async {
+        for attempt in 0..<10 {
+            if attempt > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
+            await refreshAgents()
+            if runsInstalledVersion(sessionID) { return }
+        }
+    }
+
+    /// Re-reads the daemon's roster when it has changed. A version newer
+    /// than the installed one means Claude Code has updated itself since the
+    /// last check, so the CLI is checked again (once per version).
+    private func readAgentVersions() {
+        let url = DaemonRoster.url(claudeHome: discovery.claudeHome)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let stamp = attributes.map { attributes -> String in
+            let date = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            return "\(date)|\((attributes[.size] as? NSNumber)?.intValue ?? -1)"
+        }
+        guard stamp != rosterStamp else { return }
+        rosterStamp = stamp
+        let versions: [String: ClaudeVersion]
+        if attributes == nil {
+            // No daemon has run yet, or it's a CLI without one.
+            versions = [:]
+            rosterReadFailed = false
+        } else {
+            do {
+                guard let read = DaemonRoster.versions(try Data(contentsOf: url)) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                versions = read
+            } catch {
+                log.append(.error, "Couldn't read Claude Code's agent roster", detail: "\(url.path): \(error.localizedDescription)")
+                // Read mid-write, the file changes again when it's written and
+                // is read then, so keep the last versions. Unreadable twice in
+                // a row (a CLI whose roster changed shape), trust none.
+                defer { rosterReadFailed = true }
+                guard rosterReadFailed else { return }
+                if !agentVersions.isEmpty { agentVersions = [:] }
+                return
+            }
+            rosterReadFailed = false
+        }
+        if versions != agentVersions { agentVersions = versions }
+        if let newest = versions.values.max(), let current = environment.version, current < newest,
+           recheckedForVersion.map({ $0 < newest }) ?? true {
+            recheckedForVersion = newest
+            enqueue { await self.checkEnvironment(force: true) }
+        }
     }
 
     /// Whether a stop was asked for and its agent hasn't been seen gone yet.
@@ -1606,6 +1807,7 @@ public final class AppModel {
         guard result.exitCode == 0, let listed = try? AgentListParser.parse(data) else { return }
         apply(listed)
         applyTerminalSessions((try? AgentListParser.parseInteractive(data)) ?? [])
+        readAgentVersions()
     }
 
     func applyTerminalSessions(_ listed: [InteractiveSession]) {
@@ -1703,7 +1905,9 @@ public final class AppModel {
                     session.adoptConversation(agent.sessionID)
                     session.hasConversation = true
                     if !agent.cwd.isEmpty { session.workingDirectory = agent.cwd }
-                    if let name = agent.name, !name.isEmpty, !session.hasCustomName { session.name = name }
+                    // An agent restarted before Claude Code titled it is
+                    // listed under its id (2.1.296, after `claude respawn`).
+                    if let name = agent.name, !name.isEmpty, name != agent.id, !session.hasCustomName { session.name = name }
                     // An idle agent doesn't undo "waiting on you": the hooks saw
                     // a question or a permission prompt that the agent list
                     // may not (it only says the process is idle). The next
@@ -2020,14 +2224,22 @@ public final class AppModel {
 
     /// Called by the UI when a session's terminal process exits.
     public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
-        // Closing its tab is a sign it may be ready for a follow-up.
-        followUpDue.insert(sessionID)
+        // Closing its tab is a sign it may be ready for a follow-up; a
+        // restart ending it isn't.
+        if !reattachOnExit.contains(sessionID) && !restartingSessions.contains(sessionID) { followUpDue.insert(sessionID) }
         running.remove(sessionID)
         runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil
         exitCodes[sessionID] = exitCode ?? 0
         let name = state.workspace.session(sessionID)?.name ?? sessionID.uuidString
         log.append(.terminal, exitCode.map { "Terminal exited (code \($0)): \(name)" } ?? "Terminal exited: \(name)")
+        // `claude respawn` ended the attach. While it's still restarting,
+        // the restart attaches the tab when it's done.
+        if reattachOnExit.contains(sessionID), !restartingSessions.contains(sessionID) {
+            reattachOnExit.remove(sessionID)
+            reattachAfterRestart(sessionID)
+            if running.contains(sessionID) { return }
+        }
         if state.workspace.session(sessionID)?.agentID != nil {
             // Only the attach client ended; the agent's own state decides.
             enqueue { await self.refreshAgents() }
@@ -2053,6 +2265,8 @@ public final class AppModel {
     /// Closes the session's terminal. For a background agent this only
     /// detaches; the agent keeps running.
     private func detach(_ sessionID: UUID) {
+        // A restart in progress doesn't attach the tab again.
+        reattachOnExit.remove(sessionID)
         let wasRunning = running.remove(sessionID) != nil
         runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil
@@ -2216,14 +2430,19 @@ public final class AppModel {
     /// agent that exited before its task was done, unless you stopped it. The
     /// first check only records a baseline.
     public func checkNotifications() {
-        let current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
+        var current = Dictionary(uniqueKeysWithValues: state.workspace.sessions.map {
             ($0.id, NotificationBaseline(status: $0.status, agentAlive: isAgentAlive($0.id),
                                          taskUnfinished: $0.agentID.flatMap { agents[$0]?.state } == "working"))
         })
+        // A restarting session keeps its baseline from before the restart.
+        for id in restartingSessions { if let kept = notificationBaseline?[id] { current[id] = kept } }
         defer { notificationBaseline = current }
         guard let previous = notificationBaseline else { return }
         let settings = state.settings.notifications
         for session in state.workspace.sessions {
+            // A restart lists the agent without a process for a moment, while
+            // its task may still say "working": not a stop to report.
+            if restartingSessions.contains(session.id) || quietAfterRestart.remove(session.id) != nil { continue }
             guard let before = previous[session.id], let after = current[session.id], before != after else { continue }
             let kind: SessionNotification.Kind
             if stopsRequested.contains(session.id) {
@@ -2304,11 +2523,13 @@ public final class AppModel {
             flags.hasSelection = true
             flags.canResumeSelected = !running.contains(id)
             flags.canStopSelected = running.contains(id) || isAgentAlive(id)
+            flags.canRestartSelected = canRestartToUpdate(id)
             flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         } else if let id = selectedSessionID, state.workspace.overviewTab(id) != nil {
             // An overview tab docks like any other.
             flags.canSplitSelected = state.workspace.panes.focusedGroup.tabIDs.count > 1
         }
+        flags.restartableCount = outdatedSessionIDs.filter(canRestartToUpdate).count
         flags.isShellOpen = shellPanel.isOpen
         flags.leftTool = state.settings.toolWindows.visibleLeft
         flags.rightTool = visibleSessionTool
