@@ -171,6 +171,7 @@ struct PlanItemView: View {
             VStack(alignment: .leading, spacing: 12) {
                 statusPill
                 title
+                PlanItemGitHubRow(item: item, projectID: projectID)
                 Text("ATTACHED NOTES")
                     .font(DS.font(11, .extraBold))
                     .kerning(0.66)
