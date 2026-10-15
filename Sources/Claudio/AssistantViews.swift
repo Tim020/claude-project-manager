@@ -291,10 +291,18 @@ struct TimedNoteCard: View {
     }
 }
 
-/// One note: its text, then who wrote it, where and when, with Promote…
-/// (no plan item yet) and Undo (notes you didn't write). Its plan item
-/// shows as a chip, and the assistant's suggestion under it. Right-click to
-/// copy it, attach or detach it, or delete it.
+/// One note: its text, then who wrote it, where and when, and under that its
+/// state (Check Against Plan…, Add as Idea, Undo, or a chip for the plan
+/// item, the assistant's suggestion or a failed check). Right-click to copy
+/// it, attach or detach it, or delete it.
+///
+/// A card's height is set by its note and never changes by itself: the text
+/// is cut to `collapsedLines` until you open it, the meta line is one line,
+/// and everything the assistant adds later (a suggestion, a failed check, a
+/// plan item) goes in the one state row, which is there from the start when
+/// the note will need it. A lazy stack estimates the height of cards it
+/// hasn't built, and cards that grow after they appear kept it re-estimating
+/// and re-adjusting the scroll offset, which hung the list while scrolling.
 struct NoteCard: View {
     @Environment(AppModel.self) private var model
     let note: ProjectNote
@@ -304,88 +312,93 @@ struct NoteCard: View {
     var showsItemChip = true
     /// How long a new note keeps its highlight.
     static let freshInterval: TimeInterval = 60
+    /// Lines of a long note shown until it's opened.
+    static let collapsedLines = 5
+    @State private var isExpanded = false
+    @State private var showsSuggestion = false
+
+    /// Decided by the note's text alone, so it can't change under the list.
+    private var isLong: Bool {
+        note.text.count > 280
+            || note.text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count > Self.collapsedLines
+    }
+
+    private var showsAllText: Bool { isExpanded || !isLong }
+
+    /// The note's text. Selectable text is drawn by a text view that ignores
+    /// lineLimit, so selection is only on while nothing is cut off.
+    @ViewBuilder
+    private var noteText: some View {
+        let text = Text(note.text)
+            .font(DS.font(13))
+            .foregroundStyle(DS.text)
+            .lineSpacing(2)
+            .lineLimit(showsAllText ? nil : Self.collapsedLines)
+        if showsAllText {
+            text.textSelection(.enabled)
+        } else {
+            text
+        }
+    }
 
     var body: some View {
         let attached = model.attachedItem(of: note, inProject: projectID)
         let item: PlanItem? = if case .item(let item) = attached { item } else { nil }
         let suggestion = model.noteSuggestions[note.id]
+        let failure = suggestion == nil ? model.noteCheckFailure(note.id, inProject: projectID) : nil
+        let showsChip = suggestion != nil || failure != nil || attached == .unreadable || (item != nil && showsItemChip)
+        let offersPromote = attached == .none && suggestion == nil
         VStack(alignment: .leading, spacing: 6) {
-            // No fixedSize(vertical:) here: the scroll view already gives the
-            // text its full height, and in a lazy stack ideal-size modifiers
-            // can make estimated and measured heights disagree, which fed the
-            // scroll-offset loop that hung the notes list.
-            Text(note.text)
-                .font(DS.font(13))
-                .foregroundStyle(DS.text)
-                .lineSpacing(2)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // Room for the ⋯ menu in the corner.
-                .padding(.trailing, 16)
+            VStack(alignment: .leading, spacing: 3) {
+                noteText
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .clipped()
+                    // Room for the ⋯ menu in the corner.
+                    .padding(.trailing, 16)
+                if isLong {
+                    LinkLabelButton(title: isExpanded ? "Show Less" : "Show More") { isExpanded.toggle() }
+                        .font(DS.font(11.5))
+                }
+            }
             HStack(spacing: 6) {
                 AuthorMarker(author: note.author)
                 Text(model.metaLine(for: note))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 4)
-                if attached == .none && suggestion == nil {
-                    // Named for what it does: with the assistant on it asks
-                    // Claude, and nothing changes until you answer.
-                    let isOn = model.isAssistantOn(inProject: projectID)
-                    LinkLabelButton(title: isOn ? "Check Against Plan…" : "Add as Idea") {
-                        model.requestPromote(note.id, projectID: projectID)
-                    }
-                    .help(isOn ? "Ask the assistant whether this note is new work or part of an existing plan item"
-                               : "Add this note to the plan as an Idea")
-                }
-                if note.canUndo {
-                    LinkLabelButton(title: "Undo") { model.undoNote(note.id, projectID: projectID) }
-                        .help("Remove this note")
-                }
+                Spacer(minLength: 0)
             }
             .font(DS.font(11.5))
             .foregroundStyle(DS.dim)
-            if let item, showsItemChip {
-                Button { model.openPlanItem(item.id, projectID: projectID) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "checklist").font(.system(size: 10.5))
-                        Text(item.title).lineLimit(1)
+            if showsChip || offersPromote || note.canUndo {
+                HStack(spacing: 8) {
+                    if let suggestion {
+                        suggestionChip(suggestion)
+                    } else if failure != nil {
+                        failureChip
+                    } else if attached == .unreadable {
+                        unreadableChip
+                    } else if let item, showsItemChip {
+                        itemChip(item)
                     }
-                    .font(DS.font(11.5))
-                    .foregroundStyle(DS.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(DS.border))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Open its plan item")
-            }
-            if attached == .unreadable {
-                HStack(spacing: 6) {
-                    Label("Attached to an item that can't be read", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(DS.orange)
-                    LinkLabelButton(title: "Detach") { model.detachNote(note.id, projectID: projectID) }
+                    Spacer(minLength: 4)
+                    if offersPromote {
+                        // Named for what it does: with the assistant on it asks
+                        // Claude, and nothing changes until you answer.
+                        let isOn = model.isAssistantOn(inProject: projectID)
+                        LinkLabelButton(title: isOn ? "Check Against Plan…" : "Add as Idea") {
+                            model.requestPromote(note.id, projectID: projectID)
+                        }
+                        .help(isOn ? "Ask the assistant whether this note is new work or part of an existing plan item"
+                                   : "Add this note to the plan as an Idea")
+                    }
+                    if note.canUndo {
+                        LinkLabelButton(title: "Undo") { model.undoNote(note.id, projectID: projectID) }
+                            .help("Remove this note")
+                    }
                 }
                 .font(DS.font(11.5))
-                .help("Its plan item isn't in the plan: it's kept unread in the file, or was removed. Detach frees the note.")
-            }
-            if let suggestion {
-                SuggestionBox(suggestion: suggestion, note: note, projectID: projectID)
-            } else if let failure = model.noteCheckFailure(note.id, inProject: projectID) {
-                // A background check that failed: Job Failed says why, with Try Again.
-                Button { model.openNoteCheckFailure(note.id, projectID: projectID) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "exclamationmark.circle")
-                        Text("Check against the plan failed")
-                        Image(systemName: "chevron.right").font(.system(size: 9))
-                    }
-                    .font(DS.font(11.5))
-                    .foregroundStyle(DS.red)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(failure.message)
+                .foregroundStyle(DS.dim)
+                .lineLimit(1)
             }
         }
         .padding(.horizontal, 10)
@@ -413,6 +426,87 @@ struct NoteCard: View {
             .accessibilityLabel("Note actions")
         }
         .contextMenu { NoteMenuItems(note: note, projectID: projectID) }
+        // A suggestion that's been answered closes its popover, and the next
+        // one doesn't open it again.
+        .onChange(of: suggestion) { if suggestion == nil { showsSuggestion = false } }
+    }
+
+    // MARK: State chips
+
+    /// The assistant's suggestion: Checking…, or a chip that opens the
+    /// question with its actions.
+    @ViewBuilder
+    private func suggestionChip(_ suggestion: NoteSuggestion) -> some View {
+        if case .checking = suggestion {
+            HStack(spacing: 5) {
+                ProgressView().controlSize(.small).frame(width: 12, height: 12)
+                Text("Checking against the plan…")
+            }
+            .help("The assistant is checking this note against the plan")
+        } else {
+            Button { showsSuggestion = true } label: {
+                chipLabel(systemName: "sparkles", tint: DS.blue, title: suggestionTitle(suggestion))
+            }
+            .buttonStyle(.plain)
+            .help("The assistant has a suggestion for this note")
+            .popover(isPresented: $showsSuggestion, arrowEdge: .bottom) {
+                SuggestionBox(suggestion: suggestion, note: note, projectID: projectID)
+                    .frame(width: 300)
+                    .padding(10)
+            }
+        }
+    }
+
+    private func suggestionTitle(_ suggestion: NoteSuggestion) -> String {
+        switch suggestion {
+        case .checking: return "Checking…"
+        case .promote: return "Suggests a plan item"
+        case .attach: return "Suggests attaching"
+        }
+    }
+
+    /// A background check that failed: Job Failed says why, with Try Again.
+    private var failureChip: some View {
+        Button { model.openNoteCheckFailure(note.id, projectID: projectID) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.circle")
+                Text("Check against the plan failed")
+                Image(systemName: "chevron.right").font(.system(size: 9))
+            }
+            .foregroundStyle(DS.red)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.noteCheckFailure(note.id, inProject: projectID)?.message ?? "")
+    }
+
+    private var unreadableChip: some View {
+        HStack(spacing: 6) {
+            Label("Item can't be read", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(DS.orange)
+            LinkLabelButton(title: "Detach") { model.detachNote(note.id, projectID: projectID) }
+        }
+        .help("Its plan item isn't in the plan: it's kept unread in the file, or was removed. Detach frees the note.")
+    }
+
+    private func itemChip(_ item: PlanItem) -> some View {
+        Button { model.openPlanItem(item.id, projectID: projectID) } label: {
+            chipLabel(systemName: "checklist", tint: DS.text, title: item.title)
+        }
+        .buttonStyle(.plain)
+        .help("Open its plan item")
+    }
+
+    private func chipLabel(systemName: String, tint: Color, title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: systemName).font(.system(size: 10.5)).foregroundStyle(tint)
+            Text(title).lineLimit(1)
+        }
+        .foregroundStyle(DS.text)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 1)
+        .background(Capsule().fill(DS.border))
+        .contentShape(Capsule())
     }
 }
 
