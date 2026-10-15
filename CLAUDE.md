@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Claudio is a native macOS app (SwiftUI, macOS 14+) for running and organising many Claude Code sessions. It drives the `claude` CLI: each tab is an embedded terminal attached to a Claude Code background agent. See `README.md` for the feature list, and `design/` for the original Claude Design handoff.
+Claudio is a native macOS app (SwiftUI, macOS 14+) for running and organising many Claude Code sessions. It drives the `claude` CLI: each tab is an embedded terminal attached to a Claude Code background agent. See `docs/features.md` for the feature list, `docs/architecture.md` for the two-target split and data model, and `design/` for the original Claude Design handoff.
 
 ## Commands
 
@@ -105,4 +105,4 @@ A fresh container is signed out, with an empty config. Any claim about CLI outpu
 
 - Work on a feature branch and open a pull request into `main`; don't push to `main` directly. Name branches by kind: `feature/…`, `fix/…`, `ci/…`, `docs/…`.
 - CI runs on every pull request (and again on `main` after merging). Check the PR's checks before merging, the macOS job in particular: it's the only place the SwiftUI layer compiles. Each run uploads the built `Claudio.zip`, so a PR can be tried before it merges.
-- Keep `README.md`'s feature list current when behaviour changes. Log user-visible actions and CLI commands in the Activity Log (`log.append`), but never account details (see `run(_:hideOutput:)`).
+- Keep `docs/features.md` current when behaviour changes, and `README.md`'s highlights in step with it. Log user-visible actions and CLI commands in the Activity Log (`log.append`), but never account details (see `run(_:hideOutput:)`).
