@@ -14,6 +14,8 @@ public struct NewSessionRequest: Equatable, Sendable {
     public var useWorktree = true
     /// The skills its prompt names (Start Session from a plan item).
     public var namedSkills: [String] = []
+    /// Its own skill set (nil: the shared skills). See `Session.skillSet`.
+    public var skillSet: [String]?
     /// Tags to give the new session (already resolved ids, picked in the UI).
     public var tagIDs: [Tag.ID] = []
 
@@ -351,6 +353,12 @@ public final class AppModel {
     public internal(set) var toast: Toast?
     /// Each project's approved skills, as last read (see AppModel+AssistantSessions).
     public internal(set) var approvedSkills: [UUID: [ApprovedSkill]] = [:]
+    /// Each project's retired skills (step 5b), greyed out in Skills.
+    public internal(set) var retiredSkills: [UUID: [ApprovedSkill]] = [:]
+    /// The day the unused-skills check last ran ("2026-10-14"): once a day.
+    @ObservationIgnored var unusedSkillCheckDay: String?
+    /// Each project's own skills, in `<repo>/.claude/skills` (step 5b).
+    public internal(set) var repositorySkills: [UUID: [ApprovedSkill]] = [:]
     /// Each project's `skills.json` (see AppModel+Skills).
     public internal(set) var skillsData: [UUID: SkillsData] = [:]
     @ObservationIgnored var savedSkillsData: [UUID: SkillsData] = [:]
@@ -366,6 +374,14 @@ public final class AppModel {
     /// as Check Failed, which opens Job Failed. Kept until the note is
     /// checked again (in memory: the Activity Log keeps the record).
     public internal(set) var noteCheckFailures: [UUID: NoteCheckFailure] = [:]
+    /// Each watched skill file's size and date as last read, so the drift
+    /// check reads a file only when it has changed (see AppModel+SkillDrift).
+    @ObservationIgnored var skillFileStamps: [String: String] = [:]
+    /// Skill files whose check couldn't stat them (logged once each).
+    @ObservationIgnored var skillFilesUnreachable = Set<String>()
+    /// The session whose Edit or Write last touched each skill file (by
+    /// resolved path), from the hooks, to name it on the card (not saved).
+    @ObservationIgnored var skillFileEditors: [String: UUID] = [:]
     /// Lessons a skill is being drafted from now (see AppModel+SkillDrafts).
     public internal(set) var draftingCandidates = Set<UUID>()
     /// The login shell's PATH, read once for the drafts' command check
@@ -1451,7 +1467,11 @@ public final class AppModel {
         historyLines[id] = nil
         switch scope {
         case .claudioOnly: state.workspace.removeFromClaudio(id, at: now())
-        case .everywhere: state.workspace.deleteSession(id)
+        case .everywhere:
+            state.workspace.deleteSession(id)
+            // Gone from Claude Code too: nothing will launch with its skill
+            // set again. (Removed from Claudio only, it can come back.)
+            if session.skillSet != nil { removeSkillSet(of: session) }
         }
         save()
     }
@@ -1525,6 +1545,7 @@ public final class AppModel {
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
         session.namedSkills = request.namedSkills
+        session.skillSet = request.skillSet
         // Everything a new session does is new to the assistant: a mark that
         // matches no conversation reads its history from the top. (Sessions
         // without a mark are ones from before, and get a baseline instead.)
@@ -1993,7 +2014,7 @@ public final class AppModel {
             applyStatus(sessionID, .completed)
             return
         }
-        let assistant = assistantLaunch(forProject: session.projectID)
+        let assistant = assistantLaunch(for: session)
         let result = await launchAgent(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
         if await linkDispatched(sessionID, result: result) {
             if markLaunchedWithAssistant(sessionID, assistant) { save() }
@@ -2015,7 +2036,7 @@ public final class AppModel {
         }
         // Resuming an agent with flags would copy it, so only a session that
         // isn't one yet gets the assistant's.
-        let assistant = continuingAgent ? nil : assistantLaunch(forProject: session.projectID)
+        let assistant = continuingAgent ? nil : assistantLaunch(for: session)
         let result = await launchAgent(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent,
                                                        assistant: assistant))
         if await linkDispatched(sessionID, result: result), markLaunchedWithAssistant(sessionID, assistant) { save() }
@@ -2168,7 +2189,7 @@ public final class AppModel {
             return false
         }
         try? FileManager.default.createDirectory(at: hookEventsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let assistant = assistantLaunch(forProject: session.projectID)
+        let assistant = assistantLaunch(for: session)
         pendingLaunches[sessionID] = TerminalLaunch.make(session: session, claudeExecutable: executable, shell: shell,
                                                          initialPrompt: prompt, hookEventsPath: hookEventsURL.path,
                                                          statusLine: statusLineCapture(), assistant: assistant)
@@ -2272,6 +2293,7 @@ public final class AppModel {
             // It's carrying on, so an offered follow-up no longer applies.
             if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
             if event.name == .preToolUse || event.name == .userPromptSubmit { noteSkillUse(event, sessionID: target) }
+            if event.name == .postToolUse { noteSkillFileEdit(event, sessionID: target) }
             // Otherwise the only trace is the follow-up it holds back.
             if event.name == .stopFailure {
                 log.append(.error, "\(state.workspace.session(target)?.name ?? "A session"): its turn failed (\(event.error ?? "an API error"))")
@@ -2355,6 +2377,13 @@ public final class AppModel {
     }
 
     /// Moves a session's follow-up mark (see AppModel+FollowUps).
+    /// Sets a session's own skill set (see AppModel+AssistantSessions).
+    func setSessionSkillSet(_ sessionID: UUID, _ skills: [String]?) {
+        guard let session = workspace.session(sessionID), session.skillSet != skills else { return }
+        state.workspace.updateSession(sessionID) { $0.skillSet = skills }
+        save()
+    }
+
     func setFollowUpMark(_ sessionID: UUID, _ mark: FollowUpMark) {
         guard let session = workspace.session(sessionID), session.followUpMark != mark else { return }
         state.workspace.updateSession(sessionID) { $0.followUpMark = mark }

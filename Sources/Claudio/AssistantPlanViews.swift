@@ -308,7 +308,7 @@ private struct PlanItemSessionSection: View {
     var body: some View {
         let session = item.status == .inSession ? model.session(workingOn: item) : nil
         VStack(alignment: .leading, spacing: 8) {
-            Text(session == nil ? "SKILLS FOR ITS PROMPT" : "SKILLS NAMED IN ITS PROMPT")
+            Text(session == nil ? "SKILLS FOR ITS PROMPT" : session?.skillSet != nil ? "SKILLS LOADED IN THIS SESSION" : "SKILLS NAMED IN ITS PROMPT")
                 .font(DS.font(11, .extraBold))
                 .kerning(0.66)
                 .foregroundStyle(DS.muted)
@@ -318,6 +318,8 @@ private struct PlanItemSessionSection: View {
                     .font(DS.font(12))
                     .foregroundStyle(DS.muted)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let session, let set = session.skillSet {
+                SessionSkillSetEditor(session: session, skills: set, projectID: projectID)
             } else {
                 let skills = session?.namedSkills ?? model.suggestedSkills(forItem: item, inProject: projectID)
                 Group {
@@ -369,6 +371,44 @@ private struct PlanItemSessionSection: View {
 }
 
 /// Skill chips that wrap onto more lines.
+/// A plan-item session's own skills: remove one with its ×, or add another
+/// approved skill. Its links change at once; the session sees it within
+/// seconds, without restarting.
+private struct SessionSkillSetEditor: View {
+    @Environment(AppModel.self) private var model
+    let session: Session
+    let skills: [String]
+    let projectID: UUID
+
+    var body: some View {
+        let others = (model.approvedSkills[projectID] ?? []).map(\.name).filter { !skills.contains($0) }
+        VStack(alignment: .leading, spacing: 6) {
+            if skills.isEmpty {
+                Text("None: it loads no Claudio skills.").font(DS.font(12.5)).foregroundStyle(DS.dim)
+            } else {
+                FlowChips(names: skills, tinted: true) { removed in
+                    model.setSkillSet(skills.filter { $0 != removed }, forSession: session.id)
+                }
+            }
+            HStack(spacing: 8) {
+                if !others.isEmpty {
+                    Menu("Add Skill") {
+                        ForEach(others, id: \.self) { name in
+                            Button(name) { model.setSkillSet(skills + [name], forSession: session.id) }
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .font(DS.font(12))
+                }
+                Spacer(minLength: 0)
+            }
+            Text("Only these skills are loaded in this session. Changes reach it within a few seconds.")
+                .font(DS.font(11.5)).foregroundStyle(DS.dim).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 struct FlowChips: View {
     let names: [String]
     var tinted = false

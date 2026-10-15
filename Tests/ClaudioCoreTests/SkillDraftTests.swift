@@ -42,7 +42,7 @@ final class SkillDraftTests: XCTestCase {
         XCTAssertEqual(LessonSignature.commandHead("FOO=1 sudo ./scripts/test-linux.sh --filter X"), "test-linux.sh")
         XCTAssertEqual(LessonSignature.commandHead("git worktree add ../w"), "git worktree")
         XCTAssertEqual(LessonSignature.errorHead("Exit code 128\nfatal: '/tmp/a/b' is already checked out at '/x/y' (3 times, abc1234def)"),
-                       "fatal: '<path>' is already checked out at '<path>' (# times, #)")
+                       "fatal: '<path>' is already checked out at '<path>' (# times", "up to its first clause")
         func failure(_ command: String, _ error: String) -> SessionDigest.Evidence {
             SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: command, text: error)
         }
@@ -282,16 +282,20 @@ final class SkillDraftTests: XCTestCase {
     func testARecordedDraftPassesTheChecks() throws {
         let result = CommandResult(exitCode: 0, output: try Fixtures.string("assistant-skill-draft.json"), errorOutput: "")
         guard case .success(let reply) = AssistantReplyParser.parse(result, timeout: 120) else { return XCTFail("expected a reply") }
-        let draft = try XCTUnwrap(SkillDraftJob.draft(from: reply.output, skills: [ApprovedSkill(name: "worktree-setup")]))
+        let draft = try XCTUnwrap(SkillDraftJob.draft(from: reply.output, skills: [ApprovedSkill(name: "worktree-setup")],
+                                                      tagCatalog: ["Code", "Research", "Testing", "Docs"]))
         XCTAssertEqual(draft.action, .new)
-        XCTAssertEqual(draft.name, "linux-test-checks")
+        XCTAssertEqual(draft.name, "linux-test-script")
+        XCTAssertEqual(draft.tags, ["Testing", "Code"], "from the catalog, as the evidence sessions were tagged")
         let text = SkillText.compose(name: draft.name, description: draft.description, whenToUse: draft.whenToUse, paths: draft.paths,
-                                     body: draft.body, metadata: [("claudio-version", "1")])
+                                     body: draft.body, metadata: [("claudio-version", "1")], tags: draft.tags)
         let context = SkillCheck.Context(projectPath: "/code/app", existingNames: ["worktree-setup"], patching: nil,
                                          commandExists: { _ in true }, fileExists: { $0 == "/code/app/scripts/test-linux.sh" })
         XCTAssertEqual(SkillCheck.problems(text, context: context), [])
-        XCTAssertEqual(SkillFiles.skill(fromSkillFile: text, folderName: "x").paths, ["Tests/**/*.swift", "scripts/test-linux.sh"])
-        XCTAssertEqual(reply.durationMS, 5232)
+        let skill = SkillFiles.skill(fromSkillFile: text, folderName: "x")
+        XCTAssertEqual(skill.paths, ["scripts/test-linux.sh", "Tests/**/*.swift"])
+        XCTAssertEqual(skill.tags, ["Testing", "Code"])
+        XCTAssertEqual(reply.durationMS, 4985)
     }
 
     // MARK: - Review round 1 (PR #38)
@@ -369,9 +373,118 @@ final class SkillDraftTests: XCTestCase {
     }
 
     func testANewerSkillsFileIsRefused() throws {
-        XCTAssertThrowsError(try JSONFileStore.decoder.decode(SkillsData.self, from: Data(#"{"version":2,"usage":{}}"#.utf8)))
+        XCTAssertThrowsError(try JSONFileStore.decoder.decode(SkillsData.self, from: Data(#"{"version":3,"usage":{}}"#.utf8)))
         let saved = try JSONDecoder().decode(JSONValue.self, from: JSONFileStore.encoder.encode(SkillsData()))
-        XCTAssertEqual(saved["version"], .number(1), "saved with its version")
+        XCTAssertEqual(saved["version"], .number(Double(SkillsData.currentVersion)), "saved with its version")
         XCTAssertNoThrow(try JSONFileStore.decoder.decode(SkillsData.self, from: Data(#"{"usage":{}}"#.utf8)), "no version: 1")
+    }
+
+    // MARK: - Step 5b: tags
+
+    func testTagsReadBackWholeFromTheFrontmatter() {
+        let tags = ["Frontend", "UI, design", "Ops: on-call", "[beta]"]
+        let text = SkillText.compose(name: "a", description: "d", whenToUse: "", paths: [], body: "Body.",
+                                     metadata: [("claudio-version", "1")], tags: tags)
+        XCTAssertTrue(text.contains("  claudio-tags:\n    - \"Frontend\""), "one quoted name a line")
+        XCTAssertEqual(SkillFiles.skill(fromSkillFile: text, folderName: "a").tags, tags)
+        XCTAssertEqual(SkillFiles.skill(fromSkillFile: text, folderName: "a").version, 1, "other metadata still reads")
+        XCTAssertEqual(SkillFiles.skill(fromSkillFile: "---\nname: b\nmetadata:\n  claudio-tags: [Frontend, Ops]\n---\n",
+                                        folderName: "b").tags, ["Frontend", "Ops"], "the inline form too")
+    }
+
+    func testChipsScoreTheSessionsTags() {
+        let skills = [ApprovedSkill(name: "frontend-style", tags: ["Frontend"]), ApprovedSkill(name: "ops", tags: ["Ops"])]
+        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderNames: [], tagNames: ["frontend"]).map(\.name),
+                       ["frontend-style"], "matched without regard to case")
+        XCTAssertEqual(SkillChips.pick(from: skills, touchedFiles: [], folderNames: [], tagNames: []), [])
+    }
+
+    func testDraftTagsComeOnlyFromTheCatalog() throws {
+        func draft(_ json: String) throws -> SkillDraft? {
+            SkillDraftJob.draft(from: try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8)), skills: [],
+                                tagCatalog: ["Frontend", "Ops"])
+        }
+        let tagged = try draft(#"{"action":"new","skill":null,"name":"a","description":"d","whenToUse":"","paths":[],"tags":["frontend","Made Up","Ops","ops"],"body":"b","why":""}"#)
+        XCTAssertEqual(tagged?.tags, ["Frontend", "Ops"], "spelled as the catalog spells them, once each; unknown names dropped")
+        let untagged = try draft(#"{"action":"new","skill":null,"name":"a","description":"d","whenToUse":"","paths":[],"body":"b","why":""}"#)
+        XCTAssertEqual(untagged?.tags, [], "a reply without tags has none")
+        let call = SkillDraftJob.request(candidate: LessonCandidate(signature: "s", summary: "x",
+                                                                    evidence: [LessonEvidence(sessionID: UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!, sessionName: "S", kind: .failure, text: "t", at: Date())],
+                                                                    remember: false, at: Date()),
+                                         projectName: "App", skills: [], tagCatalog: ["Frontend"],
+                                         sessionTags: [UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!: ["Frontend"]])
+        XCTAssertTrue(call.input.contains(#""tagCatalog":["Frontend"]"#))
+        XCTAssertTrue(call.input.contains(#""sessionTags":["Frontend"]"#))
+        XCTAssertTrue(call.schema.contains(#""tags""#))
+    }
+
+    // MARK: - Step 5b: records' location
+
+    func testRecordsKnowWhereTheSkillLives() throws {
+        let old = #"{"version":1,"usage":{},"candidates":[],"proposals":[],"records":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"a","version":1,"approvedAt":"2026-10-01T10:00:00Z","contentHash":"x"}]}"#
+        let data = try JSONFileStore.decoder.decode(SkillsData.self, from: Data(old.utf8))
+        XCTAssertEqual(data.records.first?.location, .claudio, "a 5a record is Claudio's")
+        var moved = data
+        moved.records[0].location = .repository
+        let saved = try JSONDecoder().decode(JSONValue.self, from: JSONFileStore.encoder.encode(moved))
+        XCTAssertEqual(saved["version"], .number(2), "a newer file, so a 5a build leaves it alone")
+        XCTAssertEqual(try JSONFileStore.decoder.decode(SkillsData.self, from: JSONFileStore.encoder.encode(moved)).records.first?.location,
+                       .repository)
+    }
+
+    func testTheFileStoreRemovesAnApprovedSkill() throws {
+        let store = AssistantFileStore(root: try makeTemporaryDirectory())
+        let project = UUID()
+        try store.writeApprovedSkill(name: "a", text: "---\nname: a\n---\n", projectID: project)
+        XCTAssertEqual(store.approvedSkills(projectID: project).map(\.name), ["a"])
+        try store.removeApprovedSkill(name: "a", projectID: project)
+        XCTAssertEqual(store.approvedSkills(projectID: project), [])
+        XCTAssertThrowsError(try store.removeApprovedSkill(name: "../x", projectID: project))
+    }
+
+    // MARK: - Tim's two worktree-guard lessons (2026-10-14)
+
+    /// The guard's message, from his two sessions (paths shortened).
+    static let guardRunsGh = "This session is isolated in the worktree /Users/tim/Documents/Code/claude-project-manager/.claude/worktrees/session-tags, but this command runs gh with the text {user: .user.login, state: .state,… inside a construct too complex to verify"
+    static let guardTooComplex = "This session is isolated in the worktree /Users/tim/Documents/Code/claude-project-manager/.claude/worktrees/x, but this command is too complex to verify that it stays inside the worktree."
+
+    func testShellSyntaxAndTheFirstClauseGroupTheseFailures() {
+        XCTAssertEqual(LessonSignature.commandHead("for id in 1 2; do gh api repos/x/pulls/$id --jq '{user: .user.login}'; done"), "shell")
+        XCTAssertEqual(LessonSignature.commandHead("s=$(gh api x) && echo $s"), "shell")
+        XCTAssertEqual(LessonSignature.commandHead("if [ -d x ]; then ls x; fi"), "shell")
+        XCTAssertEqual(LessonSignature.commandHead("gh pr view 12"), "gh pr", "a plain command keeps its words")
+        func failure(_ command: String, _ error: String) -> SessionDigest.Evidence {
+            SessionDigest.Evidence(ref: "f1", kind: .failure, tool: "Bash", command: command, text: error)
+        }
+        let first = LessonSignature.of(failure("for id in 1 2; do gh api x/$id; done", SkillDraftTests.guardRunsGh))
+        let second = LessonSignature.of(failure("do s=$(gh api x) && echo $s", SkillDraftTests.guardTooComplex))
+        XCTAssertEqual(first, second, "the same lesson from two sessions")
+        XCTAssertEqual(first, "bash shell | this session is isolated in the worktree <path>")
+        XCTAssertEqual(LessonSignature.firstClause("no, it's here"), "no, it's here", "too short a clause to cut at")
+    }
+
+    func testSavedCandidatesAreRegroupedAndMerged() {
+        let one = UUID(), two = UUID()
+        var data = SkillsData()
+        // As Tim's skills.json had them, made by the 5a build.
+        var a = LessonCandidate(signature: "bash for id | this session is isolated in the worktree <path> but this command runs gh with th",
+                                summary: "Inline gh api --jq object construction is refused in a worktree session.",
+                                evidence: [LessonEvidence(sessionID: one, sessionName: "Roles -> Tags", kind: .failure, text: "a", at: Date(timeIntervalSince1970: 100))],
+                                remember: false, at: Date(timeIntervalSince1970: 100))
+        a.holdBack(more: 2)
+        let b = LessonCandidate(signature: "bash do s=$(gh | this session is isolated in the worktree <path> but this command is too complex",
+                                summary: "Complex shell constructs are refused in a worktree-isolated session.",
+                                evidence: [LessonEvidence(sessionID: two, sessionName: "Folder move highlight stuck", kind: .failure, text: "b", at: Date(timeIntervalSince1970: 200))],
+                                remember: false, at: Date(timeIntervalSince1970: 200))
+        data.candidates = [a, b]
+        XCTAssertTrue(data.regroupCandidates())
+        XCTAssertEqual(data.candidates.count, 1, "merged")
+        let merged = data.candidates[0]
+        XCTAssertEqual(merged.signature, "bash shell | this session is isolated in the worktree <path>")
+        XCTAssertEqual(merged.sessionCount, 2)
+        XCTAssertEqual(merged.evidence.count, 2)
+        XCTAssertEqual(merged.summary, "Complex shell constructs are refused in a worktree-isolated session.", "the newer words")
+        XCTAssertTrue(merged.qualifies, "two sessions now: drafted")
+        XCTAssertFalse(data.regroupCandidates(), "nothing more to do the next time")
     }
 }

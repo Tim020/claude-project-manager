@@ -82,6 +82,14 @@ struct AssistantTool: View {
                         if let proposal = model.skillProposal(id, inProject: projectID) {
                             SkillProposalView(proposal: proposal, projectID: projectID).id(proposal.id)
                         }
+                    case .outsideEdit(_, let id):
+                        if let edit = model.outsideEdit(id, inProject: projectID) {
+                            OutsideEditView(edit: edit, projectID: projectID).id(edit.id)
+                        }
+                    case .unusedSkill(_, let id):
+                        if let unused = model.unusedSkill(id, inProject: projectID) {
+                            UnusedSkillView(unused: unused, projectID: projectID).id(unused.id)
+                        }
                     default: EmptyView()
                     }
                 } else {
@@ -109,7 +117,8 @@ struct AssistantTool: View {
                     // time, which it can become with no other change.
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         if model.isAssistantOn(inProject: projectID) || !model.needsYouData(inProject: projectID).suggestions.isEmpty
-                            || !model.longRunningSessions(inProject: projectID, now: context.date).isEmpty {
+                            || !model.longRunningSessions(inProject: projectID, now: context.date).isEmpty
+                            || !model.outsideEdits(inProject: projectID).isEmpty {
                             NeedsYouSection(projectID: projectID)
                                 .padding(.horizontal, 10)
                                 .padding(.bottom, 10)
@@ -151,6 +160,8 @@ extension AssistantTool {
         case .skill?: return "Skill"
         case .skillProposal(let projectID, let id)?:
             return model.skillProposal(id, inProject: projectID)?.isChange == true ? "Changed Skill" : "New Skill"
+        case .outsideEdit?: return "Skill Change"
+        case .unusedSkill?: return "Unused Skill"
         default: return "Assistant"
         }
     }

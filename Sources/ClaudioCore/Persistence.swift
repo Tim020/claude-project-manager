@@ -376,6 +376,8 @@ extension Session {
         self.lastBaseName = try c.decodeIfPresent(String.self, forKey: .lastBaseName)
         self.hasAssistant = try c.decodeIfPresent(Bool.self, forKey: .hasAssistant) ?? false
         self.namedSkills = (try? c.decodeIfPresent([String].self, forKey: .namedSkills)) ?? []
+        // Tolerant: one that can't be read leaves the session on the shared skills.
+        self.skillSet = (try? c.decodeIfPresent([String].self, forKey: .skillSet)) ?? nil
         self.lastTurnFailed = try c.decodeIfPresent(Bool.self, forKey: .lastTurnFailed) ?? false
         // Tolerant: a mark that can't be read is set again from the history.
         self.followUpMark = (try? c.decodeIfPresent(FollowUpMark.self, forKey: .followUpMark)) ?? nil

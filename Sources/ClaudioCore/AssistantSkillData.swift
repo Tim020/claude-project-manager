@@ -82,32 +82,103 @@ public struct SkillProposal: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-/// An approved skill Claudio manages: its version, and the hash of the
-/// text it approved (for step 5b's check for edits made outside Claudio).
+/// Where an approved skill lives.
+public enum SkillLocation: String, Codable, Sendable {
+    /// Claudio's `--add-dir` root: every Claudio session in the project that
+    /// uses the shared skills loads it (a session with its own set, only if chosen).
+    case claudio
+    /// `<repo>/.claude/skills`, after Save to Repository: yours to commit.
+    case repository
+    /// `retired/`, outside the root: no session loads it (step 5b).
+    case retired
+}
+
+/// An approved skill Claudio manages: its version, where it lives, and the
+/// hash of the text it approved (for the check for edits made outside Claudio).
 public struct SkillRecord: Codable, Equatable, Sendable {
     /// `metadata.claudio-id`.
     public var id: UUID
     public var name: String
     public var version: Int
     public var approvedAt: Date
-    /// `SkillText.hash` of the file as approved.
+    /// `SkillText.hash` of the file as approved (or as Claudio last wrote it).
     public var contentHash: String
+    public var location: SkillLocation = .claudio
 
-    public init(id: UUID, name: String, version: Int, approvedAt: Date, contentHash: String) {
+    public init(id: UUID, name: String, version: Int, approvedAt: Date, contentHash: String, location: SkillLocation = .claudio) {
         self.id = id
         self.name = name
         self.version = version
         self.approvedAt = approvedAt
         self.contentHash = contentHash
+        self.location = location
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, version, approvedAt, contentHash, location }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        version = try c.decode(Int.self, forKey: .version)
+        approvedAt = try c.decode(Date.self, forKey: .approvedAt)
+        contentHash = try c.decode(String.self, forKey: .contentHash)
+        location = try c.decodeIfPresent(SkillLocation.self, forKey: .location) ?? .claudio
+    }
+}
+
+/// An approved skill's file changed, or went, without Claudio (step 5b):
+/// a session edited it through `--add-dir`, or someone edited the
+/// repository's copy. Needs You asks: Keep Change or Revert (Restore or
+/// Keep Deletion for one that's gone).
+public struct OutsideEdit: Codable, Equatable, Identifiable, Sendable {
+    public var id = UUID()
+    public var name: String
+    public var location: SkillLocation
+    /// The file is gone.
+    public var deleted: Bool
+    /// `SkillText.hash` of the file as found (nil when it's gone).
+    public var foundHash: String?
+    public var foundAt: Date
+    /// The session whose Edit or Write changed it, when the hooks showed one.
+    public var editorSessionID: UUID?
+    public var editorName: String?
+
+    public init(name: String, location: SkillLocation, deleted: Bool, foundHash: String?, foundAt: Date,
+                editorSessionID: UUID? = nil, editorName: String? = nil) {
+        self.name = name
+        self.location = location
+        self.deleted = deleted
+        self.foundHash = foundHash
+        self.foundAt = foundAt
+        self.editorSessionID = editorSessionID
+        self.editorName = editorName
+    }
+}
+
+/// An approved skill no session has used for `AppModel.unusedSkillDays`
+/// (step 5b): Needs You asks Retire or Keep.
+public struct UnusedSkill: Codable, Equatable, Identifiable, Sendable {
+    public var id = UUID()
+    public var name: String
+    /// Its last use (approving counts), as of the check.
+    public var lastUsed: Date
+    public var foundAt: Date
+
+    public init(name: String, lastUsed: Date, foundAt: Date) {
+        self.name = name
+        self.lastUsed = lastUsed
+        self.foundAt = foundAt
     }
 }
 
 /// What a project's `skills.json` holds.
 public struct SkillsData: Codable, Equatable, Sendable {
-    /// 1: usage, candidates, proposals and records. Bump it for any new
-    /// field or candidate state: an older build then leaves a newer file
-    /// alone (read-only) rather than drop what it doesn't know.
-    public static let currentVersion = 1
+    /// 1: usage, candidates, proposals and records. 2 (step 5b): a record's
+    /// location, and what 5b adds. Bump it for any new field or candidate
+    /// state: an older build then leaves a newer file alone (read-only)
+    /// rather than drop what it doesn't know.
+    public static let currentVersion = 2
     /// By skill name (what `/name` calls).
     public var usage: [String: SkillUsage] = [:]
     /// Usage entries that couldn't be read, kept as they were.
@@ -115,6 +186,10 @@ public struct SkillsData: Codable, Equatable, Sendable {
     public var candidates: [LessonCandidate] = []
     public var proposals: [SkillProposal] = []
     public var records: [SkillRecord] = []
+    /// Approved skills changed or removed outside Claudio, waiting for you.
+    public var outsideEdits: [OutsideEdit] = []
+    /// Approved skills unused for 30 days, waiting for you.
+    public var unusedSkills: [UnusedSkill] = []
     /// Entries that couldn't be read, kept as they were.
     public var unreadableEntries: [String: [JSONValue]] = [:]
 
@@ -122,7 +197,7 @@ public struct SkillsData: Codable, Equatable, Sendable {
         self.usage = usage
     }
 
-    private enum CodingKeys: String, CodingKey { case version, usage, candidates, proposals, records }
+    private enum CodingKeys: String, CodingKey { case version, usage, candidates, proposals, records, outsideEdits, unusedSkills }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -139,6 +214,8 @@ public struct SkillsData: Codable, Equatable, Sendable {
         candidates = each(LessonCandidate.self, .candidates)
         proposals = each(SkillProposal.self, .proposals)
         records = each(SkillRecord.self, .records)
+        outsideEdits = each(OutsideEdit.self, .outsideEdits)
+        unusedSkills = each(UnusedSkill.self, .unusedSkills)
         let raw = ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .usage)) ?? nil) ?? [:]
         let encoder = JSONEncoder()
         for (name, value) in raw {
@@ -167,11 +244,13 @@ public struct SkillsData: Codable, Equatable, Sendable {
         try each(candidates, .candidates)
         try each(proposals, .proposals)
         try each(records, .records)
+        try each(outsideEdits, .outsideEdits)
+        try each(unusedSkills, .unusedSkills)
     }
 
     public var isEmpty: Bool {
         usage.isEmpty && unreadableUsage.isEmpty && candidates.isEmpty && proposals.isEmpty && records.isEmpty
-            && unreadableEntries.isEmpty
+            && outsideEdits.isEmpty && unusedSkills.isEmpty && unreadableEntries.isEmpty
     }
 
     /// Candidates marked as having a draft waiting whose draft has gone

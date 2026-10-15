@@ -23,9 +23,11 @@ public struct ApprovedSkill: Equatable, Sendable {
     public var claudioID: UUID?
     /// The folder it's in (normally its name).
     public var folder: String
+    /// `metadata.claudio-tags`: session tag names it's meant for (step 5b).
+    public var tags: [String]
 
     public init(name: String, description: String = "", paths: [String] = [], folders: [String] = [], text: String = "",
-                version: Int? = nil, claudioID: UUID? = nil, folder: String = "") {
+                version: Int? = nil, claudioID: UUID? = nil, folder: String = "", tags: [String] = []) {
         self.name = name
         self.description = description
         self.paths = paths
@@ -34,6 +36,7 @@ public struct ApprovedSkill: Equatable, Sendable {
         self.version = version
         self.claudioID = claudioID
         self.folder = folder
+        self.tags = tags
     }
 }
 
@@ -74,7 +77,11 @@ public enum SkillFiles {
     /// frontmatter with no closing `---` (that one is still listed, under
     /// its folder's name, as Claude Code may still load it).
     public static func scan(inRoot root: URL) -> SkillScan {
-        let skills = root.appendingPathComponent(".claude/skills")
+        scan(folder: root.appendingPathComponent(".claude/skills"))
+    }
+
+    /// The skills in a folder of skill folders (`<folder>/<name>/SKILL.md`).
+    public static func scan(folder skills: URL) -> SkillScan {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: skills.path) else { return SkillScan() }
         var scan = SkillScan()
         for name in names.sorted() where !name.hasPrefix(".") {
@@ -112,7 +119,8 @@ public enum SkillFiles {
                              text: text,
                              version: fields["metadata.claudio-version"]?.first.flatMap { Int($0) },
                              claudioID: fields["metadata.claudio-id"]?.first.flatMap { UUID(uuidString: $0) },
-                             folder: folderName)
+                             folder: folderName,
+                             tags: fields["metadata.claudio-tags"] ?? [])
     }
 
     static func lines(_ text: String) -> [String] {
@@ -160,7 +168,7 @@ public enum SkillFiles {
             listKey = nil
             if value.hasPrefix("[") && value.hasSuffix("]") {
                 fields[key] = value.dropFirst().dropLast().split(separator: ",").map { unquote(String($0)) }.filter { !$0.isEmpty }
-            } else if key == "paths" || key.hasSuffix(".claudio-folders") {
+            } else if key == "paths" || key.hasSuffix(".claudio-folders") || key.hasSuffix(".claudio-tags") {
                 fields[key] = value.split(separator: ",").map { unquote(String($0)) }.filter { !$0.isEmpty }
             } else {
                 fields[key] = [unquote(value)]
@@ -221,16 +229,19 @@ public enum SkillChips {
     /// scores for its `paths` matching files the item's sessions touched, for
     /// being meant for the session's folder (or one of that folder's
     /// ancestors, since a nested folder inherits what its parent is for),
-    /// and for use by sessions in that folder or nested under it (`usage`:
-    /// how many used it, by name). Skills that score nothing aren't suggested.
+    /// for being meant for one of the session's tags (step 5b), and for use
+    /// by sessions in that folder or with those tags (`usage`: how many used
+    /// it, by name). Skills that score nothing aren't suggested.
     public static func pick(from skills: [ApprovedSkill], touchedFiles: [String], folderNames: [String],
-                            usage: [String: Int] = [:], limit: Int = SkillChips.limit) -> [ApprovedSkill] {
+                            tagNames: [String] = [], usage: [String: Int] = [:], limit: Int = SkillChips.limit) -> [ApprovedSkill] {
         let folders = Set(folderNames.map { $0.lowercased() })
+        let tags = Set(tagNames.map { $0.lowercased() })
         let scored = skills.map { skill -> (skill: ApprovedSkill, score: Int) in
             var score = 0
             let hits = touchedFiles.filter { file in skill.paths.contains { Glob.matches($0, file) } }.count
             if hits > 0 { score += 2 + min(hits, 3) }
             if skill.folders.contains(where: { folders.contains($0.lowercased()) }) { score += 2 }
+            if skill.tags.contains(where: { tags.contains($0.lowercased()) }) { score += 2 }
             score += min(usage[skill.name] ?? 0, 3)
             return (skill, score)
         }

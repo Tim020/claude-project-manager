@@ -163,6 +163,10 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var hasAssistant = false
     /// The skills its opening prompt named, when it was started from a plan item.
     public var namedSkills: [String] = []
+    /// Its own skill set (step 5b): the only Claudio skills it loads, through
+    /// a root of its own. Nil: the project's shared skills (every approved
+    /// one). Set for sessions started from a plan item with skills chosen.
+    public var skillSet: [String]?
     /// Its last turn ended with an API error (StopFailure), so it isn't
     /// followed up until a turn ends normally.
     public var lastTurnFailed = false
@@ -185,7 +189,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, tags, status, summary, needsAction
-        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
+        case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, skillSet, lastTurnFailed, followUpMark, followUpDeclined
         case backgroundTasks, finishedBackgroundTasks, replacedConversations
     }
 

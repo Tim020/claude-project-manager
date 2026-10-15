@@ -55,6 +55,7 @@ extension AppModel {
         writeAssistantIndex()
         loadNeedsYou()
         loadSkillsData()
+        syncSkillSets()
         pollAssistantInbox()
     }
 
@@ -74,11 +75,85 @@ extension AppModel {
     /// The assistant's flags for a session's launch: a new session, a direct
     /// `--resume`, or a background resume that isn't continuing an agent (never
     /// one that is: that would copy it). Given whatever the project's mode:
-    /// Off means no Claude calls, not no notes.
-    func assistantLaunch(forProject projectID: UUID) -> AssistantLaunch? {
+    /// Off means no Claude calls, not no notes. A session with its own skill
+    /// set gets its own root; if that can't be made, the shared one (logged).
+    func assistantLaunch(for session: Session) -> AssistantLaunch? {
         let plugin = assistantPluginPath.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil }
-        let launch = AssistantLaunch(pluginDirectory: plugin, skillsRoot: prepareSkillsRoot(projectID: projectID)?.path)
+        let root = session.skillSet != nil ? skillSetRoot(of: session) ?? prepareSkillsRoot(projectID: session.projectID)
+                                           : prepareSkillsRoot(projectID: session.projectID)
+        let launch = AssistantLaunch(pluginDirectory: plugin, skillsRoot: root?.path)
         return launch.isEmpty ? nil : launch
+    }
+
+    // MARK: - Skill sets (step 5b)
+
+    /// A session's own skills root, with its links brought up to date. The
+    /// links are named by each skill's folder (for a skill put there by
+    /// hand, not always its name). If it can't be made, the session uses the
+    /// project's shared skills, and you're told.
+    @discardableResult
+    func skillSetRoot(of session: Session) -> URL? {
+        guard let skills = session.skillSet else { return nil }
+        let approved = approvedSkills[session.projectID] ?? []
+        let folders = skills.map { name in approved.first { $0.name == name }.map { $0.folder.isEmpty ? name : $0.folder } ?? name }
+        do {
+            return try assistantStore.sessionSkillsRoot(projectID: session.projectID, sessionID: session.id, skills: folders)
+        } catch {
+            log.append(.error, "Couldn't set up \(session.name)'s own skills, so it uses the project's shared ones",
+                       detail: AppModel.describe(error))
+            showToast("Couldn't set up \(session.name)'s own skills, so it loads every approved skill. See the Activity Log.")
+            return nil
+        }
+    }
+
+    /// The skills a session loads, from the item's view: its links change at
+    /// once, and a running session picks that up within seconds. An empty
+    /// set means the shared skills, as when it's started with no chips
+    /// (Tim's rule): its links are emptied, so while it runs on its own root
+    /// it loads none, and from its next launch it gets every approved skill.
+    public func setSkillSet(_ skills: [String], forSession sessionID: UUID) {
+        guard let session = workspace.session(sessionID), session.skillSet != nil else { return }
+        let approved = Set((approvedSkills[session.projectID] ?? []).map(\.name))
+        var names: [String] = []
+        for name in skills where approved.contains(name) && !names.contains(name) { names.append(name) }
+        guard names != session.skillSet else { return }
+        if names.isEmpty {
+            // Its root's links go now; the set itself becomes the shared skills.
+            setSessionSkillSet(sessionID, [])
+            if let updated = workspace.session(sessionID) { skillSetRoot(of: updated) }
+            setSessionSkillSet(sessionID, nil)
+            log.append(.info, "\(session.name) has no skills of its own now, so it gets every approved skill from its next launch")
+            return
+        }
+        setSessionSkillSet(sessionID, names)
+        if let updated = workspace.session(sessionID) { skillSetRoot(of: updated) }
+        log.append(.info, "Changed the skills \(session.name) loads", detail: names.joined(separator: ", "))
+    }
+
+    func removeSkillSet(of session: Session) {
+        do {
+            try assistantStore.removeSessionSkillsRoot(projectID: session.projectID, sessionID: session.id)
+        } catch {
+            log.append(.error, "Couldn't remove \(session.name)'s own skills folder", detail: AppModel.describe(error))
+        }
+    }
+
+    /// At launch: every skill set's links, in case skills moved while
+    /// Claudio was closed; and the folders of sessions that no longer exist
+    /// at all (removed from Claudio counts as existing: it can come back),
+    /// such as one whose removal failed when its session was deleted.
+    func syncSkillSets() {
+        for session in workspace.sessions where session.skillSet != nil { skillSetRoot(of: session) }
+        let known = Set(workspace.sessions.map(\.id)).union(workspace.removedSessions.map(\.id))
+        for project in workspace.projects {
+            for id in assistantStore.sessionSkillsRootIDs(projectID: project.id) where !known.contains(id) {
+                do {
+                    try assistantStore.removeSessionSkillsRoot(projectID: project.id, sessionID: id)
+                } catch {
+                    log.append(.error, "Couldn't remove a deleted session's skills folder", detail: AppModel.describe(error))
+                }
+            }
+        }
     }
 
     /// `index.tsv`, whenever the projects change (checked on every save,
@@ -117,6 +192,12 @@ extension AppModel {
         let scan = assistantStore.scanSkills(projectID: projectID)
         logSkillProblems(scan.problems, projectID: projectID)
         if approvedSkills[projectID] != scan.skills { approvedSkills[projectID] = scan.skills }
+        // The repository's own: in its main checkout (worktrees' copies show
+        // up once merged).
+        let repository = workspace.project(projectID).map { SkillFiles.scan(inRoot: URL(fileURLWithPath: $0.path)).skills } ?? []
+        if repositorySkills[projectID] ?? [] != repository { repositorySkills[projectID] = repository.isEmpty ? nil : repository }
+        let retired = assistantStore.retiredSkills(projectID: projectID)
+        if retiredSkills[projectID] ?? [] != retired { retiredSkills[projectID] = retired.isEmpty ? nil : retired }
     }
 
     /// The skills picked for an item's opening prompt (see `SkillChips`).
@@ -124,7 +205,8 @@ extension AppModel {
     /// `refreshTouchedFiles`), and from any whose Files Changed has loaded
     /// since; `folderID` is the folder the new session is going in (items
     /// have none), which also picks whose usage counts.
-    public func suggestedSkills(forItem item: PlanItem, inProject projectID: UUID, folderID: UUID? = nil) -> [String] {
+    public func suggestedSkills(forItem item: PlanItem, inProject projectID: UUID, folderID: UUID? = nil,
+                                tagIDs: [Tag.ID] = []) -> [String] {
         let skills = approvedSkills[projectID] ?? []
         guard !skills.isEmpty, let project = workspace.project(projectID) else { return [] }
         var sessionIDs = Set(notes(forItem: item.id, inProject: projectID).compactMap(\.sessionID))
@@ -135,8 +217,8 @@ extension AppModel {
         // The folder's own name and every ancestor's, so a skill meant for a
         // parent folder still applies to sessions nested under it.
         let folderNames = folderID.map { workspace.folderAndAncestorNames(of: $0) } ?? []
-        return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderNames: folderNames,
-                               usage: skillUsage(inProject: projectID, folderID: folderID)).map(\.name)
+        return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderNames: folderNames, tagNames: tagNames(tagIDs),
+                               usage: skillUsage(inProject: projectID, folderID: folderID, tagIDs: tagIDs)).map(\.name)
     }
 
     // MARK: - Start Session from a plan item
@@ -157,10 +239,11 @@ extension AppModel {
     /// with its skills.
     public func planSessionDraft(forItem item: PlanItem, inProject projectID: UUID) -> PlanSessionDraft {
         let inferred = Tag.infer(fromName: item.title, in: settings.tags)
+        let tagIDs = inferred.map { [$0] } ?? []
         return PlanSessionDraft(name: item.title, folderID: nil,
-                         tagIDs: inferred.map { [$0] } ?? [],
+                         tagIDs: tagIDs,
                          promptBody: openingPromptBody(forItem: item, inProject: projectID),
-                         skills: suggestedSkills(forItem: item, inProject: projectID))
+                         skills: suggestedSkills(forItem: item, inProject: projectID, tagIDs: tagIDs))
     }
 
     /// The item's title, its notes (oldest first) and its issue.
@@ -202,6 +285,9 @@ extension AppModel {
                                         permissionMode: settings.defaultPermissionMode(background: runsInBackground(prompt: prompt)))
         request.useWorktree = useWorktree
         request.namedSkills = skills
+        // Its own set: only the skills chosen load. With none chosen, the
+        // shared skills, like any new session (Tim's call, step 5b).
+        request.skillSet = skills.isEmpty ? nil : skills
         request.tagIDs = tagIDs
         guard let sessionID = createSession(request) else { return nil }
         var after = item
