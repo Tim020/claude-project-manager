@@ -33,8 +33,18 @@ final class HookEventParserTests: XCTestCase {
     }
 
     func testUnknownEventNamesAreKept() {
-        let event = HookEventParser.parse("\(appID.uuidString)\t{\"hook_event_name\":\"PreCompact\"}")
-        XCTAssertEqual(event?.name, .other("PreCompact"))
+        let event = HookEventParser.parse("\(appID.uuidString)\t{\"hook_event_name\":\"PermissionDenied\"}")
+        XCTAssertEqual(event?.name, .other("PermissionDenied"))
+    }
+
+    /// Recorded with 2.1.301: an automatic compaction mid-turn.
+    func testParsesPreCompact() throws {
+        let events = try Fixtures.lines("hook-precompact.log").compactMap(HookEventParser.parse)
+        XCTAssertEqual(events.map(\.name), [.userPromptSubmit, .preCompact, .stop])
+        XCTAssertEqual(events[1].claudeSessionID, sid)
+        XCTAssertEqual(events[1].appSessionID, appID)
+        XCTAssertEqual(HookEventName(rawValue: "PreCompact").rawValue, "PreCompact")
+        XCTAssertTrue(HookSettings.events.contains(.preCompact))
     }
 
     /// Recorded with 2.1.289: Stop lists the background tasks still running.
@@ -140,6 +150,17 @@ final class HookReducerTests: XCTestCase {
             HookReducer.apply(event(name), to: &s, now: now)
             XCTAssertEqual(s.status, .working, "\(name)")
             XCTAssertNil(s.needsAction)
+        }
+    }
+
+    /// A compaction happens mid-turn: it doesn't end the turn or start one.
+    func testPreCompactLeavesTheStatusAlone() {
+        for status in [SessionStatus.working, .awaitingInput, .completed] {
+            var s = session(status)
+            s.lastTurnFailed = true
+            HookReducer.apply(event(.preCompact), to: &s, now: now)
+            XCTAssertEqual(s.status, status)
+            XCTAssertTrue(s.lastTurnFailed, "not a turn ending")
         }
     }
 

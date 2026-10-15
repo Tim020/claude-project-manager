@@ -313,9 +313,14 @@ public final class AppModel {
     /// Each session's history file as last checked for a follow-up
     /// (conversation and size), so unchanged files aren't read again.
     @ObservationIgnored var followUpChecked: [UUID: String] = [:]
-    /// Sessions you stopped, or whose tab you closed: a sign they're ready
-    /// for a follow-up, whatever Claude Code says about the task.
+    /// Sessions you stopped, or whose tab you closed, or whose context is
+    /// about to be compacted: a sign they're ready for a follow-up at their
+    /// next idle point, whatever Claude Code says about the task.
     @ObservationIgnored var followUpDue = Set<UUID>()
+    /// The ones in `followUpDue` because of a compaction (`PreCompact`), so
+    /// the offer doesn't say the session looks done when it's mid-task.
+    /// Checked and cleared with `followUpDue`.
+    @ObservationIgnored var followUpDueToCompaction = Set<UUID>()
     /// Background calls today, for the daily limit.
     @ObservationIgnored var dailyJobs: DailyJobCount?
     /// Where each session's history file was found, by conversation, so
@@ -2271,6 +2276,12 @@ public final class AppModel {
             state.workspace.updateSession(target) { HookReducer.apply(event, to: &$0, now: now()) }
             // It's carrying on, so an offered follow-up no longer applies.
             if event.name == .userPromptSubmit { withdrawFollowUpOffer(forSession: target) }
+            // A lot has piled up: a follow-up is due at the next idle point,
+            // even if the task goes on (the status is left alone).
+            if event.name == .preCompact {
+                followUpDue.insert(target)
+                followUpDueToCompaction.insert(target)
+            }
             if event.name == .preToolUse || event.name == .userPromptSubmit { noteSkillUse(event, sessionID: target) }
             // Otherwise the only trace is the follow-up it holds back.
             if event.name == .stopFailure {

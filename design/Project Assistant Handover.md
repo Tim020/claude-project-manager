@@ -145,6 +145,7 @@ What happens in other modes:
   - Later (or ✕) keeps it in Needs You as "<session> finished".
   - In **Automatic** mode it appears when a session finishes. If paused by usage, it waits and appears once usage drops (the Activity Log shows Waiting until then).
   - *(Changed in 4a, Tim's call: in Automatic mode the card first **offers** the follow-up: "<session> looks done", "Follow up on what it did?", with **Follow Up** and **Not Now**. Claude is only asked on Follow Up, so there's no waiting for usage. It's offered when Claude Code says the session's task is done or ready for review, or when you stop the session or close its tab; never while it's waiting on you or after a turn that failed. A new prompt in the session withdraws the offer. An unanswered offer also waits in Needs You as "<session> looks done".)*
+  - *(Added 2026-10-15: a session whose context is compacted (Claude Code's `PreCompact` hook) is offered one too at its next idle point, even while its task goes on. That card says "<session> is using a lot of context" and "Follow up on what it's done so far?", in Needs You as well, unless Claude Code also says the task is done.)*
   - Older sessions get the same card. Follow-ups are built from the session's history and hook events inside Claudio.
   - In **Manual** mode it only appears from **Review This Session**.
 - **Session context menu** (⋯ in the session header): Rename…, Move to Folder, **Review This Session** (✦), Stop Session. It works in Automatic and Manual modes. When the assistant is off, it shows a toast instead.

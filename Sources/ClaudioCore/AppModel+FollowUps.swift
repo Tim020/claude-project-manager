@@ -63,7 +63,8 @@ extension AppModel {
     /// The cheap checks, before any file is read. A session looks ready when
     /// its last turn ended normally (a turn cut short by a usage limit or an
     /// API error doesn't), it isn't waiting on you, and Claude Code says its
-    /// task is done or ready for review, or you stopped it or closed its tab.
+    /// task is done or ready for review, or you stopped it or closed its tab,
+    /// or its context was compacted (even with the task still going on).
     func isFollowUpCandidate(_ session: Session) -> Bool {
         guard !session.isArchived, session.hasConversation, session.claudeSessionID != nil,
               session.status == .completed, !session.lastTurnFailed,
@@ -124,7 +125,7 @@ extension AppModel {
         guard let session = workspace.session(sessionID), let file = historyFile(of: session) else { return }
         guard let mark = session.followUpMark else {
             setFollowUpMark(sessionID, FollowUpMark(conversationID: file.conversationID, offset: file.size))
-            followUpDue.remove(sessionID)
+            clearFollowUpDue(sessionID)
             return
         }
         // After /clear, the new conversation is read from the top.
@@ -132,7 +133,7 @@ extension AppModel {
         let checked = "\(file.conversationID):\(file.size)"
         // Unchanged since it was last looked at (or since Not Now): nothing new.
         guard file.size > start, followUpChecked[sessionID] != checked else {
-            followUpDue.remove(sessionID)
+            clearFollowUpDue(sessionID)
             return
         }
         // Not Now (kept across launches): offered again only after a new
@@ -141,7 +142,7 @@ extension AppModel {
         let declined = session.followUpDeclined.flatMap { $0.conversationID == file.conversationID ? $0.offset : nil }
         if let declined, file.size <= declined {
             followUpChecked[sessionID] = checked
-            followUpDue.remove(sessionID)
+            clearFollowUpDue(sessionID)
             return
         }
         guard let project = workspace.project(session.projectID) else { return }
@@ -156,7 +157,9 @@ extension AppModel {
                 return (digest, read.end, prompted)
             }
         }.value
-        followUpDue.remove(sessionID)
+        // Due to a compaction, unless the task looks done anyway.
+        let dueToCompaction = followUpDueToCompaction.contains(sessionID) && !taskIsFinished(session)
+        clearFollowUpDue(sessionID)
         let slice: (digest: SessionDigest, end: UInt64, promptedSinceDecline: Bool)
         switch read {
         case .success(let value):
@@ -175,13 +178,22 @@ extension AppModel {
               !isFollowUpPending(sessionID)
         else { return }
         offerFollowUp(sessionID, digest: slice.digest,
-                      mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end))
+                      mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end),
+                      dueToCompaction: dueToCompaction)
     }
 
-    /// "Shell Height looks done. Follow up?": no call until you accept.
-    func offerFollowUp(_ sessionID: UUID, digest: SessionDigest, mark: FollowUpMark) {
+    /// The session's been looked at: whatever made it due no longer applies.
+    private func clearFollowUpDue(_ sessionID: UUID) {
+        followUpDue.remove(sessionID)
+        followUpDueToCompaction.remove(sessionID)
+    }
+
+    /// "Shell Height looks done. Follow up?" (or, after a compaction, "Shell
+    /// Height is using a lot of context"): no call until you accept.
+    func offerFollowUp(_ sessionID: UUID, digest: SessionDigest, mark: FollowUpMark, dueToCompaction: Bool = false) {
         guard let session = workspace.session(sessionID) else { return }
-        let offer = FollowUp(sessionID: sessionID, sessionName: session.name, state: .offered, createdAt: now(), askedFor: false)
+        var offer = FollowUp(sessionID: sessionID, sessionName: session.name, state: .offered, createdAt: now(), askedFor: false)
+        offer.dueToCompaction = dueToCompaction
         dropStaleFailures(forSession: sessionID, projectID: session.projectID)
         updateNeedsYou(session.projectID) { data in
             data.followUps.removeAll { $0.sessionID == sessionID && $0.state == .offered }

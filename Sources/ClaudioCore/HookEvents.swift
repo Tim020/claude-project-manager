@@ -6,6 +6,9 @@ public enum HookEventName: Hashable, Sendable {
     case postToolUseFailure
     /// A turn ended with an API error. It comes instead of `Stop`.
     case stopFailure
+    /// Claude Code is about to compact the context (`trigger`: `auto` or
+    /// `manual`). Not a sign the turn ended; a follow-up becomes due.
+    case preCompact
     case other(String)
 
     public init(rawValue: String) {
@@ -19,6 +22,7 @@ public enum HookEventName: Hashable, Sendable {
         case "SessionEnd": self = .sessionEnd
         case "PostToolUseFailure": self = .postToolUseFailure
         case "StopFailure": self = .stopFailure
+        case "PreCompact": self = .preCompact
         default: self = .other(rawValue)
         }
     }
@@ -34,6 +38,7 @@ public enum HookEventName: Hashable, Sendable {
         case .sessionEnd: return "SessionEnd"
         case .postToolUseFailure: return "PostToolUseFailure"
         case .stopFailure: return "StopFailure"
+        case .preCompact: return "PreCompact"
         case .other(let name): return name
         }
     }
@@ -209,7 +214,7 @@ public enum HookReducer {
         case .sessionEnd:
             session.forgetBackgroundTasks()
             if session.status == .working { session.status = .completed }
-        case .other:
+        case .preCompact, .other:
             break
         }
     }

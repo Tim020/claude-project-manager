@@ -132,6 +132,8 @@ public enum HookSettings {
         .sessionStart, .userPromptSubmit, .preToolUse, .postToolUse, .notification, .stop, .sessionEnd,
         // Accepted by 2.1.169 too (checked in a container).
         .postToolUseFailure, .stopFailure,
+        // Recorded with 2.1.301 (`Fixtures/hook-precompact.log`).
+        .preCompact,
     ]
 
     public static func command(appSessionID: UUID, eventsPath: String) -> String {
