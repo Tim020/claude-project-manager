@@ -473,6 +473,29 @@ final class RestartToUpdateTests: XCTestCase {
         }
     }
 
+    /// A roster unreadable twice during a timed-out restart empties the
+    /// versions, which makes nothing outdated but doesn't confirm the
+    /// restart: that takes the agent listed on the installed version.
+    func testAnEmptiedRosterDoesntConfirmARestart() async throws {
+        runner.respawnExit = 1
+        runner.respawnTimedOut = true
+        let model = try await readyModel()
+        let roster = rosterURL
+        runner.duringRespawn = {
+            try! Data("{\"workers\":".utf8).write(to: roster)
+            await model.refreshAgents()
+            try! Data(#"{"workers":[]}"#.utf8).write(to: roster)
+            await model.refreshAgents()
+            await MainActor.run { XCTAssertEqual(model.agentVersions, [:]) }
+        }
+        await MainActor.run { model.restartToUpdate(sessionID) }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertEqual(model.errorMessage, "Couldn't confirm “Project Assistant Import” restarted. Try again in a moment.")
+            XCTAssertFalse(model.log.entries.contains { $0.title.hasPrefix("Restarted ") })
+        }
+    }
+
     /// Mid-restart the agent is listed with no process (for about 200 ms in a
     /// container) while its task may still say "working" (the shape of a
     /// stop), and a question it ended on would be dropped. The hooks then say

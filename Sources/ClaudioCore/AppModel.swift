@@ -1616,7 +1616,7 @@ public final class AppModel {
                 waited = true
                 // Not back yet may only mean slow: say it couldn't be
                 // confirmed, rather than reporting a stop.
-                outcome = self.outdatedVersion(of: sessionID) == nil && self.isAgentAlive(sessionID)
+                outcome = self.runsInstalledVersion(sessionID)
                     ? .respawned(agentID: agentID) : .stillRunning
             }
             if case .respawned(let newID) = outcome {
@@ -1670,6 +1670,15 @@ public final class AppModel {
         outdatedSessionIDs.filter(canRestartToUpdate).forEach(restartToUpdate)
     }
 
+    /// The session's agent is listed alive, and the roster gives it the
+    /// installed version. A positive reading: an empty roster (unreadable,
+    /// say) makes nothing outdated, but doesn't confirm a restart either.
+    private func runsInstalledVersion(_ sessionID: UUID) -> Bool {
+        guard isAgentAlive(sessionID), let current = environment.version,
+              let agentID = state.workspace.session(sessionID)?.agentID, let version = agentVersions[agentID] else { return false }
+        return !(version < current)
+    }
+
     /// Attaching while the daemon is still bringing the agent back fails
     /// ("Job is respawning after an upgrade"), so wait until it's listed
     /// alive on the new version, for a few seconds at most.
@@ -1677,7 +1686,7 @@ public final class AppModel {
         for attempt in 0..<10 {
             if attempt > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
             await refreshAgents()
-            if isAgentAlive(sessionID), outdatedVersion(of: sessionID) == nil { return }
+            if runsInstalledVersion(sessionID) { return }
         }
     }
 
