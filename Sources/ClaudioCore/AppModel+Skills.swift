@@ -30,6 +30,14 @@ extension AppModel {
                 data.reconcileProposals()
                 savedSkillsData[project.id] = data
                 if !data.isEmpty { skillsData[project.id] = data }
+                // Lessons an earlier build kept apart that now match: merged,
+                // saved, and drafted or offered if they now qualify.
+                var regrouped = data
+                if regrouped.regroupCandidates() {
+                    updateSkillsData(project.id) { $0 = regrouped }
+                    log.append(.info, "Assistant: regrouped the lessons waiting in \(project.name)")
+                    considerSkillCandidates(projectID: project.id)
+                }
                 if data.unreadableCount > 0 {
                     log.append(.error, "\(data.unreadableCount) of the assistant's skill entries for \(project.name) couldn't be read",
                                detail: "They're kept as they were.")
@@ -73,8 +81,12 @@ extension AppModel {
         guard let name = SkillUseDetector.skill(in: event), let session = workspace.session(sessionID),
               isProjectSkill(name, projectID: session.projectID) else { return }
         let date = now()
-        // Saved only for a new session, or a new day (see `recordUse`).
-        updateSkillsData(session.projectID) { _ = $0.recordUse(of: name, by: sessionID, at: date) }
+        // Saved only for a new session, or a new day (see `recordUse`). A
+        // use also withdraws an Unused card for it.
+        updateSkillsData(session.projectID) { data in
+            _ = data.recordUse(of: name, by: sessionID, at: date)
+            data.unusedSkills.removeAll { $0.name == name }
+        }
     }
 
     func isProjectSkill(_ name: String, projectID: UUID) -> Bool {
@@ -84,14 +96,18 @@ extension AppModel {
     }
 
     /// How many sessions used each skill, counting only sessions in a folder
-    /// or nested under it (nil: Unfiled, sessions in no folder), for chips:
-    /// "how often it was used by sessions in that folder".
-    public func skillUsage(inProject projectID: UUID, folderID: UUID?) -> [String: Int] {
+    /// or nested under it (nil: Unfiled, sessions in no folder), or with one
+    /// of `tagIDs` (step 5b), for chips: "how often it was used by sessions
+    /// like this one".
+    public func skillUsage(inProject projectID: UUID, folderID: UUID?, tagIDs: [Tag.ID] = []) -> [String: Int] {
         guard let project = workspace.project(projectID) else { return [:] }
         let filed = Set(project.folders.flatMap(\.sessionIDs))
         let subtree = folderID.map { workspace.subtreeFolderIDs(of: $0) } ?? []
         let inSubtree = Set(project.folders.filter { subtree.contains($0.id) }.flatMap(\.sessionIDs))
+        let tags = Set(tagIDs)
         let inFolder: (UUID) -> Bool = { id in
+            if !tags.isEmpty, let session = self.workspace.session(id), session.projectID == projectID,
+               !tags.isDisjoint(with: session.tags) { return true }
             if folderID != nil { return inSubtree.contains(id) }
             return !filed.contains(id) && self.workspace.session(id)?.projectID == projectID
         }
@@ -101,6 +117,12 @@ extension AppModel {
             if count > 0 { counts[name] = count }
         }
         return counts
+    }
+
+    /// Tag names for ids, as the catalog spells them (ids no longer in it
+    /// are left out).
+    func tagNames(_ ids: [Tag.ID]) -> [String] {
+        ids.compactMap { id in settings.tags.first { $0.id == id }?.name }
     }
 
     // MARK: - Skill files

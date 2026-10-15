@@ -61,6 +61,7 @@ What happens in other modes:
   - title and folder *(changed in step 3: items have no folder, so the title stands alone)*
   - ATTACHED NOTES
   - SKILLS FOR ITS PROMPT (planned items) or SKILLS NAMED IN ITS PROMPT (in session)
+  - *(5b: for a session with its own skill set, SKILLS LOADED IN THIS SESSION, with × on each and Add Skill; changes reach the session within seconds.)*
   - "In session: <name>" or **Start Session**
   - For a session started before the assistant, the skills are replaced by: "Started before the assistant, so it can't use its skills or write notes. New sessions get its skills."
   - *(Built in step 3: Start Session shows for Planned items and Ideas, and for an In Session item whose session has been deleted. "In session: <name>" opens the session. Without matching skills, the section reads "No approved skills match it yet.")*
@@ -82,11 +83,13 @@ What happens in other modes:
   - who changed which file and when, for example "The Update PR session changed .claude/skills/readme-style/SKILL.md 10h ago"
   - the diff
   - Keep Change and Revert. Revert puts back the approved version and rewrites the file.
+  - *(Built in 5b: it also covers a skill deleted outside Claudio, with DELETED OUTSIDE CLAUDIO, Restore and Keep Deletion. The line reads "The <session> session changed <file> 10h ago" when the hooks showed which session, else "<file> was changed 10h ago". Revert is disabled when Claudio's history doesn't hold the approved text. Its Needs You card (amber) shows whatever the mode, since sessions can edit skills either way.)*
 - **Unused Skill:**
   - UNUSED SKILL pill
   - "Not used by any session for 30 days", with the last use
   - a preview
   - Retire (red outline) and Keep. Retired skills can be restored from Skills.
+  - *(Built in 5b: only for Claudio's own skills, and only while the assistant is on. Keep counts as a use, so it's asked again after another 30 days without one.)*
 - **Mark Done:**
   - In Session → Done
   - the item title
@@ -98,6 +101,8 @@ What happens in other modes:
   - how many sessions used it and when it last changed
   - retired skills are greyed out
   - *(5a: Claudio's skills, each with "Used by n sessions · changed <age> ago"; REPOSITORY skills and retired ones come with 5b.)*
+  - *(5b: REPOSITORY skills and retired ones (RETIRED, greyed out) are listed too. Each row shows its tags, and a tag no longer in Settings › Tags is flagged.)*
+  - *(Added from Tim's use: LESSONS WAITING lists lessons follow-ups found that haven't become skills yet, each with how many sessions showed it, Draft Now and Dismiss.)*
 - **Skill** (from Skills):
   - location tag
   - the skill text
@@ -105,6 +110,7 @@ What happens in other modes:
   - For a repository skill: its path, and "Edits made there show up in Needs You for review."
   - For a retired skill: Restore.
   - *(5a: the text and its version; with more than one approved version, VERSIONS lists them and shows each one's text. Save to Repository and Restore come with 5b.)*
+  - *(5b: Save to Repository… opens the confirmation in place. A repository skill Claudio didn't save says "Made in the repository: Claudio counts its use, but doesn't review edits to it." The view shows the skill's tags.)*
 - **Assistant Settings** (⋯, per project):
   - **MODE:** radio cards.
     - Automatic (Default): also works in the background (follow-ups when a session finishes, skill proposals and new GitHub issues). It only calls Claude when something new needs judgement. *(4a: follow-ups are offered in Automatic mode, and run when you accept.)*
@@ -134,6 +140,8 @@ What happens in other modes:
   - SKILLS chips (blue tint), which can be removed
 
   The copy under the chips reads "Named in the opening prompt. Other approved skills stay available." Removing a chip only drops that skill's name from the prompt; the session can still use any approved skill if it's relevant.
+
+  *(Changed in 5b, Tim's calls: with chips, they're the only Claudio skills the session loads (its own skill set), and the copy reads "Only these skills are loaded in this session, and they're named in the opening prompt." With none, it gets every approved skill: "No skills chosen, so every approved skill is available to it." Chips are also picked by the session's tags, and picked again when they change.)*
 
   *(Built in step 3: notes and plan items have no folder (Tim's call, PR #26). The folder is picked here, for the session only, starting at Unfiled, and skills meant for a folder are picked for the one chosen. As in New Session, the Worktree toggle shows for background sessions, and is disabled outside a git repository. The prompt's issue line reads "GitHub issue: #n", and an item without notes sends just its title. The model and permissions are the settings' defaults.)*
 - **Follow-up card** (inline at the bottom of the session's terminal):

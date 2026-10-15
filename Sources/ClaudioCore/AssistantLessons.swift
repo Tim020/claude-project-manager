@@ -57,6 +57,10 @@ public enum LessonSignature {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("cd ") && !$0.hasPrefix("export ") }
         guard let segment = segments.first else { return "" }
+        // A loop, a test or a command built from `$(…)`: its first words are
+        // shell syntax, not a command, so they say nothing about the lesson
+        // (Tim's two worktree-guard lessons keyed as "for id" and "do s=$(gh").
+        if isShellSyntax(segment) || command.contains("$(") || command.contains("`") { return "shell" }
         var words = segment.split(whereSeparator: \.isWhitespace).map(String.init)
         while let first = words.first, first == "sudo" || first == "env" || (first.contains("=") && !first.hasPrefix("-")) {
             words.removeFirst()
@@ -68,16 +72,49 @@ public enum LessonSignature {
         return name
     }
 
+    static let shellKeywords: Set<String> = ["for", "while", "until", "if", "case", "do", "then", "else", "{", "(", "[", "[["]
+
+    static func isShellSyntax(_ segment: String) -> Bool {
+        segment.split(whereSeparator: \.isWhitespace).first.map { shellKeywords.contains(String($0)) } ?? false
+    }
+
     /// The error's first line that says something (not "Exit code 1"), in
-    /// lower case, with paths, numbers and ids taken out, at most 80 characters.
+    /// lower case, with paths, numbers and ids taken out: its first clause
+    /// (up to ", " or ". "), at most 80 characters. Variations on one error
+    /// usually differ only after it ("…worktree <path>, but this command
+    /// runs gh…" and "…worktree <path>, but this command is too complex").
     static func errorHead(_ text: String) -> String {
         let line = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && !$0.lowercased().hasPrefix("exit code") } ?? ""
         var normalised = line.lowercased()
-        for (pattern, replacement) in [(#"(~|\.{0,2})/[^\s:'"]+"#, "<path>"), (#"\b[0-9a-f]{7,}\b"#, "#"), (#"\d+"#, "#"), (#"\s+"#, " ")] {
+        // A path stops before punctuation after it, so "…<path>, but" keeps its comma.
+        for (pattern, replacement) in [(#"(~|\.{0,2})/[^\s:'",;)]+"#, "<path>"), (#"\b[0-9a-f]{7,}\b"#, "#"), (#"\d+"#, "#"), (#"\s+"#, " ")] {
             normalised = normalised.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
-        return String(normalised.trimmingCharacters(in: .whitespaces).prefix(80)).trimmingCharacters(in: .whitespaces)
+        return firstClause(String(normalised.trimmingCharacters(in: .whitespaces).prefix(80)))
+    }
+
+    /// Up to the first ", ", ". ", "; ", " but " or " because ", when what
+    /// comes before says enough (16 characters or more); trimmed. (" but "
+    /// also covers signatures saved before paths kept their comma.)
+    static func firstClause(_ text: String) -> String {
+        let cuts = [", ", ". ", "; ", " but ", " because "].compactMap { text.range(of: $0)?.lowerBound }
+        if let cut = cuts.min(), text.distance(from: text.startIndex, to: cut) >= 16 {
+            return String(text[..<cut]).trimmingCharacters(in: .whitespaces)
+        }
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// A signature made by an earlier build, made again with today's rules,
+    /// as far as the signature alone allows: a Bash one's command part
+    /// becomes "shell" when it's shell syntax, and its error part is cut at
+    /// its first clause. Others are unchanged.
+    public static func regrouped(_ signature: String) -> String {
+        guard signature.hasPrefix("bash "), let bar = signature.range(of: " | ") else { return signature }
+        let head = String(signature[signature.index(signature.startIndex, offsetBy: 5)..<bar.lowerBound])
+        let error = String(signature[bar.upperBound...])
+        let newHead = isShellSyntax(head) || head.contains("$(") || head.contains("`") ? "shell" : head
+        return "bash \(newHead) | \(firstClause(error))"
     }
 
     static let fillerWords: Set<String> = ["no", "nope", "don't", "dont", "do", "not", "stop", "wrong", "that's", "thats", "actually",
@@ -200,6 +237,45 @@ public struct LessonCandidate: Codable, Equatable, Identifiable, Sendable {
 extension SkillsData {
     /// Most candidates kept per project; the oldest still gathering go first.
     public static let maxCandidates = 200
+
+    /// Candidates saved by an earlier build, given today's signatures, and
+    /// merged where they now match (their evidence, sessions and "remember"
+    /// together). True when anything changed.
+    @discardableResult
+    public mutating func regroupCandidates() -> Bool {
+        var merged: [LessonCandidate] = []
+        var changed = false
+        for var candidate in candidates {
+            let signature = LessonSignature.regrouped(candidate.signature)
+            if signature != candidate.signature {
+                candidate.signature = signature
+                changed = true
+            }
+            if let index = merged.firstIndex(where: { $0.signature == signature && $0.state != .proposed && candidate.state != .proposed }) {
+                var into = merged[index]
+                for item in candidate.evidence where !into.evidence.contains(item) { into.evidence.append(item) }
+                if into.evidence.count > LessonCandidate.maxEvidence {
+                    into.evidence.removeFirst(into.evidence.count - LessonCandidate.maxEvidence)
+                }
+                for session in candidate.sessionIDs where !into.sessionIDs.contains(session) { into.sessionIDs.append(session) }
+                into.remember = into.remember || candidate.remember
+                into.createdAt = min(into.createdAt, candidate.createdAt)
+                if candidate.updatedAt > into.updatedAt {
+                    into.updatedAt = candidate.updatedAt
+                    into.summary = candidate.summary
+                }
+                // Merging is new evidence: an offer or a hold-back starts afresh.
+                into.state = .collecting
+                into.heldUntilSessions = nil
+                merged[index] = into
+                changed = true
+            } else {
+                merged.append(candidate)
+            }
+        }
+        if changed { candidates = merged }
+        return changed
+    }
 
     /// Adds a follow-up's lessons: evidence joins the candidate with the
     /// same signature, or starts a new one. Returns the candidates touched.

@@ -17,16 +17,22 @@ public enum SkillText {
     /// The file: frontmatter (name, description, `when_to_use`, `paths`,
     /// and Claudio's `metadata`), then the body.
     public static func compose(name: String, description: String, whenToUse: String, paths: [String], body: String,
-                               metadata: [(String, String)]) -> String {
+                               metadata: [(String, String)], tags: [String] = []) -> String {
         var lines = ["---", "name: \(name)", "description: \(quoted(description))"]
         if !whenToUse.isEmpty { lines.append("when_to_use: \(quoted(whenToUse))") }
         if !paths.isEmpty {
             lines.append("paths:")
             lines += paths.map { "  - \(quoted($0))" }
         }
-        if !metadata.isEmpty {
+        if !metadata.isEmpty || !tags.isEmpty {
             lines.append("metadata:")
             lines += metadata.map { "  \($0.0): \($0.1)" }
+            // A list, one quoted name a line, so a name with a comma or a
+            // colon reads back whole.
+            if !tags.isEmpty {
+                lines.append("  claudio-tags:")
+                lines += tags.map { "    - \(quoted($0))" }
+            }
         }
         lines.append("---")
         return lines.joined(separator: "\n") + "\n" + body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
@@ -314,6 +320,8 @@ public struct SkillDraft: Equatable, Sendable {
     public var paths: [String]
     public var body: String
     public var why: String
+    /// Session tags it suits, from the catalog only (step 5b).
+    public var tags: [String] = []
 }
 
 public enum SkillDraftJob {
@@ -331,25 +339,31 @@ public enum SkillDraftJob {
     name: a lower-case slug, under 40 characters, saying what it's for. For a patch, the skill's own name.
     description: what it's for and when to use it, one or two sentences, under 300 characters. whenToUse: extra situations that should bring it in, or empty.
     paths: globs relative to the repository when the lesson is tied to certain files (such as "Sources/**/*.swift"), else empty.
+    tags: the session tags the skill suits, chosen only from tagCatalog (often the tags of the sessions it came from); empty when none fits.
     body: Markdown instructions for a future session: short, imperative, under 60 lines, with the exact commands that work. Mention only files and commands from the evidence or the approved skills. Never include tokens, keys, passwords or personal details.
     why: under 20 words, for the user, saying what it will stop happening.
     British English. Reply only through the schema.
     """
 
-    static let schema = #"{"type":"object","properties":{"action":{"type":"string","enum":["new","patch","none"]},"skill":{"type":["string","null"]},"name":{"type":"string"},"description":{"type":"string"},"whenToUse":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"body":{"type":"string"},"why":{"type":"string"}},"required":["action","skill","name","description","whenToUse","paths","body","why"],"additionalProperties":false}"#
+    static let schema = #"{"type":"object","properties":{"action":{"type":"string","enum":["new","patch","none"]},"skill":{"type":["string","null"]},"name":{"type":"string"},"description":{"type":"string"},"whenToUse":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"tags":{"type":"array","items":{"type":"string"}},"body":{"type":"string"},"why":{"type":"string"}},"required":["action","skill","name","description","whenToUse","paths","tags","body","why"],"additionalProperties":false}"#
 
+    /// `sessionTags`: each evidence session's tag names, by session id.
     public static func request(candidate: LessonCandidate, projectName: String, skills: [ApprovedSkill],
+                               tagCatalog: [String] = [], sessionTags: [UUID: [String]] = [:],
                                model: AssistantModel = .sonnet) -> AssistantCall {
         let evidence: [JSONValue] = candidate.evidence.map {
-            .object(["session": .string($0.sessionName), "kind": .string($0.kind.rawValue), "text": .string($0.text)])
+            .object(["session": .string($0.sessionName), "kind": .string($0.kind.rawValue), "text": .string($0.text),
+                     "sessionTags": .array((sessionTags[$0.sessionID] ?? []).map(JSONValue.string))])
         }
         let existing: [JSONValue] = skills.map {
             .object(["name": .string($0.name), "description": .string($0.description), "paths": .array($0.paths.map(JSONValue.string)),
+                     "tags": .array($0.tags.map(JSONValue.string)),
                      "body": .string(String(SkillText.body(of: $0.text).prefix(maxExistingBody)))])
         }
         let input = JSONValue.object(["project": .string(projectName),
                                       "lesson": .object(["summary": .string(candidate.summary), "evidence": .array(evidence)]),
-                                      "approvedSkills": .array(existing)])
+                                      "approvedSkills": .array(existing),
+                                      "tagCatalog": .array(tagCatalog.map(JSONValue.string))])
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let text = (try? encoder.encode(input)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
@@ -358,8 +372,10 @@ public enum SkillDraftJob {
     }
 
     /// The draft in a reply. A patch must name an approved skill (else it's
-    /// read as new); nil when the reply doesn't make sense.
-    public static func draft(from reply: JSONValue, skills: [ApprovedSkill]) -> SkillDraft? {
+    /// read as new); nil when the reply doesn't make sense. Tags are kept
+    /// only when they're in `tagCatalog` (matched without regard to case,
+    /// spelled as the catalog spells them); a reply without them has none.
+    public static func draft(from reply: JSONValue, skills: [ApprovedSkill], tagCatalog: [String] = []) -> SkillDraft? {
         func string(_ key: String) -> String { reply[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         let action: SkillDraft.Action
         switch string("action") {
@@ -377,7 +393,14 @@ public enum SkillDraftJob {
         guard action == .none || SkillName.isValid(name) else { return nil }
         let paths = (reply["paths"]?.arrayValue ?? []).compactMap { $0.stringValue?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        var tags: [String] = []
+        for raw in reply["tags"]?.arrayValue ?? [] {
+            guard let wanted = raw.stringValue?.trimmingCharacters(in: .whitespaces),
+                  let known = tagCatalog.first(where: { $0.caseInsensitiveCompare(wanted) == .orderedSame }),
+                  !tags.contains(known) else { continue }
+            tags.append(known)
+        }
         return SkillDraft(action: action, name: name, description: string("description"), whenToUse: string("whenToUse"),
-                          paths: paths, body: string("body"), why: SuggestionCopy.sentence(string("why")))
+                          paths: paths, body: string("body"), why: SuggestionCopy.sentence(string("why")), tags: tags)
     }
 }

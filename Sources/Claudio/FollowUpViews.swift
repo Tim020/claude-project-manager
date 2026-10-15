@@ -27,8 +27,10 @@ struct NeedsYouSection: View {
                     .padding(.horizontal, 4)
                 let skills = model.skillsData(inProject: projectID)
                 let hasSkillCards = model.isAssistantOn(inProject: projectID)
-                    && (!skills.proposals.isEmpty || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
-                if data.followUps.isEmpty && data.suggestions.isEmpty && longRunning.isEmpty && !hasSkillCards {
+                    && (!skills.proposals.isEmpty || !skills.unusedSkills.isEmpty
+                        || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
+                let outsideEdits = model.outsideEdits(inProject: projectID)
+                if data.followUps.isEmpty && data.suggestions.isEmpty && longRunning.isEmpty && !hasSkillCards && outsideEdits.isEmpty {
                     Text("Nothing needs you.")
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
@@ -36,6 +38,10 @@ struct NeedsYouSection: View {
                 }
                 ForEach(longRunning) { session in
                     LongRunningTasksCard(session: session, now: context.date)
+                }
+                // Whatever the mode: sessions can edit skills either way.
+                ForEach(outsideEdits) { edit in
+                    OutsideEditRow(edit: edit, projectID: projectID)
                 }
                 if model.isAssistantOn(inProject: projectID) {
                     ForEach(data.followUps.reversed()) { followUp in

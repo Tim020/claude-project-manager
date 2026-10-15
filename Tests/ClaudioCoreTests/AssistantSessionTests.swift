@@ -482,7 +482,16 @@ final class AssistantSessionTests: XCTestCase {
             XCTAssertEqual(model.workspace.group(of: sessionID), .folder(folder))
 
             let dispatch = try XCTUnwrap(runner.commands.first { $0.contains("--bg") })
-            XCTAssertTrue(dispatch.containsSequence(["--add-dir", skillsRoot.path]))
+            // Its own skill set (step 5b): a root of its own, linking only
+            // the chosen skill.
+            XCTAssertEqual(session.skillSet, ["shell-map"])
+            let ownRoot = support.appendingPathComponent("assistant/\(project.uuidString.lowercased())/sessions/\(sessionID.uuidString.lowercased())")
+            XCTAssertTrue(dispatch.containsSequence(["--add-dir", ownRoot.path]), "not the shared root")
+            XCTAssertFalse(dispatch.containsSequence(["--add-dir", skillsRoot.path]))
+            let link = ownRoot.appendingPathComponent(".claude/skills/shell-map")
+            XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path),
+                           skillsRoot.appendingPathComponent(".claude/skills/shell-map").path)
+            XCTAssertEqual(SkillFiles.approved(inRoot: ownRoot).map(\.name), ["shell-map"], "the link reads as the skill")
             let plugin = support.appendingPathComponent("plugin/claudio").path
             XCTAssertTrue(dispatch.containsSequence(["--plugin-dir", plugin]))
             XCTAssertTrue(FileManager.default.isExecutableFile(atPath: plugin + "/bin/claudio"), "installed at launch")

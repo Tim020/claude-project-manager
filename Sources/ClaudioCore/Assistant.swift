@@ -371,6 +371,24 @@ public protocol AssistantStoring: AnyObject {
     func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws
     /// A skill's approved versions, newest first.
     func skillHistory(name: String, projectID: UUID) -> [SkillVersion]
+    /// Removes an approved skill's folder from Claudio's root (Save to
+    /// Repository: the repository's copy takes over).
+    func removeApprovedSkill(name: String, projectID: UUID) throws
+    /// A session's own skills root, `sessions/<id>/`, whose `.claude/skills`
+    /// holds links to just `skills` (approved ones that are there; others
+    /// are left out). Made if missing; links not in `skills` are removed.
+    func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL?
+    func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws
+    /// The sessions with a skills root on disk (for tidying up deleted ones).
+    func sessionSkillsRootIDs(projectID: UUID) -> [UUID]
+    /// An approved skill's `SKILL.md` in Claudio's root (nil: none on disk,
+    /// as in memory), for the check for edits made outside Claudio.
+    func approvedSkillFile(name: String, projectID: UUID) -> URL?
+    /// Retire: moves the skill to `retired/<name>/`, outside the `--add-dir`
+    /// root, so no session loads it. Restore moves it back.
+    func retireSkill(name: String, projectID: UUID) throws
+    func restoreSkill(name: String, projectID: UUID) throws
+    func retiredSkills(projectID: UUID) -> [ApprovedSkill]
 }
 
 /// One approved version of a skill, from its history.
@@ -412,6 +430,14 @@ extension AssistantStoring {
     public func writeApprovedSkill(name: String, text: String, projectID: UUID) throws {}
     public func writeSkillHistory(name: String, version: Int, text: String, projectID: UUID) throws {}
     public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] { [] }
+    public func removeApprovedSkill(name: String, projectID: UUID) throws {}
+    public func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL? { nil }
+    public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {}
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] { [] }
+    public func approvedSkillFile(name: String, projectID: UUID) -> URL? { nil }
+    public func retireSkill(name: String, projectID: UUID) throws {}
+    public func restoreSkill(name: String, projectID: UUID) throws {}
+    public func retiredSkills(projectID: UUID) -> [ApprovedSkill] { [] }
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -508,6 +534,45 @@ public final class MemoryAssistantStore: AssistantStoring {
     public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
         (skillVersions[projectID]?[name] ?? []).sorted { $0.version > $1.version }
     }
+    public func removeApprovedSkill(name: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        skills[projectID]?.removeAll { $0.name == name || $0.folder == name }
+    }
+    /// Each session's linked skills, as `sessionSkillsRoot` left them.
+    public var sessionSkills: [UUID: [String]] = [:]
+    /// Makes `sessionSkillsRoot` throw.
+    public var sessionSkillsError: Error?
+    public func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL? {
+        if let sessionSkillsError { throw sessionSkillsError }
+        // By folder, as the file store links them (a folder is usually the name).
+        let approved = Set((self.skills[projectID] ?? []).flatMap { [$0.name, $0.folder] })
+        sessionSkills[sessionID] = skills.filter(approved.contains)
+        sessionRootProjects[sessionID] = projectID
+        return URL(fileURLWithPath: "/memory/\(projectID.uuidString.lowercased())/sessions/\(sessionID.uuidString.lowercased())")
+    }
+    public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {
+        sessionSkills[sessionID] = nil
+        sessionRootProjects[sessionID] = nil
+    }
+    /// Which project each session's root is in.
+    public var sessionRootProjects: [UUID: UUID] = [:]
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] {
+        sessionRootProjects.filter { $0.value == projectID }.map(\.key)
+    }
+    public var retired: [UUID: [ApprovedSkill]] = [:]
+    public func retireSkill(name: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        guard let skill = skills[projectID]?.first(where: { $0.name == name }) else { return }
+        skills[projectID]?.removeAll { $0.name == name }
+        retired[projectID, default: []].append(skill)
+    }
+    public func restoreSkill(name: String, projectID: UUID) throws {
+        if let skillWriteError { throw skillWriteError }
+        guard let skill = retired[projectID]?.first(where: { $0.name == name }) else { return }
+        retired[projectID]?.removeAll { $0.name == name }
+        skills[projectID, default: []].append(skill)
+    }
+    public func retiredSkills(projectID: UUID) -> [ApprovedSkill] { retired[projectID] ?? [] }
 }
 
 /// `<root>/<project id>/assistant.json` and `audit.jsonl`, by default under
@@ -620,6 +685,74 @@ public final class AssistantFileStore: AssistantStoring {
         let folder = directory(projectID: projectID).appendingPathComponent("history").appendingPathComponent(name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try text.write(to: folder.appendingPathComponent("\(version).md"), atomically: true, encoding: .utf8)
+    }
+
+    public func sessionSkillsRoot(projectID: UUID, sessionID: UUID, skills: [String]) throws -> URL? {
+        let root = directory(projectID: projectID).appendingPathComponent("sessions").appendingPathComponent(sessionID.uuidString.lowercased())
+        let links = root.appendingPathComponent(".claude/skills")
+        let approved = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills")
+        let manager = FileManager.default
+        try manager.createDirectory(at: links, withIntermediateDirectories: true)
+        let wanted = Set(skills.filter { SkillName.isValid($0) && manager.fileExists(atPath: approved.appendingPathComponent($0).path) })
+        // A listing that fails is an error, not "no links": stale ones would stay.
+        for name in try manager.contentsOfDirectory(atPath: links.path) where !wanted.contains(name) {
+            try manager.removeItem(at: links.appendingPathComponent(name))
+        }
+        for name in wanted {
+            let link = links.appendingPathComponent(name)
+            // A link already there (even one whose target moved) is checked by
+            // what it points at, so a stale one is replaced.
+            if let target = try? manager.destinationOfSymbolicLink(atPath: link.path),
+               target == approved.appendingPathComponent(name).path { continue }
+            if (try? manager.attributesOfItem(atPath: link.path)) != nil { try manager.removeItem(at: link) }
+            try manager.createSymbolicLink(at: link, withDestinationURL: approved.appendingPathComponent(name))
+        }
+        return root
+    }
+
+    public func retireSkill(name: String, projectID: UUID) throws {
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let from = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills/\(name)")
+        let to = directory(projectID: projectID).appendingPathComponent("retired/\(name)")
+        try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: to.path) { try FileManager.default.removeItem(at: to) }
+        try FileManager.default.moveItem(at: from, to: to)
+    }
+
+    public func restoreSkill(name: String, projectID: UUID) throws {
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let from = directory(projectID: projectID).appendingPathComponent("retired/\(name)")
+        let to = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills/\(name)")
+        guard !FileManager.default.fileExists(atPath: to.path) else { throw CocoaError(.fileWriteFileExists) }
+        try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: from, to: to)
+    }
+
+    public func retiredSkills(projectID: UUID) -> [ApprovedSkill] {
+        SkillFiles.scan(folder: directory(projectID: projectID).appendingPathComponent("retired")).skills
+    }
+
+    public func approvedSkillFile(name: String, projectID: UUID) -> URL? {
+        guard SkillName.isValid(name) else { return nil }
+        return directory(projectID: projectID).appendingPathComponent("skills/.claude/skills/\(name)/SKILL.md")
+    }
+
+    public func sessionSkillsRootIDs(projectID: UUID) -> [UUID] {
+        let sessions = directory(projectID: projectID).appendingPathComponent("sessions")
+        return ((try? FileManager.default.contentsOfDirectory(atPath: sessions.path)) ?? []).compactMap { UUID(uuidString: $0) }
+    }
+
+    public func removeSessionSkillsRoot(projectID: UUID, sessionID: UUID) throws {
+        let root = directory(projectID: projectID).appendingPathComponent("sessions").appendingPathComponent(sessionID.uuidString.lowercased())
+        guard FileManager.default.fileExists(atPath: root.path) else { return }
+        try FileManager.default.removeItem(at: root)
+    }
+
+    public func removeApprovedSkill(name: String, projectID: UUID) throws {
+        guard SkillName.isValid(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let folder = directory(projectID: projectID).appendingPathComponent("skills/.claude/skills").appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: folder.path) else { return }
+        try FileManager.default.removeItem(at: folder)
     }
 
     public func skillHistory(name: String, projectID: UUID) -> [SkillVersion] {
