@@ -165,8 +165,10 @@ extension AppModel {
                 return (digest, read.end, prompted)
             }
         }.value
-        // Due to a compaction, unless the task looks done anyway.
-        let dueToCompaction = followUpDueToCompaction.contains(sessionID) && !taskIsFinished(session)
+        // Due to a compaction in this same conversation (not one `/clear`
+        // already left behind), unless the task looks done anyway.
+        let dueToCompaction = followUpDueToCompaction.contains(sessionID) && mark.conversationID == file.conversationID
+            && !taskIsFinished(session)
         clearFollowUpDue(sessionID)
         let slice: (digest: SessionDigest, end: UInt64, promptedSinceDecline: Bool)
         switch read {

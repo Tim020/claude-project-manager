@@ -136,8 +136,12 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
 
     public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty && lessons.isEmpty }
 
+    // `dueToCompaction` isn't here: it only matters while `.offered`/`.working`,
+    // and `NeedsYouData.saved` drops both of those before writing, so a saved
+    // `FollowUp` can never actually hold `true` for it. Persisting it would
+    // only ever write `false`.
     private enum CodingKeys: String, CodingKey {
-        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model, lessons, dueToCompaction
+        case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model, lessons
     }
 
     /// Tolerant: fields a later build adds, or leaves out, take defaults. A
@@ -153,7 +157,6 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
         askedFor = try c.decodeIfPresent(Bool.self, forKey: .askedFor) ?? true
         isDeferred = try c.decodeIfPresent(Bool.self, forKey: .isDeferred) ?? false
-        dueToCompaction = try c.decodeIfPresent(Bool.self, forKey: .dueToCompaction) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model)
         lessons = (try? c.decodeIfPresent([String].self, forKey: .lessons)) ?? []
     }
