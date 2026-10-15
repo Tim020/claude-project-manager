@@ -384,6 +384,8 @@ final class RestartToUpdateTests: XCTestCase {
                 model.restartToUpdate(id)
             }
             await model.lastTask?.value
+            // The stop was queued mid-restart, after the task awaited above.
+            await model.lastTask?.value
             await MainActor.run {
                 if !exitFirst { model.terminalExited(id, exitCode: 0) }
                 XCTAssertNil(model.takePendingLaunch(id), "exit first: \(exitFirst), close only: \(closeOnly)")
