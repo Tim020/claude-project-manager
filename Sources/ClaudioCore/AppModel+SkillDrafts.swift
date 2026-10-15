@@ -511,6 +511,8 @@ extension AppModel {
     /// has a skill of that name.
     @discardableResult
     public func saveSkillToRepository(_ name: String, projectID: UUID) -> Bool {
+        // Read afresh: what's copied is what's on disk now.
+        refreshApprovedSkills(projectID: projectID)
         guard let project = workspace.project(projectID), SkillName.isValid(name),
               let skill = (approvedSkills[projectID] ?? []).first(where: { $0.name == name }) else { return false }
         guard !unreadableSkillsData.contains(projectID) else {
@@ -518,8 +520,15 @@ extension AppModel {
             return false
         }
         // Changed outside Claudio and not yet reviewed: that text hasn't
-        // passed the checks, so it isn't copied anywhere.
-        guard !skillsData(inProject: projectID).outsideEdits.contains(where: { $0.name == name && $0.location == .claudio }) else {
+        // passed the checks, so it isn't copied anywhere. The file itself is
+        // compared with what Claudio approved, so an edit the 15 s drift
+        // check hasn't seen yet counts too. (One put there by hand, with no
+        // record, saves as it is.)
+        let record = skillsData(inProject: projectID).records.first { $0.name == name && $0.location == .claudio }
+        let unreviewed = record.map { SkillText.hash(skill.text) != $0.contentHash } ?? false
+        guard !unreviewed, !skillsData(inProject: projectID).outsideEdits.contains(where: { $0.name == name && $0.location == .claudio }) else {
+            // So the next check raises its card.
+            forgetSkillFileStamps(name, projectID: projectID)
             showToast("\(name) was changed outside Claudio. Keep or revert that change first.")
             return false
         }

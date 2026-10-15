@@ -1942,4 +1942,26 @@ final class SkillTests: XCTestCase {
         let saved = try String(contentsOf: folder.appendingPathComponent("skills.json"), encoding: .utf8)
         XCTAssertTrue(saved.contains("\"broken\""))
     }
+
+    // MARK: - Review round 2 (PR #42)
+
+    func testAnEditTheDriftCheckHasntSeenStillStopsSaveToRepository() async throws {
+        let d = try await makeDiskFixture()
+        let file = await MainActor.run { () -> URL in
+            let file = approveOnDisk(d)
+            d.model.checkSkillDrift()
+            return file
+        }
+        // Edited moments ago: no drift check has run since, so no card yet.
+        try (try String(contentsOf: file, encoding: .utf8) + "\nJust now.\n").write(to: file, atomically: true, encoding: .utf8)
+        await MainActor.run {
+            XCTAssertTrue(d.model.outsideEdits(inProject: d.project).isEmpty, "no card yet")
+            XCTAssertFalse(d.model.saveSkillToRepository("linux-tests", projectID: d.project))
+            XCTAssertEqual(d.model.toast?.text, "linux-tests was changed outside Claudio. Keep or revert that change first.")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: d.repo.appendingPathComponent(".claude/skills/linux-tests").path),
+                           "the unchecked text isn't copied")
+            d.model.checkSkillDrift()
+            XCTAssertEqual(d.model.outsideEdits(inProject: d.project).count, 1, "and the next check raises its card")
+        }
+    }
 }
