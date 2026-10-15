@@ -121,6 +121,9 @@ public enum PermissionMode: String, Codable, CaseIterable, Sendable {
 public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var projectID: UUID
+    public var provider: SessionProvider = .claude
+    public var codexSessionID: String?
+    public var codexPermissions: CodexPermissions = .configured
     /// The Claude Code session UUID (the `.jsonl` file name under `~/.claude/projects`).
     public var claudeSessionID: String?
     /// Short id of the Claude Code background agent running this session
@@ -184,6 +187,7 @@ public struct Session: Identifiable, Codable, Equatable, Sendable {
     public var replacedConversations: [String] = []
 
     enum CodingKeys: String, CodingKey {
+        case provider, codexSessionID, codexPermissions
         case id, projectID, claudeSessionID, agentID, hasConversation, name, hasCustomName, claudeTitle, lastBaseName, tags, status, summary, needsAction
         case workingDirectory, model, permissionMode, pullRequests, createdAt, lastActivity, isArchived, hasAssistant, namedSkills, lastTurnFailed, followUpMark, followUpDeclined
         case backgroundTasks, finishedBackgroundTasks, replacedConversations

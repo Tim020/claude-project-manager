@@ -76,7 +76,7 @@ final class TerminalRegistry: NSObject, TerminalControlling {
     func terminal(for sessionID: UUID) -> LocalProcessTerminalView? {
         if let launch = model.takePendingLaunch(sessionID) {
             views[sessionID]?.processDelegate = nil
-            let view = makeView()
+            let view = makeView(provider: model.workspace.session(sessionID)?.provider ?? .claude)
             views[sessionID] = view
             view.startProcess(executable: launch.executable,
                               args: launch.arguments,
@@ -202,8 +202,9 @@ final class TerminalRegistry: NSObject, TerminalControlling {
         window.makeFirstResponder(view)
     }
 
-    private func makeView() -> LocalProcessTerminalView {
+    private func makeView(provider: SessionProvider) -> LocalProcessTerminalView {
         let view = SessionTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        view.usesClaudeGuards = provider == .claude
         view.onBlockedLeave = { [weak self] in
             self?.model.log.append(.info, "Blocked ← that would have left the session for the agents view")
         }
@@ -246,6 +247,7 @@ final class TerminalRegistry: NSObject, TerminalControlling {
 /// A terminal that stays in its session: the ← that would switch Claude
 /// Code to its agents view is dropped (the app's sidebar and tabs do that job).
 final class SessionTerminalView: LocalProcessTerminalView {
+    var usesClaudeGuards = true
     var onBlockedLeave: (() -> Void)?
     /// A second Ctrl+C / Ctrl+D that would have quit Claude Code was dropped.
     var onBlockedExit: (() -> Void)?
@@ -256,6 +258,10 @@ final class SessionTerminalView: LocalProcessTerminalView {
     private var checkScheduled = false
 
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard usesClaudeGuards else {
+            super.send(source: source, data: data)
+            return
+        }
         let input = Array(data)
         // SwiftTerm's keyDown isn't open, so Shift+Enter is caught here, by the event that sent it.
         if let event = NSApp.currentEvent, event.type == .keyDown {
@@ -299,6 +305,7 @@ final class SessionTerminalView: LocalProcessTerminalView {
     }
 
     func checkForAgentsView(title: String?) {
+        guard usesClaudeGuards else { return }
         let seconds = lastLeftArrow.map { Date().timeIntervalSince($0) }
         guard AgentsViewDetector.shouldReturnToSession(title: title, screen: title == nil ? visibleLines() : [],
                                                        secondsSinceLeftArrow: seconds) else { return }

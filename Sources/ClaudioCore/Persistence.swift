@@ -1,6 +1,10 @@
 import Foundation
 
 public struct AppSettings: Codable, Equatable, Sendable {
+    public var defaultProvider: SessionProvider = .claude
+    public var codexPath: String?
+    public var defaultCodexModel: String?
+    public var defaultCodexPermissions: CodexPermissions = .configured
     /// Explicit path to the `claude` binary; located automatically when nil.
     public var claudePath: String?
     /// Model for new sessions; Claude Code's default when nil.
@@ -140,6 +144,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             useBackgroundAgents: try c.decodeIfPresent(Bool.self, forKey: .useBackgroundAgents) ?? true,
             sidebarWidth: try c.decodeIfPresent(Double.self, forKey: .sidebarWidth) ?? 290,
             tags: tags)
+        defaultProvider = try c.decodeIfPresent(SessionProvider.self, forKey: .defaultProvider) ?? .claude
+        codexPath = try c.decodeIfPresent(String.self, forKey: .codexPath)
+        defaultCodexModel = try c.decodeIfPresent(String.self, forKey: .defaultCodexModel)
+        defaultCodexPermissions = try c.decodeIfPresent(CodexPermissions.self, forKey: .defaultCodexPermissions) ?? .configured
         notifications = try c.decodeIfPresent(NotificationSettings.self, forKey: .notifications) ?? NotificationSettings()
         defaultBackgroundPermissionMode = try c.decodeIfPresent(PermissionMode.self, forKey: .defaultBackgroundPermissionMode) ?? .auto
         if let tools = try c.decodeIfPresent(ToolWindows.self, forKey: .toolWindows) {
@@ -369,6 +377,10 @@ extension Session {
                 if !name.isEmpty { self.legacyRoleName = name }
             }
         }
+        self.provider = try c.decodeIfPresent(SessionProvider.self, forKey: .provider) ?? .claude
+        let codexID = try c.decodeIfPresent(String.self, forKey: .codexSessionID)
+        self.codexSessionID = codexID.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }
+        self.codexPermissions = try c.decodeIfPresent(CodexPermissions.self, forKey: .codexPermissions) ?? .configured
         self.needsAction = try c.decodeIfPresent(String.self, forKey: .needsAction)
         self.agentID = try c.decodeIfPresent(String.self, forKey: .agentID)
         self.hasCustomName = try c.decodeIfPresent(Bool.self, forKey: .hasCustomName) ?? false

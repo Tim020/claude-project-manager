@@ -58,7 +58,8 @@ struct ContentView: View {
                 }
                 VStack(spacing: 0) {
                     DetailView()
-                    if commands.dismissedBannerProblems != model.environment.problems.map(\.title) && !commands.showSetup {
+                    if (model.selectedSession?.provider ?? model.settings.defaultProvider) == .claude,
+                       commands.dismissedBannerProblems != model.environment.problems.map(\.title) && !commands.showSetup {
                         EnvironmentBanner(onFix: { commands.showSetup = true },
                                           onDismiss: { commands.dismissedBannerProblems = model.environment.problems.map(\.title) })
                     }
@@ -81,11 +82,7 @@ struct ContentView: View {
         .background(DS.window, ignoresSafeAreaEdges: [])
         .background(DS.sidebar)
         .environment(\.presentNewSession, { group in
-            if model.environment.canRunSessions {
-                commands.newSessionTarget = NewSessionTarget(group: group)
-            } else {
-                commands.showSetup = true
-            }
+            commands.newSessionTarget = NewSessionTarget(group: group)
         })
         .environment(\.addProject, { chooseProjectDirectory(model: model) })
         .sheet(item: $commands.newSessionTarget) { target in
@@ -117,7 +114,7 @@ struct ContentView: View {
             // Check Claude Code first: if it can't run sessions, say so before
             // anything else (the import offer follows the setup sheet).
             await model.checkEnvironment(force: true)
-            if model.environment.problems.contains(where: \.isBlocking) {
+            if model.settings.defaultProvider == .claude && model.codexUnavailableReason != nil && model.environment.problems.contains(where: \.isBlocking) {
                 commands.showSetup = true
             } else {
                 offerFirstRunImport()
@@ -271,7 +268,7 @@ func chooseProjectDirectory(model: AppModel) {
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = true
     panel.prompt = "Add Project"
-    panel.message = "Choose a working directory for Claude Code sessions"
+    panel.message = "Choose a working directory for sessions"
     guard panel.runModal() == .OK else { return }
     var last: UUID?
     for url in panel.urls { last = model.addProject(path: url.path) }

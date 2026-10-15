@@ -23,7 +23,9 @@ struct TranscriptView: View {
                     }
                     if lines.isEmpty {
                         row(mark: "", markColor: DS.dim,
-                            text: session.hasConversation ? "No transcript found for this session." : "No messages yet.",
+                            text: session.provider == .codex
+                                ? "Resume to view this conversation in Codex CLI."
+                                : session.hasConversation ? "No transcript found for this session." : "No messages yet.",
                             color: DS.dim)
                     }
                     Color.clear.frame(height: 1).id(TranscriptView.bottomID)

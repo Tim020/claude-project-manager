@@ -2,6 +2,8 @@ import Foundation
 import Observation
 
 public struct NewSessionRequest: Equatable, Sendable {
+    public var provider: SessionProvider = .claude
+    public var codexPermissions: CodexPermissions = .configured
     public var projectID: UUID
     /// Folder to create the session in; Unfiled when nil.
     public var folderID: UUID?
@@ -202,6 +204,8 @@ public final class AppModel {
     @ObservationIgnored private var usageResets = UsageResetTracker()
     @ObservationIgnored private var isRefreshingUsage = false
     @ObservationIgnored private let locateClaude: (String?) -> String?
+    @ObservationIgnored private let locateCodex: (String?) -> String?
+    @ObservationIgnored private var codexHookTailer: HookEventTailer
     @ObservationIgnored let locateGitHubCLI: () -> String?
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
     @ObservationIgnored var pullRequestCache: [String: (pullRequest: GitHubCLI.PullRequest?, checked: Date)] = [:]
@@ -385,6 +389,7 @@ public final class AppModel {
         usageStore: UsageStoring = MemoryUsageStore(),
         git: String = GitChanges.defaultGit,
         locateClaude: @escaping (String?) -> String? = { ClaudeExecutableLocator.locate(override: $0) },
+        locateCodex: @escaping (String?) -> String? = { CodexExecutableLocator.locate(override: $0) },
         locateGitHubCLI: @escaping () -> String? = { GitHubCLI.locate() },
         isGitRepository: @escaping (String) -> Bool = Worktree.isGitRepository,
         shell: String = ClaudeExecutableLocator.defaultShell(),
@@ -398,11 +403,13 @@ public final class AppModel {
         self.hookEventsURL = hookEventsURL
         self.statusDirectory = statusDirectory
         self.hookTailer = HookEventTailer(url: hookEventsURL, startAtEnd: true)
+        self.codexHookTailer = HookEventTailer(url: hookEventsURL.deletingLastPathComponent().appendingPathComponent("codex-hook-events.log"), startAtEnd: true)
         self.runner = runner
         self.assistantStore = assistantStore
         self.usageStore = usageStore
         self.gitExecutable = git
         self.locateClaude = locateClaude
+        self.locateCodex = locateCodex
         self.locateGitHubCLI = locateGitHubCLI
         self.isGitRepository = isGitRepository
         self.shell = shell
@@ -1151,6 +1158,7 @@ public final class AppModel {
     /// the next refresh.
     @discardableResult
     private func pushTitle(_ id: UUID) -> Bool {
+        if state.workspace.session(id)?.provider == .codex { return false }
         guard let session = state.workspace.session(id), let claudeID = session.claudeSessionID else {
             pendingTitlePushes.insert(id)
             return false
@@ -1483,31 +1491,37 @@ public final class AppModel {
     @discardableResult
     public func createSession(_ request: NewSessionRequest) -> UUID? {
         guard let project = state.workspace.project(request.projectID) else { return nil }
-        guard environment.canRunSessions else {
+        if request.provider == .codex, let reason = codexUnavailableReason {
+            report(reason)
+            return nil
+        }
+        guard request.provider == .codex || environment.canRunSessions else {
             setupRequested = true
             return nil
         }
         let prompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = Workspace.trimmed(request.name)
             ?? SessionDiscovery.truncateAtWord(TranscriptBuilder.firstLine(prompt), to: SessionDiscovery.maxTitleLength)
-        let background = runsInBackground(prompt: prompt)
+        let background = request.provider == .claude && runsInBackground(prompt: prompt)
         let catalogIDs = Set(state.settings.tags.map(\.id))
         var session = Session(projectID: project.id,
-                              claudeSessionID: background ? nil : UUID().uuidString.lowercased(),
+                              claudeSessionID: request.provider == .claude && !background ? UUID().uuidString.lowercased() : nil,
                               name: name.isEmpty ? "New session" : name,
                               tags: request.tagIDs.filter(catalogIDs.contains),
                               workingDirectory: project.path,
-                              model: request.model ?? state.settings.defaultModel,
+                              model: request.model ?? (request.provider == .codex ? state.settings.defaultCodexModel : state.settings.defaultModel),
                               permissionMode: request.permissionMode,
                               createdAt: now())
         session.hasCustomName = Workspace.trimmed(request.name) != nil
+        session.provider = request.provider
+        session.codexPermissions = request.codexPermissions
         session.namedSkills = request.namedSkills
         // Everything a new session does is new to the assistant: a mark that
         // matches no conversation reads its history from the top. (Sessions
         // without a mark are ones from before, and get a baseline instead.)
         session.followUpMark = FollowUpMark(conversationID: "", offset: 0)
         // Give Claude Code the same name once the session has a history file.
-        if session.hasCustomName { pendingTitlePushes.insert(session.id) }
+        if session.provider == .claude && session.hasCustomName { pendingTitlePushes.insert(session.id) }
         if background { session.status = .working }
         guard attempt({ try state.workspace.addSession(session, toFolder: request.folderID) }) != nil else { return nil }
         select(session.id)
@@ -1544,6 +1558,15 @@ public final class AppModel {
     /// if given, is sent as the first prompt after resuming.
     public func resume(_ sessionID: UUID, message: String? = nil) {
         guard let session = state.workspace.session(sessionID), !running.contains(sessionID) else { return }
+        if session.provider == .codex {
+            // Without a captured ID, explicitly choose in Codex's picker.
+            // Never guess another conversation with --last.
+            if session.codexSessionID == nil {
+                state.workspace.updateSession(sessionID) { $0.hasConversation = true }
+            }
+            start(sessionID, prompt: message.flatMap(Workspace.trimmed))
+            return
+        }
         stopsRequested.remove(sessionID)
         guard environment.canRunSessions || isAgentAlive(sessionID) else {
             setupRequested = true
@@ -1632,6 +1655,16 @@ public final class AppModel {
     private func restoreBackgroundTasks() {
         let launchedAt = now()
         for session in state.workspace.sessions {
+            // Codex uses --no-daemon: no terminal survives an app restart,
+            // including one that was waiting at an approval or trust prompt.
+            if session.provider == .codex {
+                state.workspace.updateSession(session.id) {
+                    $0.status = .completed
+                    $0.needsAction = nil
+                    $0.forgetBackgroundTasks()
+                }
+                continue
+            }
             var tasks: [BackgroundTask] = []
             if let agentID = session.agentID {
                 let url = BackgroundJobState.url(claudeHome: discovery.claudeHome, agentID: agentID)
@@ -1959,6 +1992,30 @@ public final class AppModel {
     @discardableResult
     public func start(_ sessionID: UUID, prompt: String? = nil) -> Bool {
         guard !running.contains(sessionID), let session = state.workspace.session(sessionID) else { return false }
+        if session.provider == .codex {
+            guard let executable = locateCodex(state.settings.codexPath) else {
+                report(codexUnavailableReason ?? "Codex CLI not found.")
+                return false
+            }
+            do {
+                try FileManager.default.createDirectory(at: codexHookTailer.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            } catch {
+                report("Couldn't prepare Codex's event log: \(AppModel.describe(error))")
+                return false
+            }
+            pendingLaunches[sessionID] = CodexLaunch.make(session: session, executable: executable, shell: shell,
+                                                        prompt: prompt, eventsPath: codexHookTailer.url.path)
+            running.insert(sessionID)
+            runningDirectly.insert(sessionID)
+            exitCodes[sessionID] = nil
+            state.workspace.updateSession(sessionID) {
+                $0.status = .awaitingInput
+                $0.needsAction = "In Codex, use /hooks to review Claudio's session tracking hooks."
+                $0.lastActivity = now()
+            }
+            save()
+            return true
+        }
         guard let executable = locateClaude(state.settings.claudePath) else {
             report("Claude Code CLI not found. Install it, or set its location in Settings.")
             return false
@@ -2001,6 +2058,9 @@ public final class AppModel {
 
     /// Called by the UI when a session's terminal process exits.
     public func terminalExited(_ sessionID: UUID, exitCode: Int32?) {
+        // A short-lived CLI can exit between polling ticks. Capture its ID
+        // before removing the running marker used to reject late events.
+        if state.workspace.session(sessionID)?.provider == .codex { pollCodexHookEvents() }
         // Closing its tab is a sign it may be ready for a follow-up.
         followUpDue.insert(sessionID)
         running.remove(sessionID)
@@ -2016,7 +2076,10 @@ public final class AppModel {
         }
         state.workspace.updateSession(sessionID) { session in
             session.forgetBackgroundTasks()
-            if session.status == .working { session.status = .completed }
+            if session.provider == .codex {
+                session.status = .completed
+                session.needsAction = nil
+            } else if session.status == .working { session.status = .completed }
         }
         save()
     }
@@ -2034,10 +2097,15 @@ public final class AppModel {
     /// Closes the session's terminal. For a background agent this only
     /// detaches; the agent keeps running.
     private func detach(_ sessionID: UUID) {
+        if state.workspace.session(sessionID)?.provider == .codex { pollCodexHookEvents() }
         let wasRunning = running.remove(sessionID) != nil
         runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil
         if wasRunning { terminals?.terminate(sessionID) }
+        if state.workspace.session(sessionID)?.provider == .codex {
+            state.workspace.updateSession(sessionID) { $0.status = .completed; $0.needsAction = nil }
+            save()
+        }
     }
 
     /// App quit: detach from background agents (they keep running) and stop
@@ -2049,6 +2117,7 @@ public final class AppModel {
 
     /// Applies hook events written since the last poll.
     public func pollHookEvents() {
+        pollCodexHookEvents()
         let events = hookTailer.readNew()
         guard !events.isEmpty else { return }
         var changed = false
@@ -2087,6 +2156,7 @@ public final class AppModel {
     /// - otherwise nobody, rather than repointing the launching session.
     private func hookTarget(for event: HookEvent) -> UUID? {
         let workspace = state.workspace
+        guard workspace.session(event.appSessionID)?.provider != .codex else { return nil }
         guard let claudeID = event.claudeSessionID, !claudeID.isEmpty else {
             return workspace.session(event.appSessionID)?.id
         }
@@ -2268,6 +2338,27 @@ public final class AppModel {
     }
 
     // MARK: - Menu
+
+    public var codexUnavailableReason: String? {
+        locateCodex(state.settings.codexPath) == nil
+            ? "Codex CLI not found. Install Codex CLI, or set its executable path in Settings → New Sessions." : nil
+    }
+
+    private func pollCodexHookEvents() {
+        var changed = false
+        for event in codexHookTailer.readNew() {
+            guard let session = workspace.session(event.appSessionID), session.provider == .codex,
+                  running.contains(session.id) else { continue }
+            var updated = session
+            CodexHookReducer.apply(event, to: &updated, now: now())
+            if updated != session {
+                state.workspace.updateSession(session.id) { $0 = updated }
+                if event.name == .postToolUse || event.name == .stop { markChangesDirty(session.id) }
+                changed = true
+            }
+        }
+        if changed { save() }
+    }
 
     public func updateMenuFlags() {
         var flags = MenuFlags()

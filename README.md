@@ -1,6 +1,6 @@
 # Claudio
 
-Claudio is a native macOS app for running and organising many [Claude Code](https://claude.com/claude-code) sessions.
+Claudio is a native macOS app for running and organising [Claude Code](https://claude.com/claude-code) and [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) sessions.
 
 Sessions are grouped three levels deep:
 
@@ -14,6 +14,7 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 ## Features
 
+  * Choose **Claude Code** or **Codex CLI** in New Session. Each session keeps its provider across app restarts. Settings → New Sessions has a default CLI, separate executable and model settings for Codex, and Codex sandbox choices. New Session and Codex settings use the setup popup's compact app-icon header and flat grouped rows. Existing saved sessions remain Claude Code sessions.
 - **Two rails** (design 8c, like PyCharm). Every control lives where its scope lives, and the side a tool is on tells you what it covers:
   - The **left rail** holds project tools: **Sessions** (the sidebar tree, ⌘1), **Pull Requests** (⌘2), the **Assistant** (⌘3) and **Usage** (⌘4), with the **Shell** at its foot (⌃`; a badge counts hidden shells).
   - The **right rail** holds tools for the selected session: **Changes** (⌥⌘F, with a badge counting its files), **Pull Request** (⌥⌘P) and **Usage** (⌥⌘U). Both follow the focused tab. It shows only while a session's tab is selected; with an overview tab, or no tabs, it's hidden, and an open tool comes back with the next session.
@@ -122,7 +123,20 @@ The UI follows the Claude Design handoff in [`design/`](design/). It combines th
 
 - macOS 14 (Sonoma) or later
 - Xcode 16 / Swift 5.10+ toolchain
-- Claude Code CLI 2.1.169 or later (the first version with `claude agents --json --all`), installed and logged in. Older versions still run sessions, directly in their tab. Claudio checks this at launch. The app looks for it on `PATH`, in `~/.claude/local`, `~/.local/bin` and Homebrew, or you can set the path in **Settings**.
+- For Claude Code sessions: Claude Code CLI 2.1.169 or later (the first version with `claude agents --json --all`), installed and logged in. Older versions still run sessions, directly in their tab. Claudio checks this at launch. The app looks for it on `PATH`, in `~/.claude/local`, `~/.local/bin` and Homebrew, or you can set the path in **Settings**.
+- For Codex sessions: a Codex CLI supporting lifecycle hooks and `--no-daemon` (validated with `codex-cli 0.162.0-alpha.17.2`). Install and sign in using the [official instructions](https://learn.chatgpt.com/docs/codex/cli). Claudio searches `PATH`, `~/.local/bin`, Homebrew and common npm locations; an explicit path can be set in **Settings → New Sessions**. Claude Code is optional for Codex sessions.
+
+### Codex CLI sessions
+
+Select **Codex CLI** in New Session. Leave Model empty to use Codex's configured model, or enter a model ID. The default permissions preserve your Codex configuration. The Read only and Workspace writes choices explicitly request the corresponding sandbox with `on-request` approvals; Claudio never adds a sandbox or approval bypass.
+
+Codex runs directly in the embedded terminal, in the project's checkout. Closing its tab keeps it running inside Claudio; Stop Session or quitting Claudio stops the process. It uses `--no-daemon` so session tracking stays local to that terminal and doesn't attach to another application's shared Codex daemon.
+
+On first launch, review and trust Claudio's event hooks in Codex's hook review screen (or `/hooks`). They only append lifecycle events to `~/Library/Application Support/Claudio/codex-hook-events.log`; they don't approve tools or add model instructions. The overrides apply to that launch; Claudio doesn't edit your Codex config. See the [official hooks reference](https://learn.chatgpt.com/docs/hooks).
+
+Trusted hooks supply the exact Codex session ID and report work, approval requests, interruptions and completed turns. Resume uses `codex resume <id>`. If hooks weren't trusted and no ID was captured, Resume opens Codex's session picker so you can choose explicitly; Claudio never guesses with `--last`. Conversation history stays with Codex and is shown when you resume in the terminal.
+
+Claude background agents, automatic history import, Project Assistant plugins, automatic follow-ups, and the plan/token usage displays remain Claude Code features. Codex sessions use the same projects, folders, tags, panes and repository comparison tools. A newer Codex CLI may be needed if your installed version rejects the launch options.
 
 ## Build and run
 

@@ -10,7 +10,8 @@ public struct TerminalLaunch: Equatable, Sendable {
     public var arguments: [String]
     public var environment: [String: String]
     public var workingDirectory: String
-    /// The arguments passed to `claude` itself (for display and tests).
+    /// Arguments passed to the CLI itself (Claude or Codex; retained name for
+    /// existing callers), for display and tests.
     public var claudeArguments: [String]
     /// Shown in logs instead of the `claude` command (for other scripts).
     public var label: String? = nil

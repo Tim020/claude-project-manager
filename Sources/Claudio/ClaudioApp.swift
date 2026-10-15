@@ -79,11 +79,9 @@ struct ClaudioApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Session…") {
-                    if model.menuFlags.canRunSessions {
-                        commands.newSessionTarget = NewSessionTarget(group: model.selectedGroup)
-                    } else {
-                        commands.showSetup = true
-                    }
+                    // The sheet chooses and validates the CLI, so a missing
+                    // Claude install must not block creating a Codex session.
+                    commands.newSessionTarget = NewSessionTarget(group: model.selectedGroup)
                 }
                 .keyboardShortcut("n")
                 .disabled(!model.menuFlags.hasProjects)

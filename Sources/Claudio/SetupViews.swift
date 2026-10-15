@@ -151,19 +151,7 @@ struct SetupSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(nsImage: NSApp.applicationIconImage)
-                    .resizable()
-                    .frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(headline)
-                        .font(DS.font(18, .bold))
-                        .foregroundStyle(DS.text)
-                    Text("Claudio runs your sessions with the Claude Code CLI.")
-                        .font(DS.font(12.5))
-                        .foregroundStyle(DS.muted)
-                }
-            }
+            SetupHeader(title: headline, subtitle: "Claudio runs your sessions with the Claude Code CLI.")
 
             VStack(spacing: 0) {
                 let rows = EnvironmentCheck.rows(for: model.environment, home: model.home)
