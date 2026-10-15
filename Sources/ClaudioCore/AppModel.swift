@@ -161,12 +161,16 @@ public final class AppModel {
     public private(set) var restartingSessions: Set<UUID> = []
     /// Restarted sessions whose old terminal hadn't exited when the restart
     /// finished: its exit attaches the tab again.
+    /// Cleared when the tab is closed or the session stopped (`detach`), so
+    /// it's what says the tab still wants its terminal back.
     @ObservationIgnored private var reattachOnExit: Set<UUID> = []
     /// Restarted sessions whose next notification check only takes a new
     /// baseline: the restart isn't news.
     @ObservationIgnored private var quietAfterRestart: Set<UUID> = []
     /// The roster file's modification date and size when it was last read.
     @ObservationIgnored private var rosterStamp: String?
+    /// The last roster read failed; a second failure in a row clears the versions.
+    @ObservationIgnored private var rosterReadFailed = false
     /// The newest agent version that made Claudio check the CLI again.
     @ObservationIgnored private var recheckedForVersion: ClaudeVersion?
     /// Interactive `claude` processes running in terminals, by session id.
@@ -1610,8 +1614,10 @@ public final class AppModel {
             if result.timedOut {
                 await self.waitForRestartedAgent(sessionID)
                 waited = true
+                // Not back yet may only mean slow: say it couldn't be
+                // confirmed, rather than reporting a stop.
                 outcome = self.outdatedVersion(of: sessionID) == nil && self.isAgentAlive(sessionID)
-                    ? .respawned(agentID: agentID) : .failed("claude respawn didn't finish")
+                    ? .respawned(agentID: agentID) : .stillRunning
             }
             if case .respawned(let newID) = outcome {
                 if newID != agentID {
@@ -1626,7 +1632,10 @@ public final class AppModel {
                     self.save()
                 }
             } else {
-                self.reattachOnExit.remove(sessionID)
+                // Its terminal still running: the restart didn't end it, so
+                // closing it later mustn't attach it again. One that has
+                // exited is attached again below if the agent is alive.
+                if self.running.contains(sessionID) { self.reattachOnExit.remove(sessionID) }
                 if case .failed(let message) = outcome {
                     self.report("Couldn't restart “\(session.name)”: \(message)")
                 } else {
@@ -1635,12 +1644,13 @@ public final class AppModel {
                 await self.refreshAgents()
             }
             self.restartingSessions.remove(sessionID)
-            // Only a restart that happened explains the gap. After a failed
-            // one, the next check compares with the baseline from before it
-            // (kept while it ran), so an agent that really went is reported.
-            if case .respawned = outcome { self.quietAfterRestart.insert(sessionID) }
+            // Only a restart that happened, or may have (unconfirmed), explains
+            // the gap. After a failed one, the next check compares with the
+            // baseline from before it (kept while it ran), so an agent that
+            // really went is reported.
+            if case .failed = outcome {} else { self.quietAfterRestart.insert(sessionID) }
             // If the old terminal is still going, its exit attaches the tab.
-            if wasAttached, !self.running.contains(sessionID) {
+            if self.reattachOnExit.contains(sessionID), !self.running.contains(sessionID) {
                 self.reattachOnExit.remove(sessionID)
                 self.reattachAfterRestart(sessionID)
             }
@@ -1687,6 +1697,7 @@ public final class AppModel {
         if attributes == nil {
             // No daemon has run yet, or it's a CLI without one.
             versions = [:]
+            rosterReadFailed = false
         } else {
             do {
                 guard let read = DaemonRoster.versions(try Data(contentsOf: url)) else {
@@ -1694,11 +1705,16 @@ public final class AppModel {
                 }
                 versions = read
             } catch {
-                // Possibly read mid-write: keep the last versions. The file
-                // changes again when it's written, and is read then.
                 log.append(.error, "Couldn't read Claude Code's agent roster", detail: "\(url.path): \(error.localizedDescription)")
+                // Read mid-write, the file changes again when it's written and
+                // is read then, so keep the last versions. Unreadable twice in
+                // a row (a CLI whose roster changed shape), trust none.
+                defer { rosterReadFailed = true }
+                guard rosterReadFailed else { return }
+                if !agentVersions.isEmpty { agentVersions = [:] }
                 return
             }
+            rosterReadFailed = false
         }
         if versions != agentVersions { agentVersions = versions }
         if let newest = versions.values.max(), let current = environment.version, current < newest,
@@ -2211,8 +2227,6 @@ public final class AppModel {
     /// Stops the session: its background agent (`claude stop`) or its process.
     public func stop(_ sessionID: UUID) {
         followUpDue.insert(sessionID)
-        // A restart in progress doesn't attach the tab again.
-        reattachOnExit.remove(sessionID)
         detach(sessionID)
         if let agentID = state.workspace.session(sessionID)?.agentID {
             if isAgentAlive(sessionID) { stopsRequested.insert(sessionID) }
@@ -2223,6 +2237,8 @@ public final class AppModel {
     /// Closes the session's terminal. For a background agent this only
     /// detaches; the agent keeps running.
     private func detach(_ sessionID: UUID) {
+        // A restart in progress doesn't attach the tab again.
+        reattachOnExit.remove(sessionID)
         let wasRunning = running.remove(sessionID) != nil
         runningDirectly.remove(sessionID)
         pendingLaunches[sessionID] = nil

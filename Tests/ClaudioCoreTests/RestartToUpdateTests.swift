@@ -200,6 +200,24 @@ final class RestartToUpdateTests: XCTestCase {
         }
     }
 
+    /// Unreadable twice in a row is a roster Claudio can't read at all
+    /// (a CLI that changed its shape): no versions are trusted then.
+    func testARosterUnreadableTwiceIsntTrusted() async throws {
+        let model = try await readyModel()
+        try Data("{\"workers\":".utf8).write(to: rosterURL)
+        await model.refreshAgents()
+        await MainActor.run { XCTAssertNotNil(model.outdatedVersion(of: sessionID)) }
+        try Data(#"{"workers":[]}"#.utf8).write(to: rosterURL)
+        await model.refreshAgents()
+        await MainActor.run {
+            XCTAssertEqual(model.agentVersions, [:])
+            XCTAssertNil(model.outdatedVersion(of: sessionID))
+        }
+        try writeRoster()
+        await model.refreshAgents()
+        await MainActor.run { XCTAssertNotNil(model.outdatedVersion(of: sessionID), "readable again") }
+    }
+
     func testRunningBackgroundTasksWait() async throws {
         let task = BackgroundTask(id: "b1", kind: "shell", description: "npm run dev", since: Date())
         let model = try await readyModel(backgroundTasks: [task])
@@ -343,10 +361,11 @@ final class RestartToUpdateTests: XCTestCase {
         }
     }
 
-    /// Stopping a session mid-restart: neither reattach path brings its tab
-    /// back, whichever comes first, the restart or the old terminal's exit.
+    /// Stopping a session, or closing its tab, mid-restart: neither reattach
+    /// path brings its terminal back, whichever comes first, the restart or
+    /// the old terminal's exit.
     func testStoppingMidRestartDoesntAttachAgain() async throws {
-        for exitFirst in [false, true] {
+        for (exitFirst, closeOnly) in [(false, false), (true, false), (false, true), (true, true)] {
             runner = FakeRunner()
             runner.versionOutput = "2.1.296 (Claude Code)\n"
             runner.agentsJSON = agentJSON(status: "idle")
@@ -354,7 +373,7 @@ final class RestartToUpdateTests: XCTestCase {
             let (runner, roster, id) = (runner, rosterURL, sessionID)
             runner.duringRespawn = {
                 await MainActor.run {
-                    model.stop(id)
+                    if closeOnly { model.closeTab(id) } else { model.stop(id) }
                     if exitFirst { model.terminalExited(id, exitCode: 0) }
                 }
                 try! Data(#"{"workers":{"7d1da24e":{"cliVersion":"2.1.296"}}}"#.utf8).write(to: roster)
@@ -367,10 +386,17 @@ final class RestartToUpdateTests: XCTestCase {
             await model.lastTask?.value
             await MainActor.run {
                 if !exitFirst { model.terminalExited(id, exitCode: 0) }
-                XCTAssertNil(model.takePendingLaunch(id), "exit first: \(exitFirst)")
-                XCTAssertFalse(model.isRunning(id), "exit first: \(exitFirst)")
+                XCTAssertNil(model.takePendingLaunch(id), "exit first: \(exitFirst), close only: \(closeOnly)")
+                XCTAssertFalse(model.isRunning(id), "exit first: \(exitFirst), close only: \(closeOnly)")
             }
-            XCTAssertTrue(runner.commands.contains(["stop", "7d1da24e"]))
+            XCTAssertEqual(runner.commands.contains(["stop", "7d1da24e"]), !closeOnly)
+            if closeOnly {
+                // Reopening it attaches as usual.
+                await MainActor.run {
+                    model.resume(id)
+                    XCTAssertEqual(model.takePendingLaunch(id)?.claudeArguments, ["attach", "7d1da24e"])
+                }
+            }
         }
     }
 
@@ -416,6 +442,32 @@ final class RestartToUpdateTests: XCTestCase {
         await MainActor.run {
             XCTAssertNil(model.errorMessage)
             XCTAssertNil(model.outdatedVersion(of: sessionID))
+        }
+    }
+
+    /// A respawn that timed out with the agent not back yet may only be slow:
+    /// it says it couldn't confirm the restart, and isn't reported as a stop.
+    func testATimedOutUnconfirmedRespawnIsntReportedAsAStop() async throws {
+        runner.respawnExit = 1
+        runner.respawnTimedOut = true
+        let model = try await readyModel()
+        let notifier = await MainActor.run { FakeNotifier() }
+        let (runner, gone) = (runner,
+            #"[{"id":"7d1da24e","cwd":"/code/proj","kind":"background","sessionId":"\#(conversation)","state":"working"}]"#)
+        await MainActor.run {
+            var settings = model.settings
+            settings.notifications.stoppedUnexpectedly = true
+            model.updateSettings(settings)
+            model.notifier = notifier
+            model.checkNotifications()
+        }
+        runner.duringRespawn = { runner.agentsJSON = gone }
+        await MainActor.run { model.restartToUpdate(sessionID) }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertEqual(model.errorMessage, "Couldn't confirm “Project Assistant Import” restarted. Try again in a moment.")
+            model.checkNotifications()
+            XCTAssertEqual(notifier.posted.map(\.title), [])
         }
     }
 
