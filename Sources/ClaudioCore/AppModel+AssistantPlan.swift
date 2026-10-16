@@ -31,6 +31,8 @@ public enum AssistantPanelView: Equatable, Sendable {
     case outsideEdit(projectID: UUID, id: UUID)
     /// A skill unused for 30 days, from Needs You.
     case unusedSkill(projectID: UUID, id: UUID)
+    /// An item code thinks may be done (step 6), from Needs You.
+    case markDone(projectID: UUID, itemID: UUID)
 }
 
 /// What the assistant suggests for a note, shown on it until you answer.
@@ -239,6 +241,8 @@ extension AppModel {
             return projectID == assistantProjectID && outsideEdit(id, inProject: projectID) != nil ? assistantPanel : nil
         case .unusedSkill(let projectID, let id):
             return projectID == assistantProjectID && unusedSkill(id, inProject: projectID) != nil ? assistantPanel : nil
+        case .markDone(let projectID, let itemID):
+            return projectID == assistantProjectID && markDoneSuggestion(forItem: itemID, inProject: projectID) != nil ? assistantPanel : nil
         default:
             return nil
         }
@@ -329,7 +333,7 @@ extension AppModel {
 
     /// True when the item changed and was saved, or needed no change.
     @discardableResult
-    private func updateItem(_ itemID: UUID, projectID: UUID, _ body: (inout PlanItem) -> Void) -> Bool {
+    func updateItem(_ itemID: UUID, projectID: UUID, _ body: (inout PlanItem) -> Void) -> Bool {
         guard let before = item(itemID, inProject: projectID) else { return false }
         var after = before
         body(&after)

@@ -197,6 +197,10 @@ struct ContentView: View {
             await Polling.every(AppModel.pullRequestRefreshInterval) { await model.refreshAllPullRequests() }
         }
         .task {
+            // Plan items' GitHub issues, for Mark Done (step 6a).
+            await Polling.every(AppModel.linkedIssueRefreshInterval, startNow: true) { await model.refreshAllLinkedIssues() }
+        }
+        .task {
             // Background agents: liveness, state and titles from `claude agents --json`.
             await Polling.every(3, startNow: true) { await model.refreshAgents() }
         }

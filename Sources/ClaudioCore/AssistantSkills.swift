@@ -229,19 +229,24 @@ public enum SkillChips {
     /// scores for its `paths` matching files the item's sessions touched, for
     /// being meant for the session's folder (or one of that folder's
     /// ancestors, since a nested folder inherits what its parent is for),
-    /// for being meant for one of the session's tags (step 5b), and for use
+    /// for being meant for one of the session's tags (step 5b), for a tag
+    /// that's also a label on the item's GitHub issue (step 6a), and for use
     /// by sessions in that folder or with those tags (`usage`: how many used
     /// it, by name). Skills that score nothing aren't suggested.
     public static func pick(from skills: [ApprovedSkill], touchedFiles: [String], folderNames: [String],
-                            tagNames: [String] = [], usage: [String: Int] = [:], limit: Int = SkillChips.limit) -> [ApprovedSkill] {
+                            tagNames: [String] = [], issueLabels: [String] = [], usage: [String: Int] = [:],
+                            limit: Int = SkillChips.limit) -> [ApprovedSkill] {
         let folders = Set(folderNames.map { $0.lowercased() })
         let tags = Set(tagNames.map { $0.lowercased() })
+        let labels = Set(issueLabels.map { $0.lowercased() })
         let scored = skills.map { skill -> (skill: ApprovedSkill, score: Int) in
             var score = 0
             let hits = touchedFiles.filter { file in skill.paths.contains { Glob.matches($0, file) } }.count
             if hits > 0 { score += 2 + min(hits, 3) }
             if skill.folders.contains(where: { folders.contains($0.lowercased()) }) { score += 2 }
             if skill.tags.contains(where: { tags.contains($0.lowercased()) }) { score += 2 }
+            // The item's issue labels, matched against the skill's tags (step 6a).
+            if skill.tags.contains(where: { labels.contains($0.lowercased()) }) { score += 2 }
             score += min(usage[skill.name] ?? 0, 3)
             return (skill, score)
         }

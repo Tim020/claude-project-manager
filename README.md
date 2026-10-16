@@ -18,7 +18,7 @@ See [`docs/features.md`](docs/features.md) for the full list, with every detail 
 
 - **Two rails** either side of the window: project tools (Sessions, Pull Requests, Assistant, Usage, Shell) on the left, tools for the selected session (Changes, Pull Request, Usage) on the right.
 - **Tabs and panes** like an IDE — split, dock and drag sessions into any layout of rows and columns.
-- A **Project Assistant** that turns your notes into a plan, follows up on finished sessions, and drafts reusable skills from lessons learned the hard way.
+- A **Project Assistant** that turns your notes into a plan, follows up on finished sessions, drafts reusable skills from lessons learned the hard way, and links plan items to GitHub issues.
 - **Files Changed** and **Pull Requests** tools, backed by git and the GitHub CLI, scoped to a session, a folder or a whole project.
 - Sessions run as **Claude Code background agents** (`claude --bg`), each in its own git worktree by default, so you get the full interactive Claude Code UI in a tab you can close and reopen.
 - **Live status** (Working / Awaiting Input / Completed) from Claude Code's hooks and `claude agents --json`, plus context-window and plan-usage readouts in the header and status bar.
