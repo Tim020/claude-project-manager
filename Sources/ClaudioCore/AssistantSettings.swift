@@ -49,6 +49,11 @@ public struct ProjectAssistantSettings: Codable, Equatable, Sendable {
     public var quickModel = AssistantModel.haiku
     /// Follow-ups (and, later, skill drafts and Ask).
     public var deepModel = AssistantModel.sonnet
+    /// Automatic mode runs a ready session's follow-up itself, as background
+    /// work (behind the usage threshold, credits and the daily limit),
+    /// instead of offering a card. Off by default: its notes are saved at
+    /// once, so there's no chance to say Not Now.
+    public var runFollowUpsAutomatically = false
 
     public init() {}
 
@@ -70,5 +75,6 @@ public struct ProjectAssistantSettings: Codable, Equatable, Sendable {
         }
         quickModel = ((try? c.decodeIfPresent(AssistantModel.self, forKey: .quickModel)) ?? nil) ?? .haiku
         deepModel = ((try? c.decodeIfPresent(AssistantModel.self, forKey: .deepModel)) ?? nil) ?? .sonnet
+        runFollowUpsAutomatically = ((try? c.decodeIfPresent(Bool.self, forKey: .runFollowUpsAutomatically)) ?? nil) ?? false
     }
 }

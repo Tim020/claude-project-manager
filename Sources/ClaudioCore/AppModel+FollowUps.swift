@@ -53,7 +53,8 @@ extension AppModel {
 
     /// Looks for sessions that look ready and have something worth a
     /// follow-up, and offers one (every 15 s). An offer costs nothing: Claude
-    /// is only asked when you accept it. Automatic mode only.
+    /// is only asked when you accept it, unless the project runs follow-ups
+    /// automatically (then they're background jobs). Automatic mode only.
     public func checkFollowUps() async {
         // The same tick lets held-back work run (the daily limit at midnight, say).
         releaseHeldJobs()
@@ -187,9 +188,13 @@ extension AppModel {
               let current = workspace.session(sessionID), current.status == .completed, !current.lastTurnFailed,
               !isFollowUpPending(sessionID)
         else { return }
-        offerFollowUp(sessionID, digest: slice.digest,
-                      mark: FollowUpMark(conversationID: file.conversationID, offset: slice.end),
-                      dueToCompaction: dueToCompaction)
+        let newMark = FollowUpMark(conversationID: file.conversationID, offset: slice.end)
+        if assistantSettings(forProject: session.projectID).runFollowUpsAutomatically {
+            // Not asked for: a background job, so the usage gate and daily limit apply.
+            startFollowUp(sessionID, digest: slice.digest, mark: newMark, askedFor: false)
+            return
+        }
+        offerFollowUp(sessionID, digest: slice.digest, mark: newMark, dueToCompaction: dueToCompaction)
     }
 
     /// The session's been looked at: whatever made it due no longer applies.

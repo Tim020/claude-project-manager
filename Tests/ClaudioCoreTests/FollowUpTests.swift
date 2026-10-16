@@ -277,6 +277,25 @@ final class FollowUpModelTests: XCTestCase {
         await f.model.waitForAssistantJobs()
     }
 
+    func testAReadySessionIsFollowedUpWithoutAnOfferWhenTheProjectRunsThemAutomatically() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()          // the baseline
+        try append(substantial, to: f.history)
+        await f.model.checkFollowUps()
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1, "no offer to accept: the call ran by itself")
+        await MainActor.run {
+            let followUp = f.model.followUpCard(forSession: f.session)
+            XCTAssertEqual(followUp?.state, .ready)
+            XCTAssertEqual(followUp?.askedFor, false, "background work, so the gates apply")
+        }
+    }
+
     func testOldSessionsGetAMarkAndNothingElse() async throws {
         let f = try await makeFixture(lines: ["a", "b", "c"].map(History.prompt))
         await f.model.checkFollowUps()
