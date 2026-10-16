@@ -50,8 +50,8 @@ public struct ProjectAssistantSettings: Codable, Equatable, Sendable {
     /// Follow-ups (and, later, skill drafts and Ask).
     public var deepModel = AssistantModel.sonnet
     /// Automatic mode runs a ready session's follow-up itself, as background
-    /// work (behind the usage threshold, credits and the daily limit),
-    /// instead of offering a card. Off by default: its notes are saved at
+    /// work (behind the usage gate and the daily limit), instead of
+    /// offering a card. Off by default: its notes are saved at
     /// once, so there's no chance to say Not Now.
     public var runFollowUpsAutomatically = false
 

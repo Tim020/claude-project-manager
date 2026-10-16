@@ -115,8 +115,9 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     /// (step 5; Tim's test showed "Nothing new to keep" for one that did).
     public var lessons: [String] = []
     public var createdAt: Date
-    /// It ran because you asked: Follow Up on an offer, or Review This
-    /// Session. False only for an offer.
+    /// It ran because you asked: Follow Up on an offer, Review This Session
+    /// or Try Again. False for an offer, and for a follow-up the project ran
+    /// automatically.
     public var askedFor: Bool
     /// The model it ran on ("Sonnet"), for Job Failed.
     public var model: String?

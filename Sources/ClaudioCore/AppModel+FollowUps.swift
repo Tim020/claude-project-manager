@@ -54,7 +54,8 @@ extension AppModel {
     /// Looks for sessions that look ready and have something worth a
     /// follow-up, and offers one (every 15 s). An offer costs nothing: Claude
     /// is only asked when you accept it, unless the project runs follow-ups
-    /// automatically (then they're background jobs). Automatic mode only.
+    /// automatically (then they're background jobs, behind the usage gate
+    /// and the daily limit). Automatic mode only.
     public func checkFollowUps() async {
         // The same tick lets held-back work run (the daily limit at midnight, say).
         releaseHeldJobs()
@@ -190,8 +191,19 @@ extension AppModel {
         else { return }
         let newMark = FollowUpMark(conversationID: file.conversationID, offset: slice.end)
         if assistantSettings(forProject: session.projectID).runFollowUpsAutomatically {
-            // Not asked for: a background job, so the usage gate and daily limit apply.
-            startFollowUp(sessionID, digest: slice.digest, mark: newMark, askedFor: false)
+            // Background work: held while the gate is paused, and checked
+            // again when it runs, since the session may have moved on.
+            let model = AssistantModels.displayName(assistantSettings(forProject: session.projectID).deepModel.rawValue)
+            runOrHoldBackground(key: .followUp(sessionID), projectID: session.projectID, job: "Follow-up",
+                                subject: session.name, model: model) { [weak self] in
+                guard let self, let current = self.workspace.session(sessionID), current.status == .completed,
+                      !current.lastTurnFailed, !self.isFollowUpPending(sessionID),
+                      self.assistantMode(ofProject: current.projectID) == .automatic,
+                      self.assistantSettings(forProject: current.projectID).runFollowUpsAutomatically
+                else { return false }
+                self.startFollowUp(sessionID, digest: slice.digest, mark: newMark, askedFor: false)
+                return true
+            }
             return
         }
         offerFollowUp(sessionID, digest: slice.digest, mark: newMark, dueToCompaction: dueToCompaction)
@@ -255,6 +267,7 @@ extension AppModel {
     func withdrawFollowUpOffer(forSession sessionID: UUID) {
         guard let projectID = workspace.session(sessionID)?.projectID else { return }
         let offers = needsYouData(inProject: projectID).followUps.filter { $0.sessionID == sessionID && $0.state == .offered }
+        cancelHeldJob(key: .followUp(sessionID))
         guard !offers.isEmpty else { return }
         for offer in offers { pendingDigests[offer.id] = nil }
         updateNeedsYou(projectID) { data in data.followUps.removeAll { $0.sessionID == sessionID && $0.state == .offered } }
@@ -403,7 +416,8 @@ extension AppModel {
 
     // MARK: - The card's actions
 
-    /// Try Again on a failed follow-up: the same digest, asked again.
+    /// Try Again on a failed follow-up: the same digest, asked again. You
+    /// started it, so even an automatic follow-up runs ungated.
     public func retryFollowUp(_ id: UUID, projectID: UUID) {
         guard let followUp = followUp(id, inProject: projectID), case .failed = followUp.state else { return }
         guard let (digest, mark) = pendingDigests[id] else {
@@ -412,7 +426,7 @@ extension AppModel {
             reviewSession(followUp.sessionID, replacing: id)
             return
         }
-        startFollowUp(followUp.sessionID, digest: digest, mark: mark, askedFor: followUp.askedFor, replacing: id)
+        startFollowUp(followUp.sessionID, digest: digest, mark: mark, askedFor: true, replacing: id)
     }
 
     /// A note row's tick: unticking removes the note, ticking saves it again.

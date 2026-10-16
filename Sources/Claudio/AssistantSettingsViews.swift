@@ -126,7 +126,7 @@ struct AssistantSettingsView: View {
                 Toggle(isOn: binding(\.runFollowUpsAutomatically)) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Run follow-ups automatically").font(DS.font(13)).foregroundStyle(DS.text)
-                        Text("Instead of offering a card, follow up as soon as a session looks done, within the usage threshold and daily limit. Its notes are saved at once; untick one on the card to remove it.")
+                        Text("Instead of offering a card, follow up as soon as a session looks done or its context is compacted, behind the usage gate and the daily limit. Its notes are saved at once; untick one on the card to remove it.")
                             .font(DS.font(11.5)).foregroundStyle(DS.dim)
                             .fixedSize(horizontal: false, vertical: true)
                     }

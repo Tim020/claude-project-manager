@@ -292,7 +292,59 @@ final class FollowUpModelTests: XCTestCase {
         await MainActor.run {
             let followUp = f.model.followUpCard(forSession: f.session)
             XCTAssertEqual(followUp?.state, .ready)
-            XCTAssertEqual(followUp?.askedFor, false, "background work, so the gates apply")
+            XCTAssertEqual(followUp?.askedFor, false, "background work, not something you started")
+        }
+    }
+
+    func testAutomaticFollowUpsWaitForTheDailyLimitAndThenRun() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()          // the baseline
+        try append(substantial, to: f.history)
+        await MainActor.run {
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()
+        await f.model.waitForAssistantJobs()
+        XCTAssertTrue(f.runner.calls.isEmpty, "the daily limit holds it back")
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.map(\.key), [.followUp(f.session)])
+            XCTAssertNil(f.model.followUpCard(forSession: f.session), "no card while it waits")
+            f.assistant.dailyJobs = nil
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()          // the tick releases held work
+        await f.model.waitForAssistantJobs()
+        XCTAssertEqual(f.runner.calls.count, 1)
+        await MainActor.run {
+            XCTAssertTrue(f.model.heldJobs.isEmpty)
+            XCTAssertEqual(f.model.followUpCard(forSession: f.session)?.state, .ready)
+        }
+    }
+
+    func testANewPromptDropsAHeldAutomaticFollowUp() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()
+        try append(substantial, to: f.history)
+        await MainActor.run {
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.count, 1)
+            f.model.withdrawFollowUpOffer(forSession: f.session)
+            XCTAssertTrue(f.model.heldJobs.isEmpty, "the session carried on, so the stale digest doesn't run")
         }
     }
 
