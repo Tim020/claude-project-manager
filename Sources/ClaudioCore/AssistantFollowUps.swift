@@ -91,7 +91,8 @@ public struct ProposedPlanChange: Codable, Equatable, Identifiable, Sendable {
 /// One session's follow-up, from the moment it's asked for until you close it.
 public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public enum State: Codable, Equatable, Sendable {
-        /// The session looks ready: "<session> looks done. Follow up?". No
+        /// The session looks ready: "<session> looks done. Follow up?" (or
+        /// "is using a lot of context", `dueToCompaction`). No
         /// call until you accept (not saved: it's offered again if it still applies).
         case offered
         /// The call is running or waiting for its turn (not saved).
@@ -121,6 +122,9 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
     public var model: String?
     /// Later, or ✕: the card leaves the session and waits in Needs You.
     public var isDeferred = false
+    /// Offered because the session's context was compacted, not because it
+    /// looks done: the card says it's using a lot of context instead.
+    public var dueToCompaction = false
 
     public init(sessionID: UUID, sessionName: String, state: State, createdAt: Date, askedFor: Bool) {
         self.sessionID = sessionID
@@ -132,6 +136,10 @@ public struct FollowUp: Codable, Equatable, Identifiable, Sendable {
 
     public var hasNothingToKeep: Bool { state == .ready && notes.isEmpty && planChanges.isEmpty && lessons.isEmpty }
 
+    // `dueToCompaction` isn't here: it only matters while `.offered`/`.working`,
+    // and `NeedsYouData.saved` drops both of those before writing, so a saved
+    // `FollowUp` can never actually hold `true` for it. Persisting it would
+    // only ever write `false`.
     private enum CodingKeys: String, CodingKey {
         case id, sessionID, sessionName, state, notes, planChanges, createdAt, askedFor, isDeferred, model, lessons
     }

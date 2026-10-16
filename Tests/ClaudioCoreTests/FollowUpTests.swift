@@ -708,6 +708,128 @@ final class FollowUpModelTests: XCTestCase {
         XCTAssertEqual(card?.state, .offered)
     }
 
+    /// The recorded `PreCompact` line (2.1.301), for this fixture's session.
+    private func writePreCompactHook(_ f: Fixture) throws {
+        let line = try XCTUnwrap(Fixtures.lines("hook-precompact.log").first { $0.contains(#""hook_event_name":"PreCompact""#) })
+            .replacingOccurrences(of: "6F9619FF-8B86-D011-B42D-00CF4FC964FF", with: f.session.uuidString)
+            .replacingOccurrences(of: "11111111-2222-3333-4444-555555555555", with: FollowUpModelTests.conversation)
+        let hookLog = f.history.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("h.log")
+        try (line + "\n").write(to: hookLog, atomically: true, encoding: .utf8)
+    }
+
+    /// A compaction makes a follow-up due, without touching the status:
+    /// it happens mid-turn.
+    func testACompactionMakesAFollowUpDue() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: nil)
+        try writePreCompactHook(f)
+        await MainActor.run {
+            f.model.applyStatus(f.session, .awaitingInput)
+            f.model.pollHookEvents()
+            XCTAssertTrue(f.model.followUpDue.contains(f.session))
+            XCTAssertTrue(f.model.followUpDueToCompaction.contains(f.session))
+            XCTAssertEqual(f.model.workspace.session(f.session)?.status, .awaitingInput, "unchanged")
+        }
+    }
+
+    /// A session whose task goes on ("working") is offered one at its next
+    /// idle point after a compaction, and the card doesn't say it looks done.
+    func testACompactedSessionIsOfferedMidTask() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "working")
+        await f.model.checkFollowUps()
+        var card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card, "the task goes on, and nothing made it due")
+        try writePreCompactHook(f)
+        await MainActor.run { f.model.pollHookEvents() }
+        await f.model.checkFollowUps()
+        card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+        XCTAssertEqual(card?.dueToCompaction, true)
+        await MainActor.run {
+            XCTAssertFalse(f.model.followUpDue.contains(f.session), "cleared once looked at")
+            XCTAssertFalse(f.model.followUpDueToCompaction.contains(f.session))
+        }
+    }
+
+    /// Compacted, but Claude Code says the task is done too: it looks done.
+    func testACompactedSessionWhoseTaskIsDoneLooksDone() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "done")
+        try writePreCompactHook(f)
+        await MainActor.run { f.model.pollHookEvents() }
+        await f.model.checkFollowUps()
+        let card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+        XCTAssertEqual(card?.dueToCompaction, false)
+    }
+
+    /// A compaction with nothing worth a look offers nothing, and isn't
+    /// left behind to label a later offer.
+    func testACompactionWithoutSubstanceOffersNothing() async throws {
+        let f = try await makeFixture(lines: [History.prompt("What's this?"), History.reply("A shell.")], mark: true,
+                                      task: "working")
+        try writePreCompactHook(f)
+        await MainActor.run { f.model.pollHookEvents() }
+        await f.model.checkFollowUps()
+        let card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertNil(card)
+        await MainActor.run {
+            XCTAssertFalse(f.model.followUpDueToCompaction.contains(f.session))
+            XCTAssertFalse(f.model.followUpDue.contains(f.session))
+        }
+    }
+
+    /// `dueToCompaction` is evaluated against the task state at offer-time,
+    /// not a snapshot taken when `PreCompact` fired: the task finishing in
+    /// between means the card looks done, not "using a lot of context".
+    func testDueToCompactionReflectsCurrentTaskStateNotSnapshot() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "working")
+        try writePreCompactHook(f)
+        await MainActor.run { f.model.pollHookEvents() }
+        await setTask("done", f)
+        await f.model.checkFollowUps()
+        let card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered)
+        XCTAssertEqual(card?.dueToCompaction, false, "the task looked done by offer-time, so it looks done, not compacted")
+    }
+
+    /// A compaction in a conversation `/clear` has since replaced doesn't
+    /// label the new, never-compacted conversation's offer.
+    func testCompactionBeforeClearDoesntLabelTheNewConversation() async throws {
+        let f = try await makeFixture(lines: substantial, mark: true, task: "working")
+        try writePreCompactHook(f)
+        await MainActor.run { f.model.pollHookEvents() }
+        let cleared = "d00dfeed-1111-2222-3333-444455556666"
+        let history = f.history.deletingLastPathComponent().appendingPathComponent("\(cleared).jsonl")
+        try (substantial.joined(separator: "\n") + "\n").write(to: history, atomically: true, encoding: .utf8)
+        await MainActor.run { f.model.applyTestSessionChange(f.session) { $0.claudeSessionID = cleared } }
+        await f.model.checkFollowUps()
+        let card = await MainActor.run { f.model.followUpCard(forSession: f.session) }
+        XCTAssertEqual(card?.state, .offered, "the fresh conversation still has substance of its own")
+        XCTAssertEqual(card?.dueToCompaction, false, "the compaction was in the conversation /clear replaced")
+    }
+
+    /// A saved `FollowUp` can only ever be `.ready` or `.failed`
+    /// (`NeedsYouData.saved` drops `.offered`/`.working`), so `dueToCompaction`
+    /// — which only matters for the offered card's wording — is never
+    /// written, and an older file missing the key still decodes to `false`.
+    func testDueToCompactionIsntPersistedAndOlderFilesDecodeToFalse() throws {
+        var offer = FollowUp(sessionID: UUID(), sessionName: "s", state: .offered, createdAt: Date(timeIntervalSince1970: 0),
+                             askedFor: false)
+        offer.dueToCompaction = true
+        let data = NeedsYouData(followUps: [offer], suggestions: [])
+        XCTAssertTrue(data.saved.followUps.isEmpty, "an offer is never saved")
+
+        var ready = offer
+        ready.state = .ready
+        let encoded = try JSONFileStore.encoder.encode(ready)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(object["dueToCompaction"], "not written at all")
+        object["dueToCompaction"] = true
+        let withIt = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertFalse(try JSONFileStore.decoder.decode(FollowUp.self, from: withIt).dueToCompaction,
+                       "ignored even if an old or hand-edited file has it")
+    }
+
     /// The marks, Not Now and a failed turn go through `state.json`.
     func testFollowUpStateSurvivesSaving() throws {
         var session = Session(projectID: UUID(), name: "s", workingDirectory: "/code")

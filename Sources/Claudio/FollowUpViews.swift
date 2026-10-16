@@ -115,8 +115,8 @@ private struct NeedsYouFollowUpRow: View {
                 HStack(alignment: .top, spacing: 9) {
                     Image(systemName: "sparkles").font(.system(size: 13)).foregroundStyle(DS.blue).padding(.top, 1)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(followUp.sessionName) looks done").font(DS.font(13)).foregroundStyle(DS.text).lineLimit(2)
-                        Text(FollowUpOfferCopy.question).font(DS.font(11.5)).foregroundStyle(DS.dim)
+                        Text(FollowUpOfferCopy.title(for: followUp)).font(DS.font(13)).foregroundStyle(DS.text).lineLimit(2)
+                        Text(FollowUpOfferCopy.question(for: followUp)).font(DS.font(11.5)).foregroundStyle(DS.dim)
                     }
                     Spacer(minLength: 0)
                 }
@@ -251,7 +251,7 @@ struct FollowUpBody: View {
             header
             switch followUp.state {
             case .offered:
-                Text(FollowUpOfferCopy.question + " " + FollowUpOfferCopy.detail)
+                Text(FollowUpOfferCopy.question(for: followUp) + " " + FollowUpOfferCopy.detail)
                     .font(DS.font(12.5))
                     .foregroundStyle(DS.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -316,7 +316,7 @@ struct FollowUpBody: View {
 
     private var title: String {
         switch followUp.state {
-        case .offered: return "\(followUp.sessionName) looks done"
+        case .offered: return FollowUpOfferCopy.title(for: followUp)
         case .working: return "Reviewing \(followUp.sessionName)…"
         case .failed: return "Couldn't follow up \(followUp.sessionName)"
         case .ready: return "Follow-up: \(followUp.sessionName)"
@@ -383,9 +383,17 @@ struct FollowUpBody: View {
     }
 }
 
-/// The offer's words.
+/// The offer's words. One offered after a compaction is for a session that
+/// may still be mid-task, so it doesn't say it looks done.
 enum FollowUpOfferCopy {
-    static let question = "Follow up on what it did?"
+    static func title(for followUp: FollowUp) -> String {
+        followUp.dueToCompaction ? "\(followUp.sessionName) is using a lot of context" : "\(followUp.sessionName) looks done"
+    }
+
+    static func question(for followUp: FollowUp) -> String {
+        followUp.dueToCompaction ? "Follow up on what it's done so far?" : "Follow up on what it did?"
+    }
+
     static let detail = "One Claude call reads a summary of the session and suggests notes and plan changes."
 }
 
