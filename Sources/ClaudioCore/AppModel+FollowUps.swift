@@ -194,13 +194,17 @@ extension AppModel {
             // Background work: held while the gate is paused, and checked
             // again when it runs, since the session may have moved on.
             let model = AssistantModels.displayName(assistantSettings(forProject: session.projectID).deepModel.rawValue)
-            runOrHoldBackground(key: .followUp(sessionID), projectID: session.projectID, job: "Follow-up",
+            runOrHoldBackground(key: .followUp(sessionID), projectID: session.projectID, job: FollowUpJob.job,
                                 subject: session.name, model: model) { [weak self] in
                 guard let self, let current = self.workspace.session(sessionID), current.status == .completed,
                       !current.lastTurnFailed, !self.isFollowUpPending(sessionID),
-                      self.assistantMode(ofProject: current.projectID) == .automatic,
-                      self.assistantSettings(forProject: current.projectID).runFollowUpsAutomatically
+                      self.assistantMode(ofProject: current.projectID) == .automatic
                 else { return false }
+                // Turned off while it waited: the offer it would have been.
+                guard self.assistantSettings(forProject: current.projectID).runFollowUpsAutomatically else {
+                    self.offerFollowUp(sessionID, digest: slice.digest, mark: newMark, dueToCompaction: dueToCompaction)
+                    return false
+                }
                 self.startFollowUp(sessionID, digest: slice.digest, mark: newMark, askedFor: false)
                 return true
             }
@@ -332,6 +336,8 @@ extension AppModel {
                        replacing followUpID: UUID? = nil) {
         guard let session = workspace.session(sessionID) else { return }
         let projectID = session.projectID
+        // You started it: a held automatic one would run again on a stale digest.
+        if askedFor { cancelHeldJob(key: .followUp(sessionID)) }
         var followUp = FollowUp(sessionID: sessionID, sessionName: session.name, state: .working, createdAt: now(),
                                 askedFor: askedFor)
         followUp.model = AssistantModels.displayName(assistantSettings(forProject: projectID).deepModel.rawValue)

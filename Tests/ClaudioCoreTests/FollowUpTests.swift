@@ -327,6 +327,61 @@ final class FollowUpModelTests: XCTestCase {
         }
     }
 
+    func testReviewingASessionDropsItsHeldAutomaticFollowUp() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()
+        try append(substantial, to: f.history)
+        await MainActor.run {
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.count, 1)
+            f.model.reviewSession(f.session)
+        }
+        try await waitUntil { await MainActor.run { f.model.followUpCard(forSession: f.session) != nil } }
+        await f.model.waitForAssistantJobs()
+        await MainActor.run { XCTAssertTrue(f.model.heldJobs.isEmpty, "you started it, so the held one can't run on a stale digest") }
+        XCTAssertEqual(f.runner.calls.count, 1)
+    }
+
+    func testTurningTheSettingOffWhileHeldLeavesAnOffer() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()
+        try append(substantial, to: f.history)
+        await MainActor.run {
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()
+        await MainActor.run {
+            XCTAssertEqual(f.model.heldJobs.count, 1)
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = false
+            f.model.setAssistantSettings(settings, projectID: f.project)
+            f.assistant.dailyJobs = nil
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()          // the gate opens
+        await f.model.waitForAssistantJobs()
+        XCTAssertTrue(f.runner.calls.isEmpty, "an offer costs nothing")
+        await MainActor.run {
+            XCTAssertEqual(f.model.followUpCard(forSession: f.session)?.state, .offered)
+            XCTAssertTrue(f.model.heldJobs.isEmpty)
+        }
+    }
+
     func testANewPromptDropsAHeldAutomaticFollowUp() async throws {
         let f = try await makeFixture()
         await MainActor.run {
