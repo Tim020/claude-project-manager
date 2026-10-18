@@ -426,7 +426,10 @@ extension AppModel {
     /// started it, so even an automatic follow-up runs ungated.
     public func retryFollowUp(_ id: UUID, projectID: UUID) {
         guard let followUp = followUp(id, inProject: projectID), case .failed = followUp.state else { return }
-        guard let (digest, mark) = pendingDigests[id] else {
+        // A held automatic follow-up may cover more than this card's digest
+        // does (the session did more since it failed): read afresh from the mark.
+        let heldForSession = heldJobs.contains { $0.key == .followUp(followUp.sessionID) }
+        guard !heldForSession, let (digest, mark) = pendingDigests[id] else {
             // After a relaunch the digest is gone: read the session afresh.
             // The failed card stays until the new follow-up takes its place.
             reviewSession(followUp.sessionID, replacing: id)

@@ -351,6 +351,43 @@ final class FollowUpModelTests: XCTestCase {
         XCTAssertEqual(f.runner.calls.count, 1)
     }
 
+    func testTryAgainReadsAfreshWhenAnAutomaticFollowUpIsHeldForNewerWork() async throws {
+        let f = try await makeFixture()
+        await MainActor.run {
+            var settings = f.model.assistantSettings(forProject: f.project)
+            settings.runFollowUpsAutomatically = true
+            f.model.setAssistantSettings(settings, projectID: f.project)
+        }
+        await f.model.checkFollowUps()          // the baseline
+        f.runner.reply = CommandResult(exitCode: 1, output: try Fixtures.string("assistant-api-error.json"), errorOutput: "")
+        try append(substantial, to: f.history)
+        await f.model.checkFollowUps()
+        await f.model.waitForAssistantJobs()
+        let failed = try await MainActor.run { () -> FollowUp in
+            let card = try XCTUnwrap(f.model.followUpCard(forSession: f.session))
+            guard case .failed = card.state else { throw XCTSkip("expected a failure, got \(card.state)") }
+            return card
+        }
+        // The session does more; the daily limit holds the next automatic one.
+        try append(substantial, to: f.history)
+        await MainActor.run {
+            f.assistant.dailyJobs = DailyJobCount(day: DailyJobCount.day(of: FollowUpModelTests.now), count: AssistantAppSettings.defaultDailyJobLimit)
+            f.model.dailyJobs = nil
+        }
+        await f.model.checkFollowUps()
+        await MainActor.run { XCTAssertEqual(f.model.heldJobs.count, 1) }
+        f.runner.reply = CommandResult(exitCode: 0, output: FollowUpRunner.readyReply, errorOutput: "")
+        await MainActor.run { f.model.retryFollowUp(failed.id, projectID: f.project) }
+        try await waitUntil { await MainActor.run { f.model.followUpCard(forSession: f.session)?.state == .ready } }
+        await f.model.waitForAssistantJobs()
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: f.history.path)[.size] as? NSNumber)
+        await MainActor.run {
+            XCTAssertTrue(f.model.heldJobs.isEmpty)
+            XCTAssertEqual(f.model.workspace.session(f.session)?.followUpMark?.offset, size.uint64Value,
+                           "the retry covers the newer work too, so nothing is left unreviewed")
+        }
+    }
+
     func testTurningTheSettingOffWhileHeldLeavesAnOffer() async throws {
         let f = try await makeFixture()
         await MainActor.run {
