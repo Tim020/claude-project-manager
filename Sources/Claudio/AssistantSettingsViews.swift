@@ -123,6 +123,18 @@ struct AssistantSettingsView: View {
                          detail: "Only when you ask: Check Against Plan… and Review This Session.")
                 modeCard(.off, title: "Off", tag: nil, detail: "Notes and the plan by hand. No Claude calls.")
 
+                Toggle(isOn: binding(\.runFollowUpsAutomatically)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Run follow-ups automatically").font(DS.font(13)).foregroundStyle(DS.text)
+                        Text("Instead of offering a card, follow up as soon as a session looks done or its context is compacted, behind the usage gate and the daily limit. Its notes are saved at once; untick one on the card to remove it.")
+                            .font(DS.font(11.5)).foregroundStyle(DS.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(DS.teal)
+                .disabled(model.assistantMode(ofProject: projectID) != .automatic)
+
                 SectionHeading(title: "PRIVACY")
                 Toggle(isOn: binding(\.dontSendTranscripts)) {
                     VStack(alignment: .leading, spacing: 2) {
