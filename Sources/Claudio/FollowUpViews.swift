@@ -30,7 +30,9 @@ struct NeedsYouSection: View {
                     && (!skills.proposals.isEmpty || !skills.unusedSkills.isEmpty
                         || skills.candidates.contains { $0.state == .offered || model.draftingCandidates.contains($0.id) })
                 let outsideEdits = model.outsideEdits(inProject: projectID)
-                if data.followUps.isEmpty && data.suggestions.isEmpty && longRunning.isEmpty && !hasSkillCards && outsideEdits.isEmpty {
+                let markDone = model.markDoneSuggestions(inProject: projectID)
+                if data.followUps.isEmpty && data.suggestions.isEmpty && longRunning.isEmpty && !hasSkillCards && outsideEdits.isEmpty
+                    && markDone.isEmpty {
                     Text("Nothing needs you.")
                         .font(DS.font(12.5))
                         .foregroundStyle(DS.dim)
@@ -48,6 +50,10 @@ struct NeedsYouSection: View {
                         NeedsYouFollowUpRow(followUp: followUp, projectID: projectID)
                     }
                     SkillNeedsYouCards(projectID: projectID)
+                }
+                // Only while the assistant is on (empty otherwise).
+                ForEach(markDone) { suggestion in
+                    MarkDoneRow(suggestion: suggestion, projectID: projectID)
                 }
                 ForEach(data.suggestions.reversed()) { suggestion in
                     SessionSuggestionCard(suggestion: suggestion, projectID: projectID)

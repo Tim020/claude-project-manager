@@ -69,7 +69,7 @@ Sessions you open become tabs, across any folders and projects (like a browser);
 
 ## Project Assistant
 
-Notes, a plan, follow-ups and skills built on top of sessions — see [Project Assistant](project-assistant.md) for the full detail.
+Notes, a plan, follow-ups, skills and GitHub issues built on top of sessions — see [Project Assistant](project-assistant.md) for the full detail.
 
 ## Shell
 

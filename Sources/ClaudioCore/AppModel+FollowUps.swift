@@ -46,7 +46,7 @@ extension AppModel {
         let skills = skillsData(inProject: projectID)
         let offers = skills.candidates.filter { $0.state == .offered && !draftingCandidates.contains($0.id) }.count
         return data.followUps.filter { $0.state != .working }.count + others + offers + skills.proposals.count
-            + skills.unusedSkills.count
+            + skills.unusedSkills.count + markDoneSuggestions(inProject: projectID).count
     }
 
     // MARK: - Finding sessions ready for a follow-up

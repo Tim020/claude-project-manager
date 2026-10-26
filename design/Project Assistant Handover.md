@@ -63,6 +63,7 @@ What happens in other modes:
   - SKILLS FOR ITS PROMPT (planned items) or SKILLS NAMED IN ITS PROMPT (in session)
   - *(5b: for a session with its own skill set, SKILLS LOADED IN THIS SESSION, with × on each and Add Skill; changes reach the session within seconds.)*
   - "In session: <name>" or **Start Session**
+  - *(6a: the GitHub chip reads "Issue #n" with its state (Open, Closed, or Not found) and opens it on GitHub; under it, the pull requests that close the issue and those the item's session opened, each with its state. **Create GitHub Issue** shows only with gh signed in, the project on GitHub, and the item not done; it shows a spinner while gh runs, then a toast.)*
   - For a session started before the assistant, the skills are replaced by: "Started before the assistant, so it can't use its skills or write notes. New sessions get its skills."
   - *(Built in step 3: Start Session shows for Planned items and Ideas, and for an In Session item whose session has been deleted. "In session: <name>" opens the session. Without matching skills, the section reads "No approved skills match it yet.")*
 - **New Skill:**
@@ -95,6 +96,7 @@ What happens in other modes:
   - the item title
   - the evidence ("PR #14 was merged into main as 352ddc7…" or "Issue #19 was closed…")
   - Mark Done and Not Yet
+  - *(Built in 6a: the pill is the item's status → DONE; the evidence names the merged pull request ("PR #14 was merged into main as 352ddc7, closing issue #19.") or the closed issue ("Issue #19 was closed as not planned."), with its date and a link to it. Its Needs You card reads "Done? <title>" with the evidence under it, and shows in Automatic and Manual. Not Yet isn't asked again for the same evidence; something new asks again. "Nothing changes on GitHub either way.")*
 - **GitHub Issues:** one card per issue with a suggested label, the reason, the action (Add to Plan or Attach) or Skip, and then the result.
 - **Skills** (⋯):
   - every skill, with a location tag: **CLAUDIO** (the default, grey) or **REPOSITORY** (blue tint)

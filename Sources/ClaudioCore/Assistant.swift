@@ -389,6 +389,10 @@ public protocol AssistantStoring: AnyObject {
     func retireSkill(name: String, projectID: UUID) throws
     func restoreSkill(name: String, projectID: UUID) throws
     func retiredSkills(projectID: UUID) -> [ApprovedSkill]
+    // Step 6: GitHub bookkeeping (throwaway, like Needs You).
+    /// `github.json`; one that can't be read is empty.
+    func loadGitHubData(projectID: UUID) -> GitHubData
+    func saveGitHubData(_ data: GitHubData, projectID: UUID) throws
 }
 
 /// One approved version of a skill, from its history.
@@ -438,6 +442,8 @@ extension AssistantStoring {
     public func retireSkill(name: String, projectID: UUID) throws {}
     public func restoreSkill(name: String, projectID: UUID) throws {}
     public func retiredSkills(projectID: UUID) -> [ApprovedSkill] { [] }
+    public func loadGitHubData(projectID: UUID) -> GitHubData { GitHubData() }
+    public func saveGitHubData(_ data: GitHubData, projectID: UUID) throws {}
 }
 
 /// Keeps assistant data in memory: the default, so tests and previews never
@@ -480,6 +486,12 @@ public final class MemoryAssistantStore: AssistantStoring {
     }
     public func loadNeedsYou(projectID: UUID) -> NeedsYouData { needsYou[projectID] ?? NeedsYouData() }
     public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws { needsYou[projectID] = data }
+    public var gitHub: [UUID: GitHubData] = [:]
+    public func loadGitHubData(projectID: UUID) -> GitHubData { gitHub[projectID] ?? GitHubData() }
+    public func saveGitHubData(_ data: GitHubData, projectID: UUID) throws {
+        if let saveError { throw saveError }
+        gitHub[projectID] = data
+    }
     public func loadDailyJobs() -> DailyJobCount? { dailyJobs }
     public func saveDailyJobs(_ count: DailyJobCount) throws { dailyJobs = count }
     public func hasDailyJobsFile() -> Bool { dailyJobs != nil }
@@ -797,6 +809,23 @@ public final class AssistantFileStore: AssistantStoring {
 
     public func saveNeedsYou(_ data: NeedsYouData, projectID: UUID) throws {
         let url = directory(projectID: projectID).appendingPathComponent("needs-you.json")
+        if data.isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            return
+        }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONFileStore.encoder.encode(data).write(to: url, options: .atomic)
+    }
+
+    /// `github.json`; one that can't be read is empty.
+    public func loadGitHubData(projectID: UUID) -> GitHubData {
+        let url = directory(projectID: projectID).appendingPathComponent("github.json")
+        guard let data = try? Data(contentsOf: url) else { return GitHubData() }
+        return (try? JSONFileStore.decoder.decode(GitHubData.self, from: data)) ?? GitHubData()
+    }
+
+    public func saveGitHubData(_ data: GitHubData, projectID: UUID) throws {
+        let url = directory(projectID: projectID).appendingPathComponent("github.json")
         if data.isEmpty {
             if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
             return

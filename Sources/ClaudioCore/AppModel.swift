@@ -312,6 +312,13 @@ public final class AppModel {
     public internal(set) var needsYou: [UUID: NeedsYouData] = [:]
     /// What's in each project's `needs-you.json`, so it's only rewritten when it changes.
     @ObservationIgnored var savedNeedsYou: [UUID: NeedsYouData] = [:]
+    /// Each project's linked issues as GitHub last had them (see AppModel+GitHub).
+    public internal(set) var linkedIssues: [UUID: LinkedIssues] = [:]
+    @ObservationIgnored var refreshingLinkedIssues = Set<UUID>()
+    /// Plan items whose GitHub issue is being created.
+    public internal(set) var creatingIssues = Set<UUID>()
+    /// Each project's `github.json` (Mark Done evidence you said Not Yet to).
+    public internal(set) var gitHubData: [UUID: GitHubData] = [:]
     /// Each session's history file as last checked for a follow-up
     /// (conversation and size), so unchanged files aren't read again.
     @ObservationIgnored var followUpChecked: [UUID: String] = [:]

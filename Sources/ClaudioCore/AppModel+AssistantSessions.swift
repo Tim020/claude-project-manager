@@ -54,6 +54,7 @@ extension AppModel {
         }
         writeAssistantIndex()
         loadNeedsYou()
+        loadGitHubData()
         loadSkillsData()
         syncSkillSets()
         pollAssistantInbox()
@@ -218,6 +219,7 @@ extension AppModel {
         // parent folder still applies to sessions nested under it.
         let folderNames = folderID.map { workspace.folderAndAncestorNames(of: $0) } ?? []
         return SkillChips.pick(from: skills, touchedFiles: files.sorted(), folderNames: folderNames, tagNames: tagNames(tagIDs),
+                               issueLabels: issueLabels(forItem: item, inProject: projectID),
                                usage: skillUsage(inProject: projectID, folderID: folderID, tagIDs: tagIDs)).map(\.name)
     }
 
