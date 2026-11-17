@@ -2073,18 +2073,19 @@ public final class AppModel {
         defer { launchingAgents -= 1 }
         let result = await run(command(assistant))
         guard var retry = assistant, let root = retry.skillsRoot, ClaudeTrust.isRefusal(result) else { return (result, assistant) }
+        let folder = ClaudeTrust.folderToTrust(forSkillsRoot: root)
         do {
-            let folder = ClaudeTrust.folderToTrust(forSkillsRoot: root)
-            if try ClaudeTrust.trust(folder: folder, home: home) {
+            let wrote = try ClaudeTrust.trust(folder: folder, home: home)
+            if wrote {
                 log.append(.info, "Trusted the skills folder in Claude Code's settings", detail: PathDisplay.tilde(folder, home: home))
-            } else {
-                // Already trusted by our reading of the file, yet refused: a
-                // path the CLI normalises differently, say. Worth knowing.
-                log.append(.error, "Claude Code refused a skills folder that ~/.claude.json already trusts",
-                           detail: PathDisplay.tilde(folder, home: home))
             }
             let second = await run(command(retry))
             if !ClaudeTrust.isRefusal(second) { return (second, retry) }
+            // Refused with the folder trusted: a path the CLI normalises
+            // differently, say. (An entry that was already there is normal:
+            // a launch in the same project may have just written it.)
+            log.append(.error, "Claude Code refused a skills folder that ~/.claude.json trusts",
+                       detail: PathDisplay.tilde(folder, home: home) + (wrote ? "" : "\n(the entry was already there)"))
         } catch {
             log.append(.error, "Couldn't mark the skills folder trusted in ~/.claude.json", detail: AppModel.describe(error))
         }
@@ -2094,7 +2095,7 @@ public final class AppModel {
         // the message, not a toast claiming a start.
         if last.exitCode == 0, AgentListParser.dispatchedID(from: last.output + "\n" + last.errorOutput) != nil {
             log.append(.error, "Claude Code doesn't trust the skills folder, so this session started without approved skills",
-                       detail: "Run `cd \"\(root)\" && claude` once and accept the trust prompt.")
+                       detail: "Run `cd \"\(folder)\" && claude` once and accept the trust prompt.")
             showToast("This session started without the project's approved skills: Claude Code doesn't trust their folder. See the Activity Log.")
         }
         return (last, retry.isEmpty ? nil : retry)
