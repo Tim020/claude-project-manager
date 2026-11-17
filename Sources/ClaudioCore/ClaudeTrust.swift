@@ -12,6 +12,20 @@ public enum ClaudeTrust {
         (result.output + "\n" + result.errorOutput).contains("Added folder not trusted")
     }
 
+    /// What to trust for a skills root: the project's own folder, which holds
+    /// the shared `skills` and every session's root under `sessions/<id>`.
+    /// Trust covers everything below a folder (container-checked with
+    /// 2.1.326: a trusted parent let `--add-dir` a child through, and a
+    /// sibling was still refused), so one entry per project is enough,
+    /// rather than one per session.
+    public static func folderToTrust(forSkillsRoot root: String) -> String {
+        let url = URL(fileURLWithPath: root)
+        let parent = url.deletingLastPathComponent()
+        if url.lastPathComponent == "skills" { return parent.path }
+        if parent.lastPathComponent == "sessions" { return parent.deletingLastPathComponent().path }
+        return url.path
+    }
+
     public static func configFile(home: String) -> URL {
         URL(fileURLWithPath: home).appendingPathComponent(".claude.json")
     }

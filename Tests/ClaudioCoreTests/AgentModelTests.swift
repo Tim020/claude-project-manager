@@ -11,11 +11,17 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var refuseAddedFolder = false
     /// Where `~/.claude.json` is: once it trusts the folder, dispatches go through.
     var configHome: String?
+    /// The CLI keeps refusing even when the config trusts the folder.
+    var refuseTrustedFolderToo = false
+    /// Trust covers a folder's descendants, as in the CLI.
     func isTrusted(_ folder: String) -> Bool {
         guard let configHome, let data = try? Data(contentsOf: ClaudeTrust.configFile(home: configHome)),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let entry = (root["projects"] as? [String: Any])?[folder] as? [String: Any] else { return false }
-        return entry["hasTrustDialogAccepted"] as? Bool == true
+              let projects = root["projects"] as? [String: Any] else { return false }
+        return projects.contains { path, entry in
+            (folder == path || folder.hasPrefix(path + "/"))
+                && (entry as? [String: Any])?["hasTrustDialogAccepted"] as? Bool == true
+        }
     }
     var usageOutput = "Total cost: $0.0000\n"
     var versionOutput = "2.1.283 (Claude Code)\n"
@@ -53,7 +59,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         if args.first == "stop" { return CommandResult(exitCode: stopExit, output: "", errorOutput: stopExit == 0 ? "" : "No such agent.") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") {
-            if refuseAddedFolder, let flag = args.firstIndex(of: "--add-dir"), !isTrusted(args[flag + 1]) {
+            if refuseAddedFolder, let flag = args.firstIndex(of: "--add-dir"), (refuseTrustedFolderToo || !isTrusted(args[flag + 1])) {
                 return CommandResult(exitCode: 1, output: "", errorOutput: "Added folder not trusted: \(args[flag + 1]). Leave out its --add-dir or, if you trust it, start `claude` there once.")
             }
             await duringLaunch?()

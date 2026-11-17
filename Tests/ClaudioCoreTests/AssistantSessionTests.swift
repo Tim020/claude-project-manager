@@ -444,9 +444,9 @@ final class AssistantSessionTests: XCTestCase {
         let config = ClaudeTrust.configFile(home: home.path)
         try #"{"numStartups": 7, "projects": {"/code/other": {"hasTrustDialogAccepted": true}}}"#
             .write(to: config, atomically: true, encoding: .utf8)
-        let (runner, model, itemID) = try await startItem(home: home.path)
+        let (runner, model, ids) = try await startItem(home: home.path)
         let sessionID = try await MainActor.run { () -> UUID in
-            try XCTUnwrap(model.startSession(fromItem: itemID.1, projectID: itemID.0, name: "Panel height", folderID: nil,
+            try XCTUnwrap(model.startSession(fromItem: ids.1, projectID: ids.0, name: "Panel height", folderID: nil,
                                              tagIDs: [], skills: [], useWorktree: true))
         }
         await model.lastTask?.value
@@ -460,7 +460,17 @@ final class AssistantSessionTests: XCTestCase {
         XCTAssertEqual(saved["numStartups"] as? Int, 7, "the rest of the file is kept")
         let projects = try XCTUnwrap(saved["projects"] as? [String: Any])
         XCTAssertEqual(projects.count, 2)
+        XCTAssertTrue(projects.keys.contains { $0.hasSuffix("/assistant/\(ids.0.uuidString.lowercased())") },
+                      "the project's folder, not its skills root")
         XCTAssertTrue(try XCTUnwrap(projects["/code/other"] as? [String: Any])["hasTrustDialogAccepted"] as? Bool == true)
+    }
+
+    /// One entry per project covers its shared skills and every session's own root.
+    func testTrustsTheProjectsFolderRatherThanEachRoot() {
+        let project = "/Support/Claudio/assistant/p"
+        XCTAssertEqual(ClaudeTrust.folderToTrust(forSkillsRoot: project + "/skills"), project)
+        XCTAssertEqual(ClaudeTrust.folderToTrust(forSkillsRoot: project + "/sessions/abc"), project)
+        XCTAssertEqual(ClaudeTrust.folderToTrust(forSkillsRoot: "/elsewhere/dir"), "/elsewhere/dir")
     }
 
     func testUnreadableConfigStartsTheSessionWithoutTheSkills() async throws {
@@ -480,10 +490,70 @@ final class AssistantSessionTests: XCTestCase {
         }
     }
 
-    private func startItem(home: String) async throws -> (FakeRunner, AppModel, (UUID, UUID)) {
+    /// Trust is written but the CLI refuses again anyway (a path it
+    /// normalises differently): a third dispatch, without the skills.
+    func testStillRefusedAfterTrustingStartsWithoutTheSkills() async throws {
+        let home = try makeTemporaryDirectory()
+        try #"{"projects": {}}"#.write(to: ClaudeTrust.configFile(home: home.path), atomically: true, encoding: .utf8)
+        let (runner, model, ids) = try await startItem(home: home.path) { $0.refuseTrustedFolderToo = true }
+        let sessionID = try await MainActor.run { () -> UUID in
+            try XCTUnwrap(model.startSession(fromItem: ids.1, projectID: ids.0, name: "Panel height", folderID: nil,
+                                             tagIDs: [], skills: [], useWorktree: true))
+        }
+        await model.lastTask?.value
+        try await MainActor.run {
+            let dispatches = runner.commands.filter { $0.contains("--bg") }
+            XCTAssertEqual(dispatches.map { $0.contains("--add-dir") }, [true, true, false])
+            XCTAssertEqual(model.workspace.session(sessionID)?.agentID, "abcd1234")
+            XCTAssertEqual(model.toast?.text.hasPrefix("This session started without"), true)
+        }
+    }
+
+    /// A failed last attempt gets the launch's own error, not a toast saying
+    /// it started.
+    func testNoToastWhenTheLastAttemptFailsToo() async throws {
+        let (runner, model, ids) = try await startItem(home: try makeTemporaryDirectory().path) { $0.dispatchExit = 1 }
+        _ = try await MainActor.run { () -> UUID in
+            try XCTUnwrap(model.startSession(fromItem: ids.1, projectID: ids.0, name: "Panel height", folderID: nil,
+                                             tagIDs: [], skills: [], useWorktree: true))
+        }
+        await model.lastTask?.value
+        await MainActor.run {
+            XCTAssertNotEqual(model.toast?.text.hasPrefix("This session started without"), true, "refused, then failed: no \"started\" claim")
+            XCTAssertEqual(runner.commands.filter { $0.contains("--bg") }.count, 2)
+        }
+    }
+
+    /// Resuming goes through the same retry, with its own prompt and resume flags.
+    func testResumeRetriesAfterTrusting() async throws {
+        let home = try makeTemporaryDirectory()
+        try #"{"projects": {}}"#.write(to: ClaudeTrust.configFile(home: home.path), atomically: true, encoding: .utf8)
+        let runner = FakeRunner()
+        runner.refuseAddedFolder = true
+        runner.configHome = home.path
+        let support = try makeTemporaryDirectory()
+        let (model, sessionID) = try await MainActor.run { () -> (AppModel, UUID) in
+            let store = AssistantFileStore(root: support.appendingPathComponent("assistant"))
+            let (model, _, _, session) = try makeFixture(assistant: store, runner: runner, home: home.path)
+            return (model, session.id)
+        }
+        await model.checkEnvironment(force: true)
+        await MainActor.run { model.resume(sessionID, message: "carry on") }
+        await model.lastTask?.value
+        await MainActor.run {
+            let dispatches = runner.commands.filter { $0.contains("--bg") }
+            XCTAssertEqual(dispatches.count, 2)
+            XCTAssertTrue(dispatches.allSatisfy { $0.contains("--resume") && $0.last == "carry on" })
+            XCTAssertTrue(dispatches[1].contains("--add-dir"))
+        }
+    }
+
+    private func startItem(home: String, configure: (FakeRunner) -> Void = { _ in }) async throws
+        -> (FakeRunner, AppModel, (UUID, UUID)) {
         let runner = FakeRunner()
         runner.refuseAddedFolder = true
         runner.configHome = home
+        configure(runner)
         let support = try makeTemporaryDirectory()
         let (model, ids) = try await MainActor.run { () -> (AppModel, (UUID, UUID)) in
             let store = AssistantFileStore(root: support.appendingPathComponent("assistant"))
