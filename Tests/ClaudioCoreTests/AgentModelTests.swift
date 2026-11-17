@@ -7,6 +7,16 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
     var agentsJSON = "[]"
     var dispatchOutput = "backgrounded · abcd1234\n  claude attach abcd1234    open in this terminal\n"
     var dispatchExit: Int32 = 0
+    /// Claude Code 2.1.326 refuses a `--bg` dispatch with an `--add-dir` it hasn't trusted.
+    var refuseAddedFolder = false
+    /// Where `~/.claude.json` is: once it trusts the folder, dispatches go through.
+    var configHome: String?
+    func isTrusted(_ folder: String) -> Bool {
+        guard let configHome, let data = try? Data(contentsOf: ClaudeTrust.configFile(home: configHome)),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let entry = (root["projects"] as? [String: Any])?[folder] as? [String: Any] else { return false }
+        return entry["hasTrustDialogAccepted"] as? Bool == true
+    }
     var usageOutput = "Total cost: $0.0000\n"
     var versionOutput = "2.1.283 (Claude Code)\n"
     var versionExit: Int32 = 0
@@ -43,6 +53,9 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         if args.first == "stop" { return CommandResult(exitCode: stopExit, output: "", errorOutput: stopExit == 0 ? "" : "No such agent.") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
         if args.contains("--bg") {
+            if refuseAddedFolder, let flag = args.firstIndex(of: "--add-dir"), !isTrusted(args[flag + 1]) {
+                return CommandResult(exitCode: 1, output: "", errorOutput: "Added folder not trusted: \(args[flag + 1]). Leave out its --add-dir or, if you trust it, start `claude` there once.")
+            }
             await duringLaunch?()
             return CommandResult(exitCode: dispatchExit, output: dispatchExit == 0 ? dispatchOutput : "", errorOutput: dispatchExit == 0 ? "" : "Workspace not trusted.")
         }

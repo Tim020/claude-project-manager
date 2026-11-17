@@ -1,0 +1,1 @@
+Added folder not trusted: /Users/tim/Library/Application Support/Claudio/assistant/d3469afb-d082-4982-83f6-c41f14883bf3/skills. Leave out its --add-dir or, if you trust it and everything in its repository or below it, start `claude` there once and accept the trust prompt.

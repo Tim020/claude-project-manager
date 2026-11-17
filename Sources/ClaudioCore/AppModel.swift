@@ -2019,8 +2019,9 @@ public final class AppModel {
             applyStatus(sessionID, .completed)
             return
         }
-        let assistant = assistantLaunch(for: session)
-        let result = await launchAgent(commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: assistant))
+        let (result, assistant) = await launchAgent(assistantLaunch(for: session)) {
+            commands.dispatch(session: session, prompt: prompt, isolation: isolation, assistant: $0)
+        }
         if await linkDispatched(sessionID, result: result) {
             if markLaunchedWithAssistant(sessionID, assistant) { save() }
             finishItemStart(sessionID, started: true)
@@ -2041,9 +2042,9 @@ public final class AppModel {
         }
         // Resuming an agent with flags would copy it, so only a session that
         // isn't one yet gets the assistant's.
-        let assistant = continuingAgent ? nil : assistantLaunch(for: session)
-        let result = await launchAgent(commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent,
-                                                       assistant: assistant))
+        let (result, assistant) = await launchAgent(continuingAgent ? nil : assistantLaunch(for: session)) {
+            commands.resume(session: session, prompt: prompt, continuingAgent: continuingAgent, assistant: $0)
+        }
         if await linkDispatched(sessionID, result: result), markLaunchedWithAssistant(sessionID, assistant) { save() }
     }
 
@@ -2059,11 +2060,33 @@ public final class AppModel {
 
     /// Runs a `claude --bg` command, holding off imports from the agent list
     /// until it's done: see `apply(_:)`. Link the result straight after,
-    /// before any suspension point.
-    private func launchAgent(_ launch: TerminalLaunch) async -> CommandResult {
+    /// before any suspension point. Returns the assistant flags it ran with.
+    ///
+    /// Claude Code 2.1.326 refuses a background dispatch whose `--add-dir`
+    /// folder hasn't had its trust prompt accepted, and a dispatch can't ask
+    /// (see `ClaudeTrust`). When that happens Claudio records the trust for
+    /// its own skills folder and retries; if it can't, the session starts
+    /// without the skills and the log says how to do it by hand.
+    private func launchAgent(_ assistant: AssistantLaunch?,
+                             command: (AssistantLaunch?) -> TerminalLaunch) async -> (CommandResult, AssistantLaunch?) {
         launchingAgents += 1
         defer { launchingAgents -= 1 }
-        return await run(launch)
+        let result = await run(command(assistant))
+        guard var retry = assistant, let root = retry.skillsRoot, ClaudeTrust.isRefusal(result) else { return (result, assistant) }
+        do {
+            try ClaudeTrust.trust(folder: root, home: home)
+            log.append(.info, "Trusted the skills folder in Claude Code's settings", detail: PathDisplay.tilde(root, home: home))
+            let second = await run(command(retry))
+            if !ClaudeTrust.isRefusal(second) { return (second, retry) }
+        } catch {
+            log.append(.error, "Couldn't mark the skills folder trusted in ~/.claude.json", detail: AppModel.describe(error))
+        }
+        log.append(.error, "Claude Code doesn't trust the skills folder, so this session started without approved skills",
+                   detail: "Run `cd \"\(root)\" && claude` once and accept the trust prompt.")
+        showToast("This session started without the project's approved skills: Claude Code doesn't trust their folder. See the Activity Log.")
+        retry.skillsRoot = nil
+        let last = await run(command(retry.isEmpty ? nil : retry))
+        return (last, retry.isEmpty ? nil : retry)
     }
 
     /// True when the session is now the agent that started (not a copy).
