@@ -249,13 +249,19 @@ public struct ReviewThread: Equatable, Sendable, Identifiable {
 
 /// "owner/repo#123" from a pull request URL.
 public enum PullRequestKey {
+    // Compiled once: this is parsed per pull request link in overview
+    // aggregates that can run over thousands of pull requests, so recompiling
+    // the pattern every call showed up as the hottest frame in a profile.
+    private static let urlPattern = try! NSRegularExpression(pattern: #"github\.com/[^/\s]+/[^/\s]+/pull/\d+"#)
+
     public static func key(_ url: String) -> String? {
         guard let parts = parts(url) else { return nil }
         return "\(parts.repository.lowercased())#\(parts.number)"
     }
 
     public static func parts(_ url: String) -> (repository: String, number: Int)? {
-        guard let range = url.range(of: #"github\.com/[^/\s]+/[^/\s]+/pull/\d+"#, options: .regularExpression) else { return nil }
+        let nsRange = NSRange(url.startIndex..<url.endIndex, in: url)
+        guard let match = urlPattern.firstMatch(in: url, range: nsRange), let range = Range(match.range, in: url) else { return nil }
         let pieces = url[range].split(separator: "/")
         guard pieces.count == 5, let number = Int(pieces[4]) else { return nil }
         return ("\(pieces[1])/\(pieces[2])", number)

@@ -343,6 +343,45 @@ final class PullRequestOverviewTests: XCTestCase {
         XCTAssertEqual(groups.map(\.name), ["Websocket Close State", "Websocket Close State › Nested"])
         XCTAssertEqual(groups.map { $0.pullRequests.map(\.number) }, [[1], [2]])
     }
+
+    /// A folder's pull request chip calls `pullRequests(in:)` on every
+    /// render, once per folder. Before each query indexed sessions once
+    /// (instead of rescanning every session for every pull request), a
+    /// history-sized project made this scan every session's every link
+    /// against every loaded pull request, so it grew with sessions × pull
+    /// requests × links — a profile of a real project (DigiScript, ~1,200
+    /// pull requests) found almost half its main-thread time stuck here.
+    /// This sizes up to that order of magnitude and bounds the wall time
+    /// generously: comfortably fast now, but the kind of bound the old scan
+    /// would have blown through by orders of magnitude.
+    func testLargeHistoryQueriesStayFast() throws {
+        let folderCount = 20
+        let sessionCount = 200
+        let pullRequestCount = 5000
+        let folders = try (0..<folderCount).map { try workspace.createFolder(in: project, named: "Folder \($0)") }
+        for i in 0..<sessionCount {
+            // Each session opened one pull request and reviewed two others,
+            // spread across the folders.
+            let opened = [i]
+            let reviewed = [(i + 1) % sessionCount, (i + 2) % sessionCount].map { url($0) }
+            try session("session \(i)", opened: opened, reviewed: reviewed, in: folders[i % folderCount])
+        }
+        // The rest are history the sessions never touched (realistic noise
+        // alongside the ones they acted on).
+        let items = (0..<pullRequestCount).map { item($0, updated: TimeInterval($0)) }
+        let loaded = known(items)
+
+        let start = DispatchTime.now()
+        let groups = PullRequestOverview.groups(loaded, workspace: workspace, projectID: project, filter: .all, includeUnlinked: false)
+        for folderID in folders {
+            _ = PullRequestOverview.pullRequests(in: .folder(folderID), workspace: workspace, known: loaded)
+        }
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
+
+        XCTAssertEqual(groups.reduce(0) { $0 + $1.pullRequests.count }, sessionCount,
+                       "one linked pull request per session, each in the folder of the session that opened it")
+        XCTAssertLessThan(elapsed, 5, "an indexed scan over this project should take well under a second, not the minutes an O(sessions × pull requests × links) rescan would")
+    }
 }
 
 /// Answers gh the way a signed-in gh would, from canned output.
