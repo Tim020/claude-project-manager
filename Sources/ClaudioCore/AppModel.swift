@@ -2320,6 +2320,7 @@ public final class AppModel {
     public func shutdown() {
         Array(running).forEach(detach)
         save()
+        store.flush()
     }
 
     /// Applies hook events written since the last poll.

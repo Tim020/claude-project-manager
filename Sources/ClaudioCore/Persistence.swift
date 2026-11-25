@@ -247,6 +247,15 @@ public struct PersistedState: Codable, Equatable, Sendable {
 public protocol StateStore {
     func load() throws -> PersistedState
     func save(_ state: PersistedState) throws
+    /// Blocks until any save already requested has reached disk. The
+    /// default no-op fits a store whose `save(_:)` already blocks until
+    /// the write lands (`MemoryStore`, and `JSONFileStore` on its own);
+    /// `CoalescingStateStore` is the one that needs to override it.
+    func flush()
+}
+
+extension StateStore {
+    public func flush() {}
 }
 
 /// Stores app state as JSON, by default in
@@ -315,6 +324,71 @@ public struct JSONFileStore: StateStore {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
+    }
+}
+
+/// Wraps another `StateStore` so `save(_:)` returns immediately: the
+/// actual write runs on a dedicated serial queue, and a save requested
+/// while one is already in flight replaces the pending one rather than
+/// queuing up — so a burst of saves (`AppModel.save()` runs on every
+/// state-mutating action) collapses into at most one more write of
+/// whichever state was last set, after the one already running finishes.
+/// `AppModel` is `@MainActor`, and the wrapped store's `save(_:)` was
+/// found blocking the main actor for whole seconds at a time (a slow
+/// `rename()`, not the encode, in a profile of real lag) — this is a
+/// cross-cutting fix at the storage layer rather than at `AppModel.save()`
+/// and its many callers, which stay synchronous and unaware of this.
+public final class CoalescingStateStore: StateStore {
+    private let wrapped: StateStore
+    private let queue = DispatchQueue(label: "Claudio.state-save")
+    private let lock = NSLock()
+    private var pending: PersistedState?
+    private var isWriting = false
+    /// Hops to wherever the caller needs it (`AppModel` is `@MainActor`);
+    /// a write's error can't be thrown back from `save(_:)` once it's
+    /// deferred, so this is the only way it reaches `AppModel.report(_:)`.
+    public var onError: (@Sendable (Error) -> Void)?
+
+    public init(wrapping store: StateStore) {
+        self.wrapped = store
+    }
+
+    public func load() throws -> PersistedState { try wrapped.load() }
+
+    public func save(_ state: PersistedState) throws {
+        lock.lock()
+        pending = state
+        let shouldStart = !isWriting
+        if shouldStart { isWriting = true }
+        lock.unlock()
+        if shouldStart { queue.async { self.drain() } }
+    }
+
+    /// Writes whatever's pending, then checks again before giving up the
+    /// queue: a save set while this write was running must still go out.
+    private func drain() {
+        while true {
+            lock.lock()
+            guard let next = pending else {
+                isWriting = false
+                lock.unlock()
+                return
+            }
+            pending = nil
+            lock.unlock()
+            do {
+                try wrapped.save(next)
+            } catch {
+                onError?(error)
+            }
+        }
+    }
+
+    /// Blocks until the queue has no write left to do, including one this
+    /// call's own caller just made — so a save right before quitting is
+    /// durable before the process actually exits.
+    public func flush() {
+        queue.sync {}
     }
 }
 

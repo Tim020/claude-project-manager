@@ -13,8 +13,13 @@ enum AppEnvironment {
     }()
 
     private static func makeModel() -> AppModel {
-        AppModel(
-            store: JSONFileStore(url: JSONFileStore.defaultURL),
+        // A plain JSONFileStore.save(_:) was found blocking the main
+        // thread for whole seconds at a time (a slow `rename()` on this
+        // Mac, not the encode) — wrapping it moves that off the main
+        // actor and coalesces a burst of saves into one write.
+        let store = CoalescingStateStore(wrapping: JSONFileStore(url: JSONFileStore.defaultURL))
+        let model = AppModel(
+            store: store,
             discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome,
                                          configFile: SessionDiscovery.defaultConfigFile),
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
@@ -22,6 +27,10 @@ enum AppEnvironment {
             assistantStore: AssistantFileStore(root: AssistantFileStore.defaultRoot),
             usageStore: UsageFileStore(url: UsageFileStore.defaultURL),
             logFileURL: ActivityLog.defaultFileURL)
+        store.onError = { [weak model] error in
+            Task { @MainActor in model?.report("Couldn't save: \(AppModel.describe(error))") }
+        }
+        return model
     }
 
     static let terminals: TerminalRegistryBox = {
