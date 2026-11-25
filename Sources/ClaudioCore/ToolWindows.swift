@@ -165,10 +165,11 @@ extension AppModel {
         let collapsed = toolWindows.collapsedPullRequestProjects
         return workspace.projects.filter { tracksPullRequests(projectID: $0.id) }.map { project in
             let known = projectPullRequests[project.id]
+            let index = PullRequestOverview.SessionIndex(workspace: workspace, projectID: project.id, repository: known?.repository?.nameWithOwner)
             var open: [(PullRequestInfo, Session?)] = []
             var done: [(PullRequestInfo, Session?)] = []
             for pullRequest in (known?.items ?? []).sortedByUpdate where filter.matches(pullRequest) {
-                let session = sessions(for: pullRequest, projectID: project.id).first
+                let session = index.session(forKey: pullRequest.key)
                 if pullRequest.isOpen {
                     guard session != nil || includeUnlinkedPullRequests else { continue }
                     open.append((pullRequest, session))

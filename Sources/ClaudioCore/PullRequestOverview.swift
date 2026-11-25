@@ -213,10 +213,10 @@ public enum PullRequestOverview {
     public static func groups(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                               filter: PullRequestFilter, includeUnlinked: Bool) -> [PullRequestGroup] {
         guard workspace.project(projectID) != nil, let known else { return [] }
-        let repository = known.repository?.nameWithOwner
+        let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         var byGroup: [SessionGroup?: [PullRequestInfo]] = [:]
         for pullRequest in known.items.sortedByUpdate where filter.matches(pullRequest) {
-            let group = self.group(of: pullRequest, in: workspace, projectID: projectID, repository: repository)
+            let group = index.group(forKey: pullRequest.key)
             if group == nil && !includeUnlinked { continue }
             byGroup[group, default: []].append(pullRequest)
         }
@@ -246,10 +246,10 @@ public enum PullRequestOverview {
     public static func loadedCount(_ known: ProjectPullRequests?, workspace: Workspace, projectID: UUID,
                                    filter: PullRequestFilter, includeUnlinked: Bool) -> Int {
         guard let known else { return 0 }
-        let repository = known.repository?.nameWithOwner
+        let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         return known.items.filter { pullRequest in
             filter.matches(pullRequest)
-                && (includeUnlinked || group(of: pullRequest, in: workspace, projectID: projectID, repository: repository) != nil)
+                && (includeUnlinked || index.group(forKey: pullRequest.key) != nil)
         }.count
     }
 
@@ -258,10 +258,10 @@ public enum PullRequestOverview {
     /// whole subtree, not just sessions filed directly in it.
     public static func pullRequests(in group: SessionGroup, workspace: Workspace, known: ProjectPullRequests?) -> [PullRequestInfo] {
         guard let known, let projectID = workspace.projectID(of: group) else { return [] }
-        let repository = known.repository?.nameWithOwner
+        let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         let subtreeIDs: Set<UUID>? = { if case .folder(let id) = group { return workspace.subtreeFolderIDs(of: id) }; return nil }()
         let items = known.items.filter { pullRequest in
-            guard let prGroup = self.group(of: pullRequest, in: workspace, projectID: projectID, repository: repository) else { return false }
+            guard let prGroup = index.group(forKey: pullRequest.key) else { return false }
             if let subtreeIDs, case .folder(let id) = prGroup { return subtreeIDs.contains(id) }
             return prGroup == group
         }
@@ -271,13 +271,59 @@ public enum PullRequestOverview {
     /// A session's pull requests, in the order it acted on them, as far as
     /// they've been loaded.
     public static func pullRequests(of session: Session, known: ProjectPullRequests?) -> [PullRequestInfo] {
-        guard let known else { return [] }
+        // Most sessions have no pull request links: skip building the key
+        // index (which parses every loaded pull request's URL) for nothing.
+        guard let known, !session.pullRequests.isEmpty else { return [] }
         let repository = known.repository?.nameWithOwner
+        let byKey = Dictionary(known.items.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
         return session.pullRequests.compactMap { link in
-            guard let key = link.key(in: repository), let item = known.items.first(where: { $0.key == key }),
+            guard let key = link.key(in: repository), let item = byKey[key],
                   seen.insert(key).inserted else { return nil }
             return item
+        }
+    }
+
+    /// Each pull request key's acting session in a project, built once per
+    /// call so the aggregates above (and `AppModel.pullRequestPanel()`) scan
+    /// every session's links once rather than rescanning all of them for
+    /// every pull request they hold (that rescan, repeated on every render
+    /// of each folder's pull request chip, was the hot path in a profile of
+    /// a project with a large history). The session stored per key is
+    /// whichever opened or reviewed it first in `workspace.sessions` order,
+    /// opener winning over reviewer, matching `sessions(for:)`'s ordering.
+    struct SessionIndex {
+        private let workspace: Workspace
+        private var openedBy: [String: Session] = [:]
+        private var reviewedBy: [String: Session] = [:]
+
+        init(workspace: Workspace, projectID: UUID, repository: String?) {
+            self.workspace = workspace
+            for session in workspace.sessions where session.projectID == projectID && !session.isArchived {
+                var actionByKey: [String: PullRequestLink.Action] = [:]
+                for link in session.pullRequests {
+                    guard let key = link.key(in: repository) else { continue }
+                    // `.opened` always wins, which only works order-independently
+                    // because `PullRequestLink.Action` has exactly these two cases.
+                    if actionByKey[key] != .opened { actionByKey[key] = link.action }
+                }
+                for (key, action) in actionByKey {
+                    switch action {
+                    case .opened: if openedBy[key] == nil { openedBy[key] = session }
+                    case .reviewed: if reviewedBy[key] == nil { reviewedBy[key] = session }
+                    }
+                }
+            }
+        }
+
+        /// The session that opened the pull request, else the first that
+        /// reviewed it, if any did.
+        func session(forKey key: String) -> Session? {
+            openedBy[key] ?? reviewedBy[key]
+        }
+
+        func group(forKey key: String) -> SessionGroup? {
+            session(forKey: key).flatMap { workspace.group(of: $0.id) }
         }
     }
 }

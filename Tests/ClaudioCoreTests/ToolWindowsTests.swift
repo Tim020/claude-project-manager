@@ -208,6 +208,34 @@ extension PullRequestModelTests {
         }
     }
 
+    /// `pullRequestPanel()` names the session that opened a pull request,
+    /// not one added earlier that only reviewed it.
+    func testPanelPicksTheOpenerOverAReviewer() async throws {
+        let runner = FakeGitHub()
+        let url = "https://github.com/dreamteamprod/DigiScript/pull/1427"
+        runner.open = "[\(PullRequestFixtures.pr(1427))]"
+        var state = PersistedState()
+        let project = state.workspace.addProject(path: "/repo")
+        let reviewer = Session(projectID: project, name: "reviewer", workingDirectory: "/repo", pullRequests: [PullRequestLink(url, .reviewed)])
+        let opener = Session(projectID: project, name: "opener", workingDirectory: "/repo", pullRequests: [PullRequestLink(url, .opened)])
+        // The reviewer is added to the workspace first, so this can't pass by coincidence of insertion order.
+        try state.workspace.addSession(reviewer)
+        try state.workspace.addSession(opener)
+        let store = MemoryStore()
+        store.state = state
+        let model = try await MainActor.run {
+            AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
+                    hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
+                    locateClaude: { _ in nil }, locateGitHubCLI: { "/opt/homebrew/bin/gh" }, shell: "/bin/sh",
+                    now: { [unowned self] in self.clock }, home: "/")
+        }
+        await model.refreshPullRequests(project)
+        await MainActor.run {
+            let items = model.pullRequestPanel()[0].items
+            XCTAssertEqual(items.first?.sessionID, opener.id, "the session that opened it wins over the one that reviewed it")
+        }
+    }
+
     func testPanelSaysWhenNothingIsOnGitHub() async throws {
         let runner = FakeGitHub()
         runner.repoExit = 1
