@@ -2721,7 +2721,7 @@ public final class AppModel {
         }
     }
 
-    static func describe(_ error: Error) -> String {
+    public static func describe(_ error: Error) -> String {
         if let localized = error as? LocalizedError, let description = localized.errorDescription { return description }
         if let workspaceError = error as? WorkspaceError {
             switch workspaceError {
