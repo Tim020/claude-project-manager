@@ -174,6 +174,26 @@ final class CoalescingStateStoreTests: XCTestCase {
 
         XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/fails", "/succeeds"])
         XCTAssertEqual(reported.get().count, 1, "once, for the failure — not dropped, and not repeated for the write that followed")
+        XCTAssertNil(store.takeLastFlushError(), "the later successful write cleared the earlier failure")
+    }
+
+    /// `takeLastFlushError()` itself, on the real class: not the
+    /// `MemoryStore`-based shutdown tests, whose `flush()`/
+    /// `takeLastFlushError()` are independent hand-rolled counters that
+    /// can't tell this class's real clear-on-success logic from deleted.
+    func testTakeLastFlushErrorReturnsItOnceThenNil() throws {
+        let fake = SlowFakeStore()
+        fake.errorToThrow = NSError(domain: "CoalescingStateStoreTests", code: 2)
+        let store = CoalescingStateStore(wrapping: fake)
+        fake.makeNextSaveBlockUntilReleased()
+
+        try store.save(state("/fails"))
+        fake.began.wait()
+        fake.release.signal()
+        store.flush()
+
+        XCTAssertNotNil(store.takeLastFlushError(), "the failed write's error is there right after flush()")
+        XCTAssertNil(store.takeLastFlushError(), "and only once — a second call doesn't repeat it")
     }
 }
 
