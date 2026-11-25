@@ -2,17 +2,6 @@
 import ClaudioCore
 import SwiftUI
 
-/// Models offered in the pickers. `nil` means Claude Code's own default.
-enum ModelChoices {
-    static let all: [(id: String?, label: String)] = [
-        (nil, "Default"),
-        ("claude-opus-5-5", "Opus 5.5"),
-        ("claude-sonnet-5", "Sonnet 5"),
-        ("claude-fable-5-1", "Fable 5.1"),
-        ("claude-haiku-4-5-20251001", "Haiku 4.5"),
-    ]
-}
-
 struct NewSessionSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -86,7 +75,7 @@ struct NewSessionSheet: View {
                 GridRow {
                     label("Model")
                     Picker("", selection: $modelID) {
-                        ForEach(ModelChoices.all, id: \.label) { choice in
+                        ForEach(model.modelChoices(including: modelID), id: \.label) { choice in
                             Text(choice.label).tag(choice.id)
                         }
                     }
@@ -151,6 +140,7 @@ struct NewSessionSheet: View {
         .background(DS.sidebar)
         .preferredColorScheme(.dark)
         .onAppear(perform: applyDefaults)
+        .task { await model.refreshAvailableModelsIfDue() }
         .onChange(of: backgroundMode) { _, background in
             if !permissionEdited { permissionMode = model.settings.defaultPermissionMode(background: background) }
         }

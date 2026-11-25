@@ -318,12 +318,13 @@ private struct SessionSettings: View {
         SettingsGroup(title: "Defaults", footer: "You can change these for each session in the New Session sheet.") {
             SettingsRow(title: "Model") {
                 Picker("Model", selection: settingBinding(model, \.defaultModel)) {
-                    ForEach(ModelChoices.all, id: \.label) { choice in
+                    ForEach(model.modelChoices(including: model.settings.defaultModel), id: \.label) { choice in
                         Text(choice.label).tag(choice.id)
                     }
                 }
                 .labelsHidden()
                 .frame(width: 200)
+                .task { await model.refreshAvailableModelsIfDue() }
             }
             SettingsRow(title: "Background Permissions",
                         subtitle: "For background agents, which work unattended. Auto matches Claude Code's default for agents.") {

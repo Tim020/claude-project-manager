@@ -286,6 +286,15 @@ public struct AgentCommands: Sendable {
                  "--settings", #"{"disableAllHooks":true}"#], in: home, login: false)
     }
 
+    /// The model aliases `--model`/the New Session and Settings pickers
+    /// offer, from `/model`'s own usage line ("Available: sonnet, opus,
+    /// …"). A local command like `/usage`: no model call, and it works
+    /// before any session has run.
+    public func models() -> TerminalLaunch {
+        command(["-p", "/model", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+                 "--settings", #"{"disableAllHooks":true}"#], in: home, login: false)
+    }
+
     /// `claude --version`: "2.1.283 (Claude Code)".
     public func version() -> TerminalLaunch {
         command(["--version"], in: home, login: false)

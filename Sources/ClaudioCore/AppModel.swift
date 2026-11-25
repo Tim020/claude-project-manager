@@ -226,6 +226,11 @@ public final class AppModel {
     /// Which plan limits were reached, for the usage-reset notification.
     @ObservationIgnored private var usageResets = UsageResetTracker()
     @ObservationIgnored private var isRefreshingUsage = false
+    /// The model pickers' choices, from `claude -p /model` (`ModelCatalog.fallback`
+    /// until a live list is read, and whenever that fails).
+    public private(set) var availableModels: [ModelChoice] = ModelCatalog.fallback
+    @ObservationIgnored private var isRefreshingModels = false
+    @ObservationIgnored private var modelsFetchedAt: Date?
     @ObservationIgnored private let locateClaude: (String?) -> String?
     @ObservationIgnored let locateGitHubCLI: () -> String?
     /// `gh pr view` results per folder (nil: no pull request), briefly cached.
@@ -2665,6 +2670,42 @@ public final class AppModel {
     public func refreshUsageIfDue() async {
         if let usage, now().timeIntervalSince(usage.updatedAt) < AppModel.usageRefreshInterval { return }
         await refreshUsage()
+    }
+
+    /// How long a model list, once read, is trusted before the picker opening
+    /// again re-asks the CLI (an upgrade mid-session can add or drop an alias).
+    public static let modelsRefreshInterval: TimeInterval = 3600
+
+    /// Asks Claude Code for its model aliases (`claude -p /model`), the same
+    /// local command `/usage` is. Keeps the last list on a failed or empty
+    /// read, so a picker already showing choices doesn't lose them.
+    public func refreshAvailableModels() async {
+        guard !isRefreshingModels, environment.canRunSessionsOrUnchecked, let commands = agentCommands(reportErrors: false) else { return }
+        isRefreshingModels = true
+        defer { isRefreshingModels = false }
+        let result = await run(commands.models(), logOnlyChanges: true, changeKey: "models",
+                               loggedOutput: { UsageSnapshot.usageText(fromStream: $0) ?? $0 })
+        modelsFetchedAt = now()
+        guard result.exitCode == 0, let text = UsageSnapshot.usageText(fromStream: result.output) else { return }
+        let choices = ModelCatalog.choices(fromAliases: ModelCatalog.parseModelCommand(text))
+        if choices != availableModels { availableModels = choices }
+    }
+
+    /// Called when a model picker is about to show: re-reads the list if it's
+    /// never been read, or hasn't in `modelsRefreshInterval`.
+    public func refreshAvailableModelsIfDue() async {
+        if let modelsFetchedAt, now().timeIntervalSince(modelsFetchedAt) < AppModel.modelsRefreshInterval { return }
+        await refreshAvailableModels()
+    }
+
+    /// `availableModels`, plus `savedID` (a session's saved model, or the
+    /// default) if it isn't already one of the choices — so a picker bound to
+    /// it never lands on a tag with no matching option (SwiftUI then shows it
+    /// blank). Covers a value from before this alias-based list (a full
+    /// version string) and an alias a new CLI dropped.
+    public func modelChoices(including savedID: String?) -> [ModelChoice] {
+        guard let savedID, !availableModels.contains(where: { $0.id == savedID }) else { return availableModels }
+        return availableModels + [ModelChoice(id: savedID, label: savedID)]
     }
 
     private func adopt(_ snapshot: UsageSnapshot) {
