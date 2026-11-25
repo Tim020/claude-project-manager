@@ -4,10 +4,19 @@ import XCTest
 final class MemoryStore: StateStore {
     var state = PersistedState()
     var saves = 0
+    var flushes = 0
+    /// Simulates a `CoalescingStateStore` whose last write (at shutdown,
+    /// say) failed: `takeLastFlushError()` returns this once, then nil.
+    var pendingFlushError: Error?
     func load() throws -> PersistedState { state }
     func save(_ state: PersistedState) throws {
         self.state = state
         saves += 1
+    }
+    func flush() { flushes += 1 }
+    func takeLastFlushError() -> Error? {
+        defer { pendingFlushError = nil }
+        return pendingFlushError
     }
 }
 
@@ -413,6 +422,31 @@ final class AppModelTests: XCTestCase {
             XCTAssertEqual(terminals.terminated, [a])
             model.shutdown()
             XCTAssertEqual(Set(terminals.terminated), [a, b])
+        }
+    }
+
+    /// `CoalescingStateStore.flush()` has to actually be called at
+    /// shutdown for a save right before quitting to be durable: a store
+    /// with the default no-op `flush()` can't tell "wired in" from
+    /// "never called" apart, so this counts the calls instead.
+    func testShutdownFlushesTheStore() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            model.shutdown()
+            XCTAssertEqual(store.flushes, 1)
+        }
+    }
+
+    /// A failure on the final save before quitting has to surface
+    /// synchronously, not through `CoalescingStateStore.onError`'s
+    /// `Task`, which isn't guaranteed to run before the process exits.
+    func testShutdownReportsAFailedFinalSave() throws {
+        try MainActor.assumeIsolated {
+            let model = try makeModel()
+            let error = NSError(domain: "AppModelTests", code: 1)
+            store.pendingFlushError = error
+            model.shutdown()
+            XCTAssertEqual(model.errorMessage, "Couldn't save: \(AppModel.describe(error))")
         }
     }
 

@@ -69,6 +69,134 @@ final class PersistenceTests: XCTestCase {
     }
 }
 
+/// A `StateStore` whose `save(_:)` can be made to block on command, so
+/// `CoalescingStateStoreTests` can deterministically catch a write while
+/// it's in flight rather than racing a real one with sleeps.
+private final class SlowFakeStore: StateStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _saved: [PersistedState] = []
+    var saved: [PersistedState] { lock.lock(); defer { lock.unlock() }; return _saved }
+    /// Signaled once, right when the next `save(_:)` call starts blocking.
+    let began = DispatchSemaphore(value: 0)
+    /// The next `save(_:)` call waits on this before it's allowed to finish.
+    let release = DispatchSemaphore(value: 0)
+    private var blockNextSave = false
+    var errorToThrow: Error?
+
+    func makeNextSaveBlockUntilReleased() { lock.lock(); blockNextSave = true; lock.unlock() }
+
+    func load() throws -> PersistedState { PersistedState() }
+
+    func save(_ state: PersistedState) throws {
+        lock.lock()
+        let shouldBlock = blockNextSave
+        blockNextSave = false
+        lock.unlock()
+        if shouldBlock {
+            began.signal()
+            release.wait()
+        }
+        lock.lock()
+        _saved.append(state)
+        lock.unlock()
+        // Only the call that was actually blocked throws: `errorToThrow`
+        // marks "what the write that's in flight when the test checks
+        // fails with," not every call from here on.
+        if shouldBlock, let errorToThrow { throw errorToThrow }
+    }
+}
+
+/// A lock-protected list, so a background queue's `onError` callback can
+/// hand values back to the test thread without a Sendable-capture warning
+/// on a plain `var`.
+private final class ErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Error] = []
+    func append(_ error: Error) { lock.lock(); values.append(error); lock.unlock() }
+    func get() -> [Error] { lock.lock(); defer { lock.unlock() }; return values }
+}
+
+final class CoalescingStateStoreTests: XCTestCase {
+    func state(_ path: String) -> PersistedState {
+        var state = PersistedState()
+        state.settings.claudePath = path
+        return state
+    }
+
+    func testBurstOfSavesWhileAWriteIsInFlightCollapsesToTheLastOne() throws {
+        let fake = SlowFakeStore()
+        let store = CoalescingStateStore(wrapping: fake)
+        fake.makeNextSaveBlockUntilReleased()
+
+        try store.save(state("/first"))
+        fake.began.wait() // the first write is now blocked inside SlowFakeStore.save
+
+        for i in 0..<5 { try store.save(state("/burst-\(i)")) }
+        try store.save(state("/last"))
+
+        fake.release.signal() // let the blocked write finish
+        store.flush() // wait for the coalesced write (of whatever's last) too
+
+        XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/first", "/last"],
+                       "the write already in flight, plus one more of whichever state was last set during the burst")
+    }
+
+    func testFlushWaitsForTheInFlightWrite() throws {
+        let fake = SlowFakeStore()
+        let store = CoalescingStateStore(wrapping: fake)
+        fake.makeNextSaveBlockUntilReleased()
+
+        try store.save(state("/only"))
+        fake.began.wait()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { fake.release.signal() }
+        store.flush() // must not return before the release above lets the write finish
+
+        XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/only"])
+    }
+
+    /// A failing write doesn't stop the drain loop: whatever's pending
+    /// behind it (queued while it was still in flight) still goes out,
+    /// and `onError` fires once for the failure, not for the success that
+    /// followed it.
+    func testWriteErrorReachesOnErrorAndDoesntStopTheNextSave() throws {
+        let fake = SlowFakeStore()
+        fake.errorToThrow = NSError(domain: "CoalescingStateStoreTests", code: 1)
+        let reported = ErrorBox()
+        let store = CoalescingStateStore(wrapping: fake, onError: { reported.append($0) })
+        fake.makeNextSaveBlockUntilReleased()
+
+        try store.save(state("/fails"))
+        fake.began.wait() // this write is now blocked, and will fail once released
+        try store.save(state("/succeeds")) // queued behind it, no block requested
+
+        fake.release.signal()
+        store.flush() // wait for both the failure and the coalesced write after it
+
+        XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/fails", "/succeeds"])
+        XCTAssertEqual(reported.get().count, 1, "once, for the failure — not dropped, and not repeated for the write that followed")
+        XCTAssertNil(store.takeLastFlushError(), "the later successful write cleared the earlier failure")
+    }
+
+    /// `takeLastFlushError()` itself, on the real class: not the
+    /// `MemoryStore`-based shutdown tests, whose `flush()`/
+    /// `takeLastFlushError()` are independent hand-rolled counters that
+    /// can't tell this class's real clear-on-success logic from deleted.
+    func testTakeLastFlushErrorReturnsItOnceThenNil() throws {
+        let fake = SlowFakeStore()
+        fake.errorToThrow = NSError(domain: "CoalescingStateStoreTests", code: 2)
+        let store = CoalescingStateStore(wrapping: fake)
+        fake.makeNextSaveBlockUntilReleased()
+
+        try store.save(state("/fails"))
+        fake.began.wait()
+        fake.release.signal()
+        store.flush()
+
+        XCTAssertNotNil(store.takeLastFlushError(), "the failed write's error is there right after flush()")
+        XCTAssertNil(store.takeLastFlushError(), "and only once — a second call doesn't repeat it")
+    }
+}
+
 final class LegacyDataMigrationTests: XCTestCase {
     func testMovesTheOldSessionManagerFolderOnce() throws {
         let support = try makeTemporaryDirectory()

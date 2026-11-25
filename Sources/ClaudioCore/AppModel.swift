@@ -2320,6 +2320,21 @@ public final class AppModel {
     public func shutdown() {
         Array(running).forEach(detach)
         save()
+        store.flush()
+        // Checked synchronously, not through CoalescingStateStore's
+        // onError: a Task it schedules isn't guaranteed to run before the
+        // process actually exits right after this. Even so, this is
+        // `applicationWillTerminate` calling in, with no run-loop turn
+        // left for the on-screen alert this drives to actually render,
+        // and the Activity Log window doesn't reload its file at the next
+        // launch either — so in practice this mostly reaches
+        // `~/Library/Logs/Claudio.log`, not the user, for a failure this
+        // late. Surfacing it to the user for real would mean delaying
+        // termination (`applicationShouldTerminate(_:)` returning
+        // `.terminateLater`) or a sentinel read back at the next launch;
+        // skipped here as more AppKit-teardown risk than this edge case
+        // (the last save specifically, of all of them, failing) warrants.
+        if let error = store.takeLastFlushError() { report("Couldn't save: \(AppModel.describe(error))") }
     }
 
     /// Applies hook events written since the last poll.
@@ -2720,7 +2735,7 @@ public final class AppModel {
         }
     }
 
-    static func describe(_ error: Error) -> String {
+    public static func describe(_ error: Error) -> String {
         if let localized = error as? LocalizedError, let description = localized.errorDescription { return description }
         if let workspaceError = error as? WorkspaceError {
             switch workspaceError {

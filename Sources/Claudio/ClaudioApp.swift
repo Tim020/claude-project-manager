@@ -3,6 +3,13 @@ import AppKit
 import ClaudioCore
 import SwiftUI
 
+/// Lets `CoalescingStateStore`'s `onError` closure, created before
+/// `AppModel` exists (it's passed into `AppModel`'s own init), hold a weak
+/// reference to it without a retain cycle through `model.store`.
+private struct WeakModel {
+    weak var value: AppModel?
+}
+
 @MainActor
 enum AppEnvironment {
     static let model: AppModel = {
@@ -13,8 +20,14 @@ enum AppEnvironment {
     }()
 
     private static func makeModel() -> AppModel {
-        AppModel(
-            store: JSONFileStore(url: JSONFileStore.defaultURL),
+        // JSONFileStore.save(_:) was found blocking the main thread for
+        // whole seconds at a time; see CoalescingStateStore's doc.
+        var weakModel = WeakModel()
+        let store = CoalescingStateStore(wrapping: JSONFileStore(url: JSONFileStore.defaultURL)) { error in
+            Task { @MainActor in weakModel.value?.report("Couldn't save: \(AppModel.describe(error))") }
+        }
+        let model = AppModel(
+            store: store,
             discovery: SessionDiscovery(claudeHome: SessionDiscovery.defaultClaudeHome,
                                          configFile: SessionDiscovery.defaultConfigFile),
             hookEventsURL: JSONFileStore.defaultURL.deletingLastPathComponent().appendingPathComponent("hook-events.log"),
@@ -22,6 +35,8 @@ enum AppEnvironment {
             assistantStore: AssistantFileStore(root: AssistantFileStore.defaultRoot),
             usageStore: UsageFileStore(url: UsageFileStore.defaultURL),
             logFileURL: ActivityLog.defaultFileURL)
+        weakModel.value = model
+        return model
     }
 
     static let terminals: TerminalRegistryBox = {
