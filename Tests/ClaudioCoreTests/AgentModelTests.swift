@@ -24,6 +24,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         }
     }
     var usageOutput = "Total cost: $0.0000\n"
+    var modelsOutput = ""
     var versionOutput = "2.1.283 (Claude Code)\n"
     var versionExit: Int32 = 0
     var versionError = ""
@@ -58,6 +59,7 @@ final class FakeRunner: CommandRunning, @unchecked Sendable {
         }
         if args.first == "stop" { return CommandResult(exitCode: stopExit, output: "", errorOutput: stopExit == 0 ? "" : "No such agent.") }
         if args.contains("/usage") { return CommandResult(exitCode: 0, output: usageOutput, errorOutput: "") }
+        if args.contains("/model") { return CommandResult(exitCode: 0, output: modelsOutput, errorOutput: "") }
         if args.contains("--bg") {
             if refuseAddedFolder, let flag = args.firstIndex(of: "--add-dir"), (refuseTrustedFolderToo || !isTrusted(args[flag + 1])) {
                 return CommandResult(exitCode: 1, output: "", errorOutput: "Added folder not trusted: \(args[flag + 1]). Leave out its --add-dir or, if you trust it, start `claude` there once.")

@@ -126,6 +126,8 @@ struct ContentView: View {
             await model.preloadChanges()
             // Pull request states for the sidebar (needs gh, checked above).
             await model.refreshAllPullRequests()
+            // The model pickers' choices, from `claude -p /model`.
+            await model.refreshAvailableModels()
         }
         .alert(copyTitle, isPresented: copyBinding) {
             Button("Resume a Copy") {

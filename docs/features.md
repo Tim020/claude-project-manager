@@ -173,7 +173,7 @@ macOS notifications when a session needs your input or finishes (and, if you tur
 Open with ⌘,. A sidebar of pages, each with grouped rows:
 
 - **General:** the `claude` executable and Claude Code's setup checklist, the sidebar's recent-activity window, and where Claudio's data, its log and Claude Code's history are kept.
-- **New Sessions:** Direct or Background sessions, the default model, and default permissions for background agents (Auto) and for sessions run in a terminal.
+- **New Sessions:** Direct or Background sessions, the default model, and default permissions for background agents (Auto) and for sessions run in a terminal. The model picker here, and in the New Session sheet, lists Claude Code's own `--model` aliases (Opus, Sonnet, Fable, Haiku, and any others the CLI offers), read from `claude -p /model` rather than kept as a hand-maintained list of version strings — so it stays current as Anthropic ships new models, with no Claudio update needed. It's read once at launch and re-read if a picker is opened more than an hour later; a saved choice from before this (a full version string) or an alias a newer CLI dropped still shows, so it's never silently lost.
 - **Notifications**, **Tags** and **About**.
 
 ## Claude Code setup checks
