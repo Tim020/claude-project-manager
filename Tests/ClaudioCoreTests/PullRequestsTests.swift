@@ -373,13 +373,21 @@ final class PullRequestOverviewTests: XCTestCase {
 
         let start = DispatchTime.now()
         let groups = PullRequestOverview.groups(loaded, workspace: workspace, projectID: project, filter: .all, includeUnlinked: false)
+        // Reviewed by session i-1 and i-2 as well as opened by session i,
+        // so this folder-by-folder check only comes out right if the index's
+        // "opened wins" tie-break actually picks the opener, not a reviewer.
+        var byFolder: [UUID: Set<Int>] = [:]
         for folderID in folders {
-            _ = PullRequestOverview.pullRequests(in: .folder(folderID), workspace: workspace, known: loaded)
+            byFolder[folderID] = Set(PullRequestOverview.pullRequests(in: .folder(folderID), workspace: workspace, known: loaded).map(\.number))
         }
         let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000_000
 
         XCTAssertEqual(groups.reduce(0) { $0 + $1.pullRequests.count }, sessionCount,
                        "one linked pull request per session, each in the folder of the session that opened it")
+        for (f, folderID) in folders.enumerated() {
+            XCTAssertEqual(byFolder[folderID], Set(stride(from: f, to: sessionCount, by: folderCount)),
+                           "folder \(f) should hold exactly the pull requests opened by the sessions filed in it")
+        }
         XCTAssertLessThan(elapsed, 5, "an indexed scan over this project should take well under a second, not the minutes an O(sessions × pull requests × links) rescan would")
     }
 }

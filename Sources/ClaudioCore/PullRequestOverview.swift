@@ -216,7 +216,7 @@ public enum PullRequestOverview {
         let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         var byGroup: [SessionGroup?: [PullRequestInfo]] = [:]
         for pullRequest in known.items.sortedByUpdate where filter.matches(pullRequest) {
-            let group = index.group(forKey: pullRequest.key, workspace: workspace)
+            let group = index.group(forKey: pullRequest.key)
             if group == nil && !includeUnlinked { continue }
             byGroup[group, default: []].append(pullRequest)
         }
@@ -249,7 +249,7 @@ public enum PullRequestOverview {
         let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         return known.items.filter { pullRequest in
             filter.matches(pullRequest)
-                && (includeUnlinked || index.group(forKey: pullRequest.key, workspace: workspace) != nil)
+                && (includeUnlinked || index.group(forKey: pullRequest.key) != nil)
         }.count
     }
 
@@ -261,7 +261,7 @@ public enum PullRequestOverview {
         let index = SessionIndex(workspace: workspace, projectID: projectID, repository: known.repository?.nameWithOwner)
         let subtreeIDs: Set<UUID>? = { if case .folder(let id) = group { return workspace.subtreeFolderIDs(of: id) }; return nil }()
         let items = known.items.filter { pullRequest in
-            guard let prGroup = index.group(forKey: pullRequest.key, workspace: workspace) else { return false }
+            guard let prGroup = index.group(forKey: pullRequest.key) else { return false }
             if let subtreeIDs, case .folder(let id) = prGroup { return subtreeIDs.contains(id) }
             return prGroup == group
         }
@@ -271,7 +271,9 @@ public enum PullRequestOverview {
     /// A session's pull requests, in the order it acted on them, as far as
     /// they've been loaded.
     public static func pullRequests(of session: Session, known: ProjectPullRequests?) -> [PullRequestInfo] {
-        guard let known else { return [] }
+        // Most sessions have no pull request links: skip building the key
+        // index (which parses every loaded pull request's URL) for nothing.
+        guard let known, !session.pullRequests.isEmpty else { return [] }
         let repository = known.repository?.nameWithOwner
         let byKey = Dictionary(known.items.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
@@ -282,36 +284,46 @@ public enum PullRequestOverview {
         }
     }
 
-    /// Each pull request key's acting sessions in a project, built once per
-    /// call so the aggregates above scan every session's links once rather
-    /// than rescanning all of them for every pull request they hold (that
-    /// rescan, repeated on every render of each folder's pull request chip,
-    /// was the hot path in a profile of a project with a large history).
-    /// Openers come before reviewers, both in `workspace.sessions` order,
-    /// matching `sessions(for:)`.
-    private struct SessionIndex {
-        private var openedBy: [String: [Session]] = [:]
-        private var reviewedBy: [String: [Session]] = [:]
+    /// Each pull request key's acting session in a project, built once per
+    /// call so the aggregates above (and `AppModel.pullRequestPanel()`) scan
+    /// every session's links once rather than rescanning all of them for
+    /// every pull request they hold (that rescan, repeated on every render
+    /// of each folder's pull request chip, was the hot path in a profile of
+    /// a project with a large history). The session stored per key is
+    /// whichever opened or reviewed it first in `workspace.sessions` order,
+    /// opener winning over reviewer, matching `sessions(for:)`'s ordering.
+    struct SessionIndex {
+        private let workspace: Workspace
+        private var openedBy: [String: Session] = [:]
+        private var reviewedBy: [String: Session] = [:]
 
         init(workspace: Workspace, projectID: UUID, repository: String?) {
+            self.workspace = workspace
             for session in workspace.sessions where session.projectID == projectID && !session.isArchived {
                 var actionByKey: [String: PullRequestLink.Action] = [:]
                 for link in session.pullRequests {
                     guard let key = link.key(in: repository) else { continue }
+                    // `.opened` always wins, which only works order-independently
+                    // because `PullRequestLink.Action` has exactly these two cases.
                     if actionByKey[key] != .opened { actionByKey[key] = link.action }
                 }
                 for (key, action) in actionByKey {
                     switch action {
-                    case .opened: openedBy[key, default: []].append(session)
-                    case .reviewed: reviewedBy[key, default: []].append(session)
+                    case .opened: if openedBy[key] == nil { openedBy[key] = session }
+                    case .reviewed: if reviewedBy[key] == nil { reviewedBy[key] = session }
                     }
                 }
             }
         }
 
-        func group(forKey key: String, workspace: Workspace) -> SessionGroup? {
-            let first = openedBy[key]?.first ?? reviewedBy[key]?.first
-            return first.flatMap { workspace.group(of: $0.id) }
+        /// The session that opened the pull request, else the first that
+        /// reviewed it, if any did.
+        func session(forKey key: String) -> Session? {
+            openedBy[key] ?? reviewedBy[key]
+        }
+
+        func group(forKey key: String) -> SessionGroup? {
+            session(forKey: key).flatMap { workspace.group(of: $0.id) }
         }
     }
 }
