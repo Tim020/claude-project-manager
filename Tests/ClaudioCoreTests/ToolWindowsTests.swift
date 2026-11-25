@@ -208,10 +208,8 @@ extension PullRequestModelTests {
         }
     }
 
-    /// Direct coverage for `pullRequestPanel()`'s own session lookup: it's
-    /// covered elsewhere only because it happens to share `SessionIndex`
-    /// with `PullRequestOverview`'s functions, not because this call site
-    /// is itself tested with both an opener and a reviewer present.
+    /// `pullRequestPanel()` names the session that opened a pull request,
+    /// not one added earlier that only reviewed it.
     func testPanelPicksTheOpenerOverAReviewer() async throws {
         let runner = FakeGitHub()
         let url = "https://github.com/dreamteamprod/DigiScript/pull/1427"
@@ -228,7 +226,8 @@ extension PullRequestModelTests {
         let model = try await MainActor.run {
             AppModel(store: store, discovery: SessionDiscovery(claudeHome: try makeTemporaryDirectory()),
                     hookEventsURL: try makeTemporaryDirectory().appendingPathComponent("h.log"), runner: runner,
-                    locateClaude: { _ in nil }, locateGitHubCLI: { "/opt/homebrew/bin/gh" }, shell: "/bin/sh", home: "/")
+                    locateClaude: { _ in nil }, locateGitHubCLI: { "/opt/homebrew/bin/gh" }, shell: "/bin/sh",
+                    now: { [unowned self] in self.clock }, home: "/")
         }
         await model.refreshPullRequests(project)
         await MainActor.run {
