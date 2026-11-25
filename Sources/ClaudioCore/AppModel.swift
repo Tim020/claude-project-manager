@@ -2705,7 +2705,7 @@ public final class AppModel {
     /// version string) and an alias a new CLI dropped.
     public func modelChoices(including savedID: String?) -> [ModelChoice] {
         guard let savedID, !availableModels.contains(where: { $0.id == savedID }) else { return availableModels }
-        return availableModels + [ModelChoice(id: savedID, label: savedID)]
+        return availableModels + [ModelChoice(id: savedID, label: ModelName.display(savedID))]
     }
 
     private func adopt(_ snapshot: UsageSnapshot) {

@@ -100,7 +100,7 @@ final class AvailableModelsTests: XCTestCase {
         clock.now += 30
         await model.refreshAvailableModelsIfDue()
         XCTAssertEqual(runner.commands.filter { $0.contains("/model") }.count, 1, "not due yet")
-        clock.now += AppModel.modelsRefreshInterval + 1
+        clock.now += 3601 // past `AppModel.modelsRefreshInterval`
         await model.refreshAvailableModelsIfDue()
         XCTAssertEqual(runner.commands.filter { $0.contains("/model") }.count, 2)
     }

@@ -89,6 +89,14 @@ final class TerminalLaunchTests: XCTestCase {
         XCTAssertEqual(launch.claudeArguments.count, 10)
     }
 
+    /// `ModelCatalog`'s aliases can carry `[1m]`, which a shell reads as a
+    /// glob unless quoted: it must reach `claude` as a literal argument.
+    func testAModelAliasWithBracketsIsPassedThroughLiterally() {
+        let launch = make(session(model: "sonnet[1m]"))
+        XCTAssertTrue(launch.claudeArguments.contains("sonnet[1m]"))
+        XCTAssertTrue(launch.arguments.last?.contains("'sonnet[1m]'") ?? false, "single-quoted in the shell command")
+    }
+
     func testResumeOmitsDefaultsAndPrompt() {
         let launch = make(session(hasConversation: true), prompt: "  ")
         XCTAssertEqual(Array(launch.claudeArguments.prefix(2)), ["--resume", "abc"])
