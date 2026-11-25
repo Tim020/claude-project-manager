@@ -99,18 +99,21 @@ private final class SlowFakeStore: StateStore, @unchecked Sendable {
         lock.lock()
         _saved.append(state)
         lock.unlock()
-        if let errorToThrow { throw errorToThrow }
+        // Only the call that was actually blocked throws: `errorToThrow`
+        // marks "what the write that's in flight when the test checks
+        // fails with," not every call from here on.
+        if shouldBlock, let errorToThrow { throw errorToThrow }
     }
 }
 
-/// A lock-protected box, so a background queue's `onError` callback can
-/// hand a value back to the test thread without a Sendable-capture warning
+/// A lock-protected list, so a background queue's `onError` callback can
+/// hand values back to the test thread without a Sendable-capture warning
 /// on a plain `var`.
 private final class ErrorBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var value: Error?
-    func set(_ error: Error) { lock.lock(); value = error; lock.unlock() }
-    func get() -> Error? { lock.lock(); defer { lock.unlock() }; return value }
+    private var values: [Error] = []
+    func append(_ error: Error) { lock.lock(); values.append(error); lock.unlock() }
+    func get() -> [Error] { lock.lock(); defer { lock.unlock() }; return values }
 }
 
 final class CoalescingStateStoreTests: XCTestCase {
@@ -151,17 +154,26 @@ final class CoalescingStateStoreTests: XCTestCase {
         XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/only"])
     }
 
-    func testWriteErrorReachesOnError() throws {
+    /// A failing write doesn't stop the drain loop: whatever's pending
+    /// behind it (queued while it was still in flight) still goes out,
+    /// and `onError` fires once for the failure, not for the success that
+    /// followed it.
+    func testWriteErrorReachesOnErrorAndDoesntStopTheNextSave() throws {
         let fake = SlowFakeStore()
         fake.errorToThrow = NSError(domain: "CoalescingStateStoreTests", code: 1)
-        let store = CoalescingStateStore(wrapping: fake)
         let reported = ErrorBox()
-        store.onError = { reported.set($0) }
+        let store = CoalescingStateStore(wrapping: fake, onError: { reported.append($0) })
+        fake.makeNextSaveBlockUntilReleased()
 
-        try store.save(state("/x"))
-        store.flush()
+        try store.save(state("/fails"))
+        fake.began.wait() // this write is now blocked, and will fail once released
+        try store.save(state("/succeeds")) // queued behind it, no block requested
 
-        XCTAssertNotNil(reported.get(), "a failed write isn't silently dropped")
+        fake.release.signal()
+        store.flush() // wait for both the failure and the coalesced write after it
+
+        XCTAssertEqual(fake.saved.map(\.settings.claudePath), ["/fails", "/succeeds"])
+        XCTAssertEqual(reported.get().count, 1, "once, for the failure — not dropped, and not repeated for the write that followed")
     }
 }
 

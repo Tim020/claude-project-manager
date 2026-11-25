@@ -252,10 +252,15 @@ public protocol StateStore {
     /// the write lands (`MemoryStore`, and `JSONFileStore` on its own);
     /// `CoalescingStateStore` is the one that needs to override it.
     func flush()
+    /// The error the write `flush()` just waited for ended with, if it
+    /// failed; nil otherwise, including for a store that never defers a
+    /// write past `save(_:)` in the first place (the default here).
+    func takeLastFlushError() -> Error?
 }
 
 extension StateStore {
     public func flush() {}
+    public func takeLastFlushError() -> Error? { nil }
 }
 
 /// Stores app state as JSON, by default in
@@ -344,13 +349,23 @@ public final class CoalescingStateStore: StateStore {
     private let lock = NSLock()
     private var pending: PersistedState?
     private var isWriting = false
+    /// The most recent write's error, if it failed; cleared by a
+    /// subsequent successful write or by `takeLastFlushError()`. Guarded
+    /// by `lock` like everything else here, unlike `onError` below.
+    private var lastError: Error?
     /// Hops to wherever the caller needs it (`AppModel` is `@MainActor`);
     /// a write's error can't be thrown back from `save(_:)` once it's
-    /// deferred, so this is the only way it reaches `AppModel.report(_:)`.
-    public var onError: (@Sendable (Error) -> Void)?
+    /// deferred, so this is how it reaches `AppModel.report(_:)` during
+    /// normal operation. Set once at init, not reassignable, since a
+    /// write on the queue could otherwise read it mid-change: there's no
+    /// need to change the handler mid-lifetime anyway. It's not a
+    /// substitute for `takeLastFlushError()` at shutdown, since whatever
+    /// it schedules might not run before the process exits.
+    private let onError: (@Sendable (Error) -> Void)?
 
-    public init(wrapping store: StateStore) {
+    public init(wrapping store: StateStore, onError: (@Sendable (Error) -> Void)? = nil) {
         self.wrapped = store
+        self.onError = onError
     }
 
     public func load() throws -> PersistedState { try wrapped.load() }
@@ -366,6 +381,8 @@ public final class CoalescingStateStore: StateStore {
 
     /// Writes whatever's pending, then checks again before giving up the
     /// queue: a save set while this write was running must still go out.
+    /// A failure doesn't stop the loop — the next pending state (or the
+    /// next call to `save(_:)`) still gets its turn.
     private func drain() {
         while true {
             lock.lock()
@@ -378,7 +395,9 @@ public final class CoalescingStateStore: StateStore {
             lock.unlock()
             do {
                 try wrapped.save(next)
+                lock.lock(); lastError = nil; lock.unlock()
             } catch {
+                lock.lock(); lastError = error; lock.unlock()
                 onError?(error)
             }
         }
@@ -386,9 +405,24 @@ public final class CoalescingStateStore: StateStore {
 
     /// Blocks until the queue has no write left to do, including one this
     /// call's own caller just made — so a save right before quitting is
-    /// durable before the process actually exits.
+    /// durable before the process actually exits. Never call this from
+    /// the store's own queue (e.g. from `onError`): there's nothing left
+    /// to wait out, so this would just block on itself forever.
     public func flush() {
+        dispatchPrecondition(condition: .notOnQueue(queue))
         queue.sync {}
+    }
+
+    /// The error the write `flush()` just waited for ended with, if it
+    /// failed; nil on success. Unlike `onError`, this is synchronous: safe
+    /// to check right after `flush()` even as the process is about to
+    /// exit, with nothing left relying on a scheduled `Task` to run.
+    public func takeLastFlushError() -> Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        let error = lastError
+        lastError = nil
+        return error
     }
 }
 

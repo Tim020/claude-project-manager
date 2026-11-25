@@ -2321,6 +2321,10 @@ public final class AppModel {
         Array(running).forEach(detach)
         save()
         store.flush()
+        // Checked synchronously, not through CoalescingStateStore's
+        // onError: a Task it schedules isn't guaranteed to run before the
+        // process actually exits right after this.
+        if let error = store.takeLastFlushError() { report("Couldn't save: \(AppModel.describe(error))") }
     }
 
     /// Applies hook events written since the last poll.
